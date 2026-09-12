@@ -1,0 +1,49 @@
+{
+  "name": "dsh-plan-usage",
+  "version": "0.2.1-slacom.1",
+  "description": "套餐用量角标（Slacom 定制版）：在左侧状态栏显示 OpenCode Go / GLM Z.AI / GLM 智谱 / Kimi Code / DeepSeek 官网余额 / OpenAI Codex 订阅额度，支持 5小时 / 周限 / 月限窗口与「设置 → 插件」配置卡片。",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "plans",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "slots"
+      ]
+    }
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "opencode",
+    "glm",
+    "zhipu",
+    "kimi",
+    "moonshot",
+    "usage",
+    "quota"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Slacom/dsh-plan-usage.git"
+  },
+  "homepage": "https://github.com/Slacom/dsh-plan-usage#readme",
+  "license": "MIT"
+}

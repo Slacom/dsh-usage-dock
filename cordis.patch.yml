@@ -1,0 +1,5 @@
+# dsh-plan-usage bundle 贡献的配置层。
+# 行里用「包名」而非相对路径，这样 Node 才能解析到安装后的代码。
+- insert:
+    - id: plan-usage
+      name: dsh-plan-usage
