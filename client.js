@@ -29,7 +29,7 @@
  * 按钮（放弃修改/保存/保存中…）与配色全部一致；伪类（hover/focus-visible）
  * 通过 apply 注入的一枚局部样式表实现，其余内联样式，避免 CSS 构建。
  */
-window.__ModuleLoader__.load({ id: 'dsh-plan-usage', factory: (require) => {
+window.__ModuleLoader__.load({ id: 'dsh-usage-dock', factory: (require) => {
 var module = { exports: {} }
 var exports = module.exports
 var React = require('react')

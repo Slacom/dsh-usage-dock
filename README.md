@@ -1,10 +1,11 @@
-# dsh-plan-usage（Slacom 定制版）
+# dsh-usage-dock（Slacom 定制版）
 
 DeepSeek Harness（DSH）的**套餐用量角标**插件：在 Web 界面**左侧状态栏底部**显示各
 AI 套餐的用量与余额，点击可展开详情面板。
 
-> 本仓库是 [`chendefine/dsh-plugins-plan-usage`](https://github.com/chendefine/dsh-plugins-plan-usage)
-> 的个人定制版。**不依赖任何 DSH 核心包补丁**，可直接用 GitHub 安装，DSH 升级不会让它失效。
+> **本插件 fork 自 [`chendefine/dsh-plugins-plan-usage`](https://github.com/chendefine/dsh-plugins-plan-usage)
+> （上游包名即 `dsh-plan-usage`），为免与上游混淆已更名为 `dsh-usage-dock`。**
+> 不依赖任何 DSH 核心包补丁，可直接用 GitHub 安装，DSH 升级不会让它失效。
 
 ## 支持的渠道
 
@@ -29,7 +30,7 @@ AI 套餐的用量与余额，点击可展开详情面板。
 ### 一条命令
 
 ```powershell
-dsh plugin --profile web add github:Slacom/dsh-plan-usage
+dsh plugin --profile web add github:Slacom/dsh-usage-dock
 ```
 
 安装后**重启 `dsh web` 进程**，浏览器硬刷新（Ctrl+Shift+R）。
@@ -72,15 +73,24 @@ DSH 的 Windows ACL 沙箱以受限令牌启动子进程；受限令牌下 Windo
 ## 更新
 
 ```powershell
-dsh plugin --profile web remove dsh-plan-usage
-dsh plugin --profile web add github:Slacom/dsh-plan-usage
+dsh plugin --profile web remove dsh-usage-dock
+dsh plugin --profile web add github:Slacom/dsh-usage-dock
 ```
 
 ## 卸载
 
 ```powershell
-dsh plugin --profile web remove dsh-plan-usage
+dsh plugin --profile web remove dsh-usage-dock
 ```
+
+## 与上游的关系
+
+本插件是 [`chendefine/dsh-plugins-plan-usage`](https://github.com/chendefine/dsh-plugins-plan-usage)
+的 fork。上游包名为 `dsh-plan-usage`，为避免与上游仓库混淆，本 fork 更名为
+**`dsh-usage-dock`**（"用量停靠栏"）。
+
+内部的插件 id、settings 命名空间（`plan-usage`）与 HTTP 路由（`/api/plan-usage`）均**沿用上游**，
+因此从上游版本切换过来时，**已有的 API Key 配置不会丢失**。
 
 ## 许可
 
