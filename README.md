@@ -63,6 +63,17 @@ dsh plugin --profile web add github:Slacom/dsh-usage-dock
 填写各渠道 API Key。实现方式：客户端注册 DSH 的 `settings.plugins.tab` 席位，配置读写走
 `configForms` 服务（命名空间即 profile 条目 id `plan-usage`），由 DSH 负责修订号校验与持久化。
 
+### 可配置项
+
+| 项 | 说明 |
+| --- | --- |
+| 启用套餐用量角标 | 全局开关 |
+| 各渠道开关 | OpenCode Go / GLM Z.AI / GLM 智谱 / Kimi Code / DeepSeek / OpenAI Codex |
+| 各渠道 API Key | 留空则回退到「设置 → 模型」凭据库中的同名凭据 |
+| **DeepSeek 余额警告额度** | `deepseekWarnThreshold`，低于该值时状态灯转警告色；**默认 10 元**，填 0 表示不警告 |
+
+设置页底部提供「放弃更改 / 保存更改」按钮，改动在保存后生效。
+
 ## 配置方式（0.4.0 起）
 
 插件导出 `Config` schema，**DSH 会自动在「设置 → 插件」里生成本插件的设置页**，

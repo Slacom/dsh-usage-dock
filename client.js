@@ -62,9 +62,10 @@ var PLANS = [
   { id: 'glm-zai', name: 'GLM Z.AI', credentialHint: 'ZAI', fields: { enabled: 'glmEnabled', apiKey: 'glmApiKey' } },
   { id: 'glm-zhipu', name: 'GLM 智谱', credentialHint: 'ZHIPU / GLM', fields: { enabled: 'glmZhipuEnabled', apiKey: 'glmZhipuApiKey' } },
   { id: 'kimi-code', name: 'Kimi Code', credentialHint: 'KIMI_CODE', cookieHint: 'kimi-auth', fields: { enabled: 'kimiCodeEnabled', apiKey: 'kimiCodeApiKey', cookie: 'kimiCodeCookie' } },
-  // [local patch] DeepSeek 官网 API 余额：右侧只显示剩余余额（元）；
-  // balanceThreshold=30：余额低于 30 元时状态灯显示红灯。
-  { id: 'deepseek', name: 'DeepSeek', credentialHint: 'DEEPSEEK', balanceThreshold: 30, fields: { enabled: 'deepseekEnabled', apiKey: 'deepseekApiKey' } },
+  // DeepSeek 余额：右侧只显示剩余余额（元），阈值可配置（见 deepseekWarnThreshold）。
+  // balanceThreshold 仅作「余额类渠道」的标记与兜底默认；实际阈值取 host 返回的
+  // warnThreshold（来自配置 deepseekWarnThreshold，默认 10 元）。
+  { id: 'deepseek', name: 'DeepSeek', credentialHint: 'DEEPSEEK', balanceThreshold: 10, thresholdField: 'deepseekWarnThreshold', fields: { enabled: 'deepseekEnabled', apiKey: 'deepseekApiKey' } },
   // 复用 dsh-codex-connect 的 ChatGPT OAuth，无需另填 API Key。
   { id: 'codex', name: 'OpenAI Codex', noCredential: true, percentMode: 'remaining', credentialNote: '复用 Codex Connect 的 ChatGPT 登录；请先在 Codex Connect 配置中完成登录。', fields: { enabled: 'codexEnabled' } },
 ]
@@ -244,7 +245,9 @@ function PlanUsageBadge(props) {
     var meta = planMeta(plan.id)
     // [local patch] 余额类套餐：右侧只显示剩余余额，低于阈值红灯。
     if (meta.balanceThreshold !== undefined && typeof plan.balance === 'number') {
-      var low = plan.balance < meta.balanceThreshold
+      // 阈值优先取 host 下发的配置值；0 表示不警告。
+      var threshold = typeof plan.warnThreshold === 'number' ? plan.warnThreshold : meta.balanceThreshold
+      var low = threshold > 0 && plan.balance < threshold
       // 注意：不能用 toneColor(90)——它按「用量百分比」语义返回红色；
       // 余额充足用 success 绿，低于阈值用 error 红。
       var dot = low ? 'var(--dsw-alias-state-error-primary)' : 'var(--dsw-alias-state-success-primary)'
@@ -323,7 +326,8 @@ function PlanUsageBadge(props) {
         if (typeof plan.balance !== 'number') {
           inner = h('div', { style: sectionNoteStyle }, '余额获取失败')
         } else {
-          var low = plan.balance < meta.balanceThreshold
+          var panelThreshold = typeof plan.warnThreshold === 'number' ? plan.warnThreshold : meta.balanceThreshold
+          var low = panelThreshold > 0 && plan.balance < panelThreshold
           var balRow = {
             display: 'flex', alignItems: 'center', gap: 8, margin: '4px 0',
             fontSize: 18, fontWeight: 600,
@@ -340,7 +344,7 @@ function PlanUsageBadge(props) {
             ),
             h('div', { style: sectionNoteStyle },
               low
-                ? '余额低于 ' + meta.balanceThreshold + ' 元，请及时充值'
+                ? '余额低于 ' + panelThreshold + ' 元，请及时充值'
                 : (plan.isAvailable === false ? '账户当前不可用' : '余额充足')),
           )
         }
@@ -799,6 +803,12 @@ var settingsGroupStyle = { display: "flex", flexDirection: "column", gap: 6, pad
 var settingsRowStyle = { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13, color: "var(--dsw-alias-label-primary)" }
 var settingsInputStyle = { boxSizing: "border-box", width: "100%", padding: "6px 9px", borderRadius: 8, border: "1px solid var(--dsw-alias-border-l2)", background: "var(--dsw-alias-bg-layer-3)", color: "var(--dsw-alias-label-primary)", fontSize: 13 }
 var settingsHintStyle = { margin: 0, color: "var(--dsw-alias-label-tertiary)", fontSize: 12, lineHeight: "18px" }
+var settingsThresholdStyle = { display: "flex", alignItems: "center", gap: 8, fontSize: 12, flexWrap: "wrap" }
+var settingsThresholdInputStyle = { boxSizing: "border-box", width: 96, padding: "5px 8px", borderRadius: 8, border: "1px solid var(--dsw-alias-border-l2)", background: "var(--dsw-alias-bg-layer-3)", color: "var(--dsw-alias-label-primary)", fontSize: 13 }
+var settingsFooterStyle = { display: "flex", justifyContent: "flex-end", gap: 8, paddingTop: 12, borderTop: "0.5px solid var(--dsw-alias-border-l2)" }
+var settingsButtonStyle = { padding: "6px 14px", borderRadius: 8, border: "1px solid var(--dsw-alias-border-l2)", background: "var(--dsw-alias-bg-layer-3)", color: "var(--dsw-alias-label-primary)", fontSize: 13, cursor: "pointer" }
+var settingsButtonPrimaryStyle = { padding: "6px 14px", borderRadius: 8, border: "1px solid transparent", background: "var(--dsw-alias-label-primary)", color: "var(--dsw-alias-bg-layer-1)", fontSize: 13, cursor: "pointer" }
+var settingsButtonDisabledStyle = { opacity: 0.45, cursor: "default" }
 
 /** 读取当前配置里的布尔值（未设置时按 schema 默认值处理）。 */
 function settingBool(value, key, fallback) {
@@ -830,14 +840,57 @@ function PlanUsageSettingsPage(props) {
   var snap = React.useSyncExternalStore(api.subscribe, api.getSnapshot)
   var value = (snap && snap.value) || {}
   var writable = snap ? snap.writable === true : false
+
+  // 草稿：非 null 表示存在未保存的修改；按钮提交或放弃后才回到 null。
+  var draftHook = React.useState(null)
+  var draft = draftHook[0]
+  var setDraft = draftHook[1]
+  var savingHook = React.useState(false)
+  var saving = savingHook[0]
+  var setSaving = savingHook[1]
+  var current = draft !== null ? draft : value
+  var dirty = draft !== null && writable
+
+  /** 复制一个对象并覆盖单个字段（ES5 风格，避免计算属性名）。 */
+  function withField(base, field, val) {
+    var next = {}
+    for (var k in base) {
+      if (Object.prototype.hasOwnProperty.call(base, k)) next[k] = base[k]
+    }
+    next[field] = val
+    return next
+  }
+
+  function change(field, val) { setDraft(withField(current, field, val)) }
+  function discard() { setDraft(null) }
+
+  /** 把草稿里与已保存值不同的字段逐个写回（DSH 负责修订号校验与持久化）。 */
+  function save() {
+    if (draft === null) return
+    var jobs = []
+    for (var k in draft) {
+      if (!Object.prototype.hasOwnProperty.call(draft, k)) continue
+      if (draft[k] !== value[k]) jobs.push(api.set(k, draft[k]))
+    }
+    if (jobs.length === 0) { setDraft(null); return }
+    setSaving(true)
+    Promise.all(jobs).then(function () {
+      setSaving(false)
+      setDraft(null)
+    }, function () {
+      // 写入被拒绝时保留草稿，用户可以重试或放弃。
+      setSaving(false)
+    })
+  }
+
   var rows = []
 
   rows.push(h("label", { key: "__global", style: settingsRowStyle },
     h("input", {
       type: "checkbox",
-      checked: settingBool(value, "enabled", true),
+      checked: settingBool(current, "enabled", true),
       disabled: !writable,
-      onChange: function (e) { api.set("enabled", e.target.checked) },
+      onChange: function (e) { change("enabled", e.target.checked) },
     }),
     h("span", {}, "启用套餐用量角标"),
   ))
@@ -847,19 +900,18 @@ function PlanUsageSettingsPage(props) {
     var fields = meta.fields || {}
     var enabledKey = fields.enabled
     if (enabledKey === undefined) continue
-    var enabled = settingBool(value, enabledKey, true)
+    var enabled = settingBool(current, enabledKey, true)
     var children = [
       h("label", { key: "row", style: settingsRowStyle },
         h("input", {
           type: "checkbox",
           checked: enabled,
           disabled: !writable,
-          onChange: (function (key) { return function (e) { api.set(key, e.target.checked) } })(enabledKey),
+          onChange: (function (key) { return function (e) { change(key, e.target.checked) } })(enabledKey),
         }),
         h("span", {}, meta.name),
       ),
     ]
-    // 密钥输入：仅在渠道启用时显示（Codex 走 OAuth，没有密钥字段）。
     if (enabled && fields.apiKey !== undefined) {
       children.push(h("input", {
         key: "key",
@@ -867,10 +919,33 @@ function PlanUsageSettingsPage(props) {
         autoComplete: "off",
         style: settingsInputStyle,
         placeholder: meta.name + " API Key（留空则回退到「设置 → 模型」中的凭据）",
-        value: settingText(value, fields.apiKey),
+        value: settingText(current, fields.apiKey),
         disabled: !writable,
-        onChange: (function (key) { return function (e) { api.set(key, e.target.value) } })(fields.apiKey),
+        onChange: (function (key) { return function (e) { change(key, e.target.value) } })(fields.apiKey),
       }))
+    }
+    // 余额类渠道的警告阈值（留空/0 表示不警告；host 侧默认 10 元）。
+    if (enabled && meta.thresholdField !== undefined) {
+      var thresholdRaw = current[meta.thresholdField]
+      children.push(h("label", { key: "threshold", style: settingsThresholdStyle },
+        h("span", { style: settingsHintStyle }, "余额警告额度（元）"),
+        h("input", {
+          type: "number",
+          min: 0,
+          step: 1,
+          style: settingsThresholdInputStyle,
+          placeholder: "默认 10",
+          value: typeof thresholdRaw === "number" ? String(thresholdRaw) : "",
+          disabled: !writable,
+          onChange: (function (key) {
+            return function (e) {
+              var raw = e.target.value
+              change(key, raw === "" ? 0 : Number(raw))
+            }
+          })(meta.thresholdField),
+        }),
+        h("span", { style: settingsHintStyle }, "低于该值时状态灯转为警告色；填 0 表示不警告"),
+      ))
     }
     if (enabled && meta.noCredential) {
       children.push(h("p", { key: "note", style: settingsHintStyle },
@@ -882,9 +957,25 @@ function PlanUsageSettingsPage(props) {
   return h("div", { style: settingsPageStyle },
     h("p", { style: settingsIntroStyle },
       writable
-        ? "选择要显示的渠道并填入各自的 API Key。配置由 DSH 保存到当前 profile，改动即时生效。"
+        ? "选择要显示的渠道并填入各自的 API Key；改动在点击「保存更改」后生效。"
         : "当前部署的设置为只读，无法在此修改。"),
     rows,
+    writable
+      ? h("div", { style: settingsFooterStyle },
+          h("button", {
+            type: "button",
+            style: Object.assign({}, settingsButtonStyle, (!dirty || saving) ? settingsButtonDisabledStyle : {}),
+            disabled: !dirty || saving,
+            onClick: discard,
+          }, "放弃更改"),
+          h("button", {
+            type: "button",
+            style: Object.assign({}, settingsButtonPrimaryStyle, (!dirty || saving) ? settingsButtonDisabledStyle : {}),
+            disabled: !dirty || saving,
+            onClick: save,
+          }, saving ? "保存中…" : "保存更改"),
+        )
+      : null,
   )
 }
 // ===========================================================================

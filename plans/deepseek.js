@@ -29,6 +29,15 @@ const source = {
   refs: ['DEEPSEEK_API_KEY'],
 }
 
+/** 余额警告阈值的默认值（元）：配置留空或为 0 时使用。 */
+const DEFAULT_WARN_THRESHOLD = 10
+
+/** 从配置解析警告阈值：非有限数或负数时回退默认值。 */
+function warnThresholdOf(cfg) {
+  const raw = cfg != null ? cfg.deepseekWarnThreshold : undefined
+  return typeof raw === "number" && Number.isFinite(raw) && raw >= 0 ? raw : DEFAULT_WARN_THRESHOLD
+}
+
 /** 上报给 Platform 的客户端身份（影响服务端文案语言，不影响余额数值）。 */
 const CLIENT_METADATA = {
   version: '0.4.0',
@@ -43,6 +52,8 @@ const plan = {
   schema: {
     deepseekEnabled: z.boolean().default(true),
     deepseekApiKey: z.string().role('secret'),
+    // 余额低于该值时状态灯转为警告色；默认 10 元。0 表示不警告。
+    deepseekWarnThreshold: z.number().min(0).default(10),
   },
   source,
 }
@@ -87,7 +98,12 @@ export async function fetchPlan(ctx, shell, cfg) {
   // 1) 账号余额（桌面端登录即可用，无需任何 Key）
   const account = await fetchAccountBalance(ctx)
   if (account.ok) {
-    return Object.assign(planBase(plan), { balance: account.balance, isAvailable: true, via: "account" })
+    return Object.assign(planBase(plan), {
+      balance: account.balance,
+      isAvailable: true,
+      via: "account",
+      warnThreshold: warnThresholdOf(cfg),
+    })
   }
 
   // 2) 回退：开放平台 API Key
@@ -116,6 +132,7 @@ export async function fetchPlan(ctx, shell, cfg) {
       balance: balance,
       isAvailable: data.is_available === true,
       via: "api",
+      warnThreshold: warnThresholdOf(cfg),
     })
   } catch (err) {
     return Object.assign(execError(plan), { message: "上游请求异常；账号侧：" + account.reason })
