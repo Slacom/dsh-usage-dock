@@ -190,9 +190,11 @@ function worstPercent(plan, meta) {
 }
 
 function PlanUsageBadge(props) {
-  // 配置已由 Host 依据 DSH 托管的 Config 处理：禁用渠道不会出现在返回数据里，
-  // 因此客户端不再需要订阅配置快照，只负责渲染。
-  var enabled = true
+  // 订阅 DSH 托管的配置：DSH 的插件配置在运行时不会热重载 Host 半，
+  // 因此「取消勾选某渠道」需要在这里即时过滤，才能立刻反映到胶囊上。
+  var form = props.configForm
+  var config = useConfigSnapshot(form)
+  var enabled = settingBool(config, "enabled", true)
 
   var stateHook = React.useState({ loading: true })
   var state = stateHook[0]
@@ -233,7 +235,13 @@ function PlanUsageBadge(props) {
   // 只展示当前仍启用的套餐（禁用后旧数据一并丢弃）。
   var data = state && state.ok ? state.data : null
   var plans = data && Array.isArray(data.plans) ? data.plans : []
-  // host 已按配置过滤，无需再筛。
+  // 按 DSH 托管的配置过滤：Host 半的配置在插件加载时读取、运行时不热重载，
+  // 所以这里必须再筛一次，取消勾选才能立即生效。
+  plans = plans.filter(function (p) {
+    var meta = planMeta(p.id)
+    var key = meta.fields && meta.fields.enabled
+    return key === undefined || settingBool(config, key, true)
+  })
 
   // 胶囊：多行，每个套餐一行。用量类套餐展示 5小时/周限/月限 三个窗口的
   // 百分比；余额类套餐（deepseek，带 balanceThreshold）只显示剩余余额（元），
@@ -826,6 +834,24 @@ function settingText(value, key) {
  * 设置页组件：一个全局开关 + 每个渠道的开关与（可选）密钥输入。
  * props.form 由 ConfigForms.get(entryId) 提供。
  */
+/**
+ * 订阅 DSH 托管配置的快照（ConfigFormController 的方法依赖 this，需包一层）。
+ * form 缺失（例如未提供 configForms）时返回空对象，调用方按默认值处理。
+ */
+function useConfigSnapshot(form) {
+  var api = React.useMemo(function () {
+    if (!form) return null
+    return {
+      subscribe: function (listener) { return form.subscribe(listener) },
+      getSnapshot: function () { return form.getSnapshot() },
+    }
+  }, [form])
+  var snap = React.useSyncExternalStore(
+    api ? api.subscribe : function () { return function () {} },
+    api ? api.getSnapshot : function () { return null },
+  )
+  return (snap && snap.value) || {}
+}
 function PlanUsageSettingsPage(props) {
   // form 是 ConfigFormController 实例，其 getSnapshot/subscribe/set 都依赖 this；
   // 直接传方法引用会丢 this 并抛错（页面显示空白），因此先包一层。
@@ -991,19 +1017,20 @@ function apply(ctx) {
   // [local patch] 零补丁版：注册进 DSH 官方公共席位 sidebar.footer.action
   // （由 sidebar 核心包声明，官方插件 dsh-client-ui-cordis 亦注册于此）。
   // 该席位是 list 类型，可容纳多个条目；order 10 让胶囊排在既有按钮之后。
+  // configForms 的表单在这里获取一次，同时供胶囊订阅（实时反映设置改动）与设置页使用。
+  var form = ctx.configForms.get('plan-usage')
   ctx.slots.inject('sidebar.footer.action', function () {
     return ctx.slots.register({
       name: 'sidebar.footer.action',
       id: 'plan-usage',
       order: 10,
       // wide 由 sidebar 渲染时通过 ownerProps 注入（renderSlot('sidebar.footer.action', { wide })）
-      inject: function () { return {} },
+      inject: function () { return { configForm: form } },
     }, PlanUsageBadge)
   })
   // 设置页：注册进「内置插件」页面的 tab 席位 settings.plugins.tab，
   // 与 Codex Connect 的做法一致。configForms 提供该条目的配置表单，
   // whileServed 保证只有 Host 真正提供该命名空间时才出现这个页面。
-  var form = ctx.configForms.get('plan-usage')
   ctx.effect(function () {
     return ctx.configForms.whileServed(['plan-usage'], function () {
       return ctx.slots.register({
