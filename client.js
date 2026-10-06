@@ -188,16 +188,9 @@ function worstPercent(plan, meta) {
 }
 
 function PlanUsageBadge(props) {
-  // 配置开关：全局关闭时整颗角标隐藏；套餐级开关决定取数/展示范围。
-  var settingsSnap = React.useSyncExternalStore(props.settings.subscribe, props.settings.getSnapshot)
-  var enabled = !settingsSnap || settingsSnap.enabled !== false
-  var planKey = ''
-  if (settingsSnap && settingsSnap.plans) {
-    for (var pi = 0; pi < PLANS.length; pi++) {
-      var ps = settingsSnap.plans[PLANS[pi].id]
-      planKey += ps && ps.enabled === false ? '0' : '1'
-    }
-  }
+  // 配置已由 Host 依据 DSH 托管的 Config 处理：禁用渠道不会出现在返回数据里，
+  // 因此客户端不再需要订阅配置快照，只负责渲染。
+  var enabled = true
 
   var stateHook = React.useState({ loading: true })
   var state = stateHook[0]
@@ -231,19 +224,14 @@ function PlanUsageBadge(props) {
     // [local patch] 用量刷新间隔 30 秒（原 60 秒）。
     var timer = setInterval(load, 30000)
     return function () { alive = false; clearInterval(timer) }
-  }, [enabled, planKey])
+  }, [enabled])
 
   if (enabled === false || (state && state.error === 'disabled')) return null
 
   // 只展示当前仍启用的套餐（禁用后旧数据一并丢弃）。
   var data = state && state.ok ? state.data : null
   var plans = data && Array.isArray(data.plans) ? data.plans : []
-  if (settingsSnap && settingsSnap.plans) {
-    plans = plans.filter(function (p) {
-      var ps = settingsSnap.plans[p.id]
-      return ps === undefined || ps.enabled !== false
-    })
-  }
+  // host 已按配置过滤，无需再筛。
 
   // 胶囊：多行，每个套餐一行。用量类套餐展示 5小时/周限/月限 三个窗口的
   // 百分比；余额类套餐（deepseek，带 balanceThreshold）只显示剩余余额（元），
@@ -379,7 +367,7 @@ function PlanUsageBadge(props) {
         })
         // 套餐级脚注：各套餐的提示逻辑集中在 PLAN_NOTES 表（见上），
         // 渲染层不感知具体套餐。
-        var notes = planNotes(plan, settingsSnap)
+        var notes = planNotes(plan, null)
         inner = h('div', {},
           rows,
           notes.map(function (note, ni) {
@@ -804,39 +792,19 @@ function PlanUsageConfigCard(props) {
 var inject = ['slots']
 
 function apply(ctx) {
-  var controller = new PlanUsageController(ctx)
-
-  // 折叠头部 / 按钮的伪类规则（:hover、:focus-visible）无法内联，注入一枚
-  // 局部样式表；随插件停用一并移除。
-  ctx.effect(function () {
-    var el = document.createElement('style')
-    el.setAttribute('data-plugin', 'plan-usage')
-    el.textContent = CARD_CSS
-    document.head.appendChild(el)
-    return function () { if (el.parentNode) el.parentNode.removeChild(el) }
-  }, 'plan-usage: card styles')
-
-  // [local patch] 零补丁版：注册进 DSH 官方开放的公共席位 sidebar.footer.action
+  // 配置由 DSH 基于 Host 半导出的 Config schema 自动生成设置页并持久化，
+  // 客户端不再自建配置卡片，因此这里只注册用量胶囊本身。
+  // [local patch] 零补丁版：注册进 DSH 官方公共席位 sidebar.footer.action
   // （由 sidebar 核心包声明，官方插件 dsh-client-ui-cordis 亦注册于此）。
-  // 该席位是 list 类型，可容纳多个条目；order 10 让胶囊排在既有按钮之后，
-  // 即按钮位置不变，胶囊占用其右侧剩余空间。
+  // 该席位是 list 类型，可容纳多个条目；order 10 让胶囊排在既有按钮之后。
   ctx.slots.inject('sidebar.footer.action', function () {
     return ctx.slots.register({
       name: 'sidebar.footer.action',
       id: 'plan-usage',
       order: 10,
       // wide 由 sidebar 渲染时通过 ownerProps 注入（renderSlot('sidebar.footer.action', { wide })）
-      inject: function () { return { settings: controller } },
+      inject: function () { return {} },
     }, PlanUsageBadge)
-  })
-
-  ctx.slots.inject('settings.plugin.item', function () {
-    return ctx.slots.register({
-      name: 'settings.plugin.item',
-      key: 'plan-usage',
-      order: 30,
-      inject: function () { return { settings: controller } },
-    }, PlanUsageConfigCard)
   })
 }
 

@@ -1,110 +1,42 @@
 /**
- * dsh-plan-usage 的 Host 半：注册 `GET /api/plan-usage`（并行拉取各套餐用量）
- * 与 `GET/POST /api/plan-usage/config`（读写插件配置）。
+ * dsh-usage-dock 的 Host 半：注册 `GET /api/plan-usage`（并行拉取各渠道用量/余额）。
  *
- * 架构：每个套餐（渠道）的取数/归一化逻辑独立封装在 plans/ 目录的模块里
- * （plans/opencode-go.js、plans/glm-zai.js、plans/glm-zhipu.js、plans/kimi-code.js，
- * GLM 两渠道共享 plans/glm.js 的实现），plans/index.js 是注册表。本文件只负责
- * 路由、配置读写与通用编排，全部经注册表驱动——新增套餐不需要改动这里。
+ * 架构：每个渠道的取数/归一化逻辑独立封装在 plans/ 目录的模块里
+ * （opencode-go、glm、kimi-code、deepseek、codex），plans/index.js 是注册表。
+ * 本文件只负责 Config 声明、路由与通用编排。
  *
- * 配置持久化：写入 `$DSH_HOME/plan-usage.json`（原子替换），**不依赖 DSH 的
- * settings 服务**。DSH 0.2.0 起移除了 `ctx.settings.register(ns, Schema)`，改用
- * SettingsForms + Cordis 配置；本插件通过自己的 /config 路由让浏览器读写，
- * 因此把存储放在插件自有的 JSON 文件里，可跨 DSH 版本稳定工作。
+ * 配置：导出 `Config`（schemastery schema）交由 DSH 托管——DSH 会据此在
+ * 「设置 → 插件」里**自动生成本插件的设置页**，并把改动持久化到 profile 的
+ * Cordis patch，随后以 config-reload 通知插件。历史版本（0.3.x）曾自建
+ * /config 路由与 JSON 文件存储，0.4.0 起统一交给 DSH，避免双配置源。
  *
- * 每个套餐的 API Key 解析优先级相同（见 plans/util.js 的 resolveApiKey）：
- * 1. 插件配置里该套餐的 `apiKey`（若留空则跳过）；
- * 2. 「设置 → 模型」写入的对应凭据（各套餐的候选凭据名见其模块的 `source.refs`）；
- * 两者都为空时该套餐返回 `no-key`，由浏览器胶囊提示用户设置。
- *
- * 纯 JS、零运行时依赖：能力通过 `ctx` 获取，schema 通过 @deepseek-ai/schemastery
- * 与 @deepseek-ai/dsh-settings 声明（二者由 profile 的 node_modules 提升解析）。
+ * 每个渠道的 API Key 解析优先级（见 plans/util.js 的 resolveApiKey）：
+ *   1. 插件配置里的 `apiKey`；2. 「设置 → 模型」凭据库中该渠道的候选名。
+ * 两者都为空时该渠道返回 no-key，由浏览器胶囊提示用户设置。
  */
 
-import fs from 'node:fs'
-import os from 'node:os'
-import path from 'node:path'
-import { PLANS, PLAN_BY_ID } from './plans/index.js'
+import z from '@deepseek-ai/schemastery'
+import { PLANS, planSchemaFields } from './plans/index.js'
 
 export const name = 'plan-usage'
-/** 只需 webServer：配置存储是本插件自有的 JSON 文件，不用 settings 服务。 */
+
+/** 只需要 Web 服务器；账号余额通过可选的 deepseekAccount 服务读取。 */
 export const inject = ['webServer']
 
-/** 配置文件位置：`$DSH_HOME/plan-usage.json`，默认 `~/.dsh/plan-usage.json`。 */
-function configFile() {
-  const home = process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
-  return path.join(home, 'plan-usage.json')
-}
-
-/** 读取配置；文件缺失或损坏时返回空对象（等价于全部默认值）。 */
-function readConfigFile() {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(configFile(), 'utf8'))
-    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
-  } catch (err) {
-    return {}
-  }
-}
-
-/** 原子写入配置：先写同目录临时文件再改名，避免读到半截内容。 */
-function writeConfigFile(cfg) {
-  const file = configFile()
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  const tmp = file + '.tmp'
-  fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2) + '\n', 'utf8')
-  fs.renameSync(tmp, file)
-}
+/** 插件配置 schema：DSH 据此渲染设置页并持久化到 profile 的 Cordis patch。 */
+export const Config = z.object(Object.assign(
+  { enabled: z.boolean().default(true) },
+  planSchemaFields(),
+))
 
 function json(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
   res.end(JSON.stringify(body))
 }
 
-/** 配置的浏览器视图：只含非敏感字段（密钥的值永不返回）。 */
-function configView(ctx, cfg) {
-  const plans = {}
-  for (const plan of PLANS) {
-    const fields = plan.fields
-    const key = fields.apiKey !== undefined ? cfg[fields.apiKey] : undefined
-    plans[plan.id] = {
-      enabled: cfg[fields.enabled] !== false,
-      apiKeyConfigured: fields.apiKey !== undefined && typeof key === 'string' && key.length > 0,
-      cookieConfigured: fields.cookie !== undefined
-        && typeof cfg[fields.cookie] === 'string' && cfg[fields.cookie].length > 0,
-    }
-  }
-  return {
-    enabled: cfg.enabled !== false,
-    plans,
-    // 存储是本插件自有的 JSON 文件，只要进程能写就视为可写。
-    writable: true,
-  }
-}
-
-/** 读取请求体（node IncomingMessage 异步迭代）。 */
-async function readBody(req) {
-  const chunks = []
-  for await (const chunk of req) chunks.push(chunk)
-  return Buffer.concat(chunks).toString('utf8')
-}
-
 export function apply(ctx, config) {
-  // 组合层配置（cordis 行）作为 base 层；$DSH_HOME/plan-usage.json 为权威存储。
-  const entry = config != null && typeof config === 'object' ? config : {}
-  let cfg = Object.assign({}, entry, readConfigFile())
-  const current = () => cfg
-  /** 合并一个补丁并落盘（原子替换）。 */
-  const update = (patch) => {
-    cfg = Object.assign({}, cfg, patch)
-    writeConfigFile(cfg)
-  }
-  /** 删除一个键并落盘（等价于旧版 settings.mutate 的 unset）。 */
-  const unset = (key) => {
-    const next = Object.assign({}, cfg)
-    delete next[key]
-    cfg = next
-    writeConfigFile(cfg)
-  }
+  // DSH 托管的配置；config-reload 时会以新对象重新进入 apply 之前的读取路径。
+  const cfg = config != null && typeof config === 'object' ? config : {}
 
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
@@ -114,7 +46,6 @@ export function apply(ctx, config) {
         json(res, 405, { ok: false, error: 'method', message: 'method not allowed' })
         return
       }
-      const cfg = current() || {}
       if (cfg.enabled === false) {
         json(res, 200, { ok: false, error: 'disabled', message: '套餐用量已停用' })
         return
@@ -129,93 +60,9 @@ export function apply(ctx, config) {
         json(res, 503, { ok: false, error: 'no-shell', message: 'shell service unavailable' })
         return
       }
-      // 各套餐（渠道）独立取数：一个套餐缺 Key/失败不影响其他套餐。
+      // 各渠道独立取数：一个渠道缺 Key/失败不影响其他渠道。
       const plans = await Promise.all(enabledPlans.map((plan) => plan.fetch(ctx, shell, cfg)))
       json(res, 200, { ok: true, data: { plans } })
     },
-  }), 'plan-usage: route')
-
-  // 配置读写路由：浏览器端配置卡片通过它读写，绕开 harness 的配置客户端白名单。
-  ctx.effect(() => ctx.webServer.register({
-    kind: 'exact',
-    path: '/api/plan-usage/config',
-    handler: async (req, res) => {
-      if (req.method === 'GET') {
-        json(res, 200, { ok: true, data: configView(ctx, current() || {}) })
-        return
-      }
-      if (req.method !== 'POST') {
-        json(res, 405, { ok: false, error: 'method', message: 'method not allowed' })
-        return
-      }
-      let input
-      try {
-        input = JSON.parse(await readBody(req))
-      } catch (err) {
-        json(res, 400, { ok: false, error: 'bad-json', message: 'invalid JSON body' })
-        return
-      }
-      if (input == null || typeof input !== 'object') {
-        json(res, 400, { ok: false, error: 'bad-json', message: 'expected a JSON object' })
-        return
-      }
-      // 每套餐更新：{ [planId]: { enabled?, apiKey?, clearKey? } }，未知套餐拒绝。
-      const planUpdates = {}
-      if (input.plans !== undefined) {
-        if (typeof input.plans !== 'object' || Array.isArray(input.plans)) {
-          json(res, 400, { ok: false, error: 'bad-plans', message: 'plans must be an object keyed by plan id' })
-          return
-        }
-        for (const key of Object.keys(input.plans)) {
-          if (!PLAN_BY_ID[key]) {
-            json(res, 400, { ok: false, error: 'unknown-plan', message: 'unknown plan id: ' + key })
-            return
-          }
-          const up = input.plans[key]
-          if (up == null || typeof up !== 'object') {
-            json(res, 400, { ok: false, error: 'bad-plan', message: 'plan update must be an object' })
-            return
-          }
-          planUpdates[key] = up
-        }
-      }
-      try {
-        if (input.enabled !== undefined) await update({ enabled: input.enabled === true })
-        for (const plan of PLANS) {
-          const up = planUpdates[plan.id]
-          if (up === undefined) continue
-          const fields = plan.fields
-          if (up.enabled !== undefined) await update({ [fields.enabled]: up.enabled === true })
-          if (fields.apiKey !== undefined) {
-            if (up.clearKey === true) {
-              unset(fields.apiKey)
-            } else if (typeof up.apiKey === 'string' && up.apiKey.trim() !== '') {
-              await update({ [fields.apiKey]: up.apiKey.trim() })
-            }
-          }
-          // 可选会话 Cookie（目前仅 kimi-code：月度会员额度）。
-          if (fields.cookie !== undefined) {
-            if (up.clearCookie === true) {
-              unset(fields.cookie)
-            } else if (typeof up.cookie === 'string' && up.cookie.trim() !== '') {
-              await update({ [fields.cookie]: up.cookie.trim() })
-            }
-          }
-        }
-        // 兼容旧客户端（v0.1）：顶层 apiKey / clearKey 视作 opencode-go 套餐的更新。
-        if (input.clearKey === true) {
-          unset('apiKey')
-        } else if (typeof input.apiKey === 'string' && input.apiKey.trim() !== '') {
-          await update({ apiKey: input.apiKey.trim() })
-        }
-        json(res, 200, { ok: true, data: configView(ctx, current() || {}) })
-      } catch (err) {
-        json(res, 400, {
-          ok: false,
-          error: 'rejected',
-          message: err && err.message ? err.message : String(err),
-        })
-      }
-    },
-  }), 'plan-usage: config route')
+  }), 'plan-usage: usage route')
 }

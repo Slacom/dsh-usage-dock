@@ -57,6 +57,23 @@ dsh plugin --profile web add github:Slacom/dsh-usage-dock
 - 从 0.1.x 升级过来时，请在「设置 → 插件 → 套餐用量」里**重新填写各渠道的 API Key**
   （旧版把这些存在 DSH 的 `settings.yaml` 中，新版本不再读取该文件）。
 
+## 配置方式（0.4.0 起）
+
+插件导出 `Config` schema，**DSH 会自动在「设置 → 插件」里生成本插件的设置页**，
+改动由 DSH 持久化到当前 profile 的 Cordis patch。可配置项包括全局开关、各渠道开关，
+以及 OpenCode Go / GLM / Kimi / DeepSeek 的 API Key（密钥字段在界面上按密码处理）。
+
+### DeepSeek 余额的数据来源
+
+插件按以下顺序取数，**账号优先**：
+
+1. **DSH 账号余额**：桌面端登录 DSH 账号后，Host 的 `deepseekAccount` 服务读取 Platform 余额
+   （正常余额 + 赠金一并计入）。**不需要 API Key，也不涉及 token**——账号控制器只暴露安全的余额投影。
+2. **DeepSeek 开放平台 API Key**（回退）：账号未登录或该服务不存在的部署（如普通 Web）会走这条，
+   请求 `api.deepseek.com/user/balance`。
+
+胶囊里两者都显示为同一行「DeepSeek」，取数结果带 `via` 字段标明本次来源（`account` / `api`）。
+
 ## 配置
 
 打开「**设置 → 插件 → 套餐用量**」，可分别开关各渠道并填写 API Key：
