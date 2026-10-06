@@ -6,6 +6,7 @@ AI 套餐的用量与余额，点击可展开详情面板。
 > **本插件 fork 自 [`chendefine/dsh-plugins-plan-usage`](https://github.com/chendefine/dsh-plugins-plan-usage)
 > （上游包名即 `dsh-plan-usage`）**
 
+![效果预览：左侧状态栏底部显示 DeepSeek 官网余额与 OpenAI Codex 额度](https://raw.githubusercontent.com/Slacom/dsh-usage-dock/main/preview.png)
 
 ## 支持的渠道
 
