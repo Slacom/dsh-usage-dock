@@ -3,3 +3,7 @@ node_modules/
 *.bak-*
 *.log
 .DS_Store
+
+# 本地保留、不入库（历史补丁与第三方参考源码）
+legacy/
+reference/
