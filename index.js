@@ -56,11 +56,10 @@ export function apply(ctx, config) {
         json(res, 200, { ok: false, error: 'disabled', message: '套餐用量已停用' })
         return
       }
+      // shell 服务只用于 Python/curl 兜底后端；原生 fetch 后端（0.6.2 起首选）
+      // 不需要它。移动端曾因为缺 python/curl 而整体取数失败，所以这里不再把
+      // shell 缺失当成致命错误——交给 util.js 按可用后端降级。
       const shell = ctx.get('shell')
-      if (shell === undefined) {
-        json(res, 503, { ok: false, error: 'no-shell', message: 'shell service unavailable' })
-        return
-      }
       // 各渠道独立取数：一个渠道缺 Key/失败不影响其他渠道。
       const plans = await Promise.all(enabledPlans.map((plan) => plan.fetch(ctx, shell, cfg)))
       json(res, 200, { ok: true, data: { plans } })

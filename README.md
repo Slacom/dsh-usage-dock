@@ -29,7 +29,9 @@ AI 套餐的用量与余额，点击可展开详情面板。
 ### 前提条件
 
 - DSH `0.1.5` 或更高
-- **Windows：需要安装 Python**（DSH 沙箱内 curl 无法完成 TLS 握手，插件会改用随附的 Python 脚本取数；curl 可用时自动走 curl）
+- **无需 Python、无需 curl**：插件在 Host 进程内直接用 Node 原生 fetch 取数（0.6.2 起）。
+  随附的 `plans/http-fetch.py` 与系统 curl 仅作为兜底后端，只在原生 fetch 传输失败
+  （例如必须经系统代理出网的环境）时才会被用到。
 
 ### 方式一：从 npm 安装（推荐）
 
@@ -50,7 +52,8 @@ dsh plugin --profile web add github:Slacom/dsh-usage-dock
 
 ## 兼容性
 
-- **DSH 0.1.5+** 均可用。
+- **DSH 0.1.5+** 均可用，含**移动端 DSH（Android APK）**——0.6.2 起取数不再依赖
+  设备上是否装有 python/curl。
 - **DSH 0.2.0 起**：DSH 移除了 `ctx.settings.register(namespace, Schema)` 这套旧 API；
   本插件因此把配置改为**插件自有的 JSON 文件**（`$DSH_HOME/plan-usage.json`），
   不再依赖 DSH 的 settings 服务，可跨 DSH 版本稳定工作。

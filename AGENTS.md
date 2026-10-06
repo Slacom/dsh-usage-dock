@@ -11,7 +11,7 @@ DeepSeek Harness（DSH）的**侧栏用量/余额插件**：在 Web/桌面端左
 用量与余额，点击可展开详情面板。fork 自 `chendefine/dsh-plugins-plan-usage`，改名 `dsh-usage-dock`
 以避免与上游混淆，并做了一系列定制（见第 6 节）。
 
-**当前版本**：0.6.1　|　**已发布**：GitHub + npm　|　**已安装**：desktop profile
+**当前版本**：0.6.2　|　**已发布**：GitHub + npm　|　**已安装**：desktop profile
 
 ## 2. 关键路径
 
@@ -40,9 +40,10 @@ index.js          Host 半：导出 Config schema、注册 /api/plan-usage 路�
 client.js         Browser 半：侧栏胶囊 + 「内置插件」里的设置页（单文件，零构建）
 plans/index.js    渠道注册表（新增渠道只需在此登记）
 plans/<渠道>.js   每渠道一个模块，统一接口 { id, name, fields, schema, source, fetch }
-plans/util.js     共用工具：curlJson（含后端自适应）、窗口归一化、凭据解析
-plans/http-fetch.py  Windows 沙箱专用取数脚本（TLS 走 OpenSSL）
+plans/util.js     共用工具：curlJson（原生 fetch / Python / curl 三后端自适应）、窗口归一化、凭据解析
+plans/http-fetch.py  兜底取数脚本（Windows 沙箱内 curl 的 TLS 不可用时的 Python/OpenSSL 方案）
 cordis.patch.yml  插件向 profile 贡献的配置层（insert 一个 plan-usage 条目）
+tools/test-fetch-backends.mjs  取数后端 + DeepSeek 渠道回归测试（见第 4 节）
 ```
 
 **已接入渠道**：OpenCode Go、GLM Z.AI、GLM 智谱、Kimi Code、DeepSeek（账号余额优先/API Key 回退）、OpenAI Codex。
@@ -65,9 +66,25 @@ Copy-Item "<本仓库>\plans\*" "C:\Users\Slacom\.dsh\profiles\desktop\node_modu
 node --check index.js; node --check client.js
 node --input-type=module -e "const m=await import('./plans/index.js'); console.log(m.PLANS.map(p=>p.id))"
 
+# 取数后端 + DeepSeek 渠道回归测试（8 项，含「平板场景」复现；T4/T5 需出网）
+node tools/test-fetch-backends.mjs
+
 # 客户端：用 mock 的 require/React/ctx 加载模块并渲染页面组件（历史上抓到过两次真实错误）
 # 见 docs/ 或直接照着旧测试脚本写：mock window.__ModuleLoader__ + React + ctx.slots/configForms
 ```
+
+> 回归测试需要 `@deepseek-ai/schemastery`（渠道模块的 import）。仓库里没有它的副本时，
+> 测试会把这部分记为 SKIP；要跑全量，从已安装的 profile 复制三个包到仓库 `node_modules/`
+> （该目录已被 .gitignore 排除）：
+>
+> ```powershell
+> $src='C:\Users\Slacom\.dsh\profiles\desktop\node_modules'
+> New-Item -ItemType Directory -Force "$PWD\node_modules\@deepseek-ai","$PWD\node_modules\@standard-schema" | Out-Null
+> Copy-Item "$src\@deepseek-ai\schemastery","$src\@deepseek-ai\cosmokit" "$PWD\node_modules\@deepseek-ai\" -Recurse -Force
+> Copy-Item "$src\@standard-schema\spec" "$PWD\node_modules\@standard-schema\" -Recurse -Force
+> ```
+>
+> 注意：**不要**用 junction/symlink 指向 profile——DSH 沙箱禁止创建重解析点（拒绝访问）。
 
 ## 5. DSH 0.2.0 API 契约（★ 踩坑记录，务必先读）
 
@@ -84,6 +101,8 @@ DSH 0.2.0 相对 0.1.x 有**破坏性变更**，以下每一条都是实际踩�
 | 7 | 侧栏底部席位 | 用官方公共席位 `sidebar.footer.action`（list），**无需改 DSH 核心包** |
 | 8 | 设置页读取的是 `entry.fiber.runtime.Config` | 插件必须导出 `Config`，且 loader 已激活该条目 |
 | 9 | Windows 沙箱内 curl 无法完成 TLS 握手（`SEC_E_NO_CREDENTIALS`） | 用随附的 Python 脚本取数；`util.js` 已做 Python⇄curl 自适应 |
+| 10 | **移动端（Android APK）没有任何取数命令**：设备上没有 python，curl 也不可用，于是「shell + 外部命令」这条路全断，DeepSeek 用 API Key 只能显示「upstream request failed」（0.6.1 的真实故障） | **在 Host 进程内用原生 fetch**（`util.js` 的 fetch 后端，0.6.2 起首选）；移动端宿主本身能出网（模型请求、codex-connect 都在同一个进程里跑 fetch），所以这条路一定通；Python/curl 退化为兜底 |
+| 11 | 裸的 `fetch` 报错只有一句 `fetch failed`，看不出 DNS/TLS/代理原因 | 读 `err.cause` 的 `code`/`message` 一并带上（见 `fetchBackend`）；失败信息里同时点名后端与退出码 |
 
 **账号余额调用方式**（Host 端）：
 
@@ -100,7 +119,8 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
 3. **可配置余额警告额度**：`deepseekWarnThreshold`，默认 10 元，0 表示不警告
 4. **OpenAI Codex 订阅额度**：复用 `dsh-codex-connect` 的公开额度 API，不碰 token
 5. **独立设置页**：在「设置 → 内置插件 → Usage Dock」里勾选渠道、填 Key，带保存/放弃
-6. **取数后端自适应**：Python shim ⇄ curl 自动选择
+6. **取数后端自适应**：原生 fetch（首选，Host 进程内）⇄ Python shim ⇄ curl 自动选择，
+   只有传输层失败才换下一个后端；上游答复（含 HTTP 错误）立即返回
 7. **刷新间隔**：60 秒 → 30 秒
 
 ## 7. 已知限制
@@ -108,7 +128,9 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
 - **Host 半仍会拉取已禁用渠道的数据**（它读的是插件加载时的配置）。不影响显示，只是有无谓请求；
   若在意，可让 Host 在每次请求时通过 `configEditor` 重读配置。
 - 插件配置改动**需要 Host 侧生效时必须重启**；显示层的过滤已做到实时。
-- `plans/http-fetch.py` 使 Windows 上**必须装 Python**（沙箱内 curl 的 TLS 不可用）。
+- 原生 fetch **不读系统代理设置**（Node/undici 默认行为）。必须走代理出网的环境里首次请求会先
+  失败一次（最多 10 秒），随后自动落到会读代理的 Python shim 并被记住——功能不受影响，只是首次稍慢。
+  若要让 fetch 直接支持代理，可给 Host 进程加 `NODE_USE_ENV_PROXY=1`（Node 24+）。
 
 ## 8. 发布
 
@@ -136,6 +158,8 @@ npm publish   # 需在交互式终端输入 OTP；agent 无法代劳
 2. 新增 DeepSeek 余额、Codex 额度；侧栏方案从「改 sidebar 核心包」改为「注册官方席位」（零补丁）
 3. DSH 升级到 0.2.0 后适配了大量 API 变更（见第 5 节），改名 `dsh-usage-dock` 并发布 npm
 4. 加入独立设置页、可配置阈值、保存/放弃按钮、实时配置过滤
+5. 0.6.2 修掉移动端（Android APK）取数全断的问题：改为 Host 进程内原生 fetch，
+   Python/curl 降级兜底；顺带补上逐后端失败原因与 8 项回归测试
 
 ---
 
