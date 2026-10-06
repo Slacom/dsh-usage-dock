@@ -817,8 +817,17 @@ function settingText(value, key) {
  * props.form 由 ConfigForms.get(entryId) 提供。
  */
 function PlanUsageSettingsPage(props) {
+  // form 是 ConfigFormController 实例，其 getSnapshot/subscribe/set 都依赖 this；
+  // 直接传方法引用会丢 this 并抛错（页面显示空白），因此先包一层。
   var form = props.form
-  var snap = React.useSyncExternalStore(form.subscribe, form.getSnapshot)
+  var api = React.useMemo(function () {
+    return {
+      subscribe: function (listener) { return form.subscribe(listener) },
+      getSnapshot: function () { return form.getSnapshot() },
+      set: function (field, value) { return form.set(field, value) },
+    }
+  }, [form])
+  var snap = React.useSyncExternalStore(api.subscribe, api.getSnapshot)
   var value = (snap && snap.value) || {}
   var writable = snap ? snap.writable === true : false
   var rows = []
@@ -828,7 +837,7 @@ function PlanUsageSettingsPage(props) {
       type: "checkbox",
       checked: settingBool(value, "enabled", true),
       disabled: !writable,
-      onChange: function (e) { form.set("enabled", e.target.checked) },
+      onChange: function (e) { api.set("enabled", e.target.checked) },
     }),
     h("span", {}, "启用套餐用量角标"),
   ))
@@ -845,7 +854,7 @@ function PlanUsageSettingsPage(props) {
           type: "checkbox",
           checked: enabled,
           disabled: !writable,
-          onChange: (function (key) { return function (e) { form.set(key, e.target.checked) } })(enabledKey),
+          onChange: (function (key) { return function (e) { api.set(key, e.target.checked) } })(enabledKey),
         }),
         h("span", {}, meta.name),
       ),
@@ -860,7 +869,7 @@ function PlanUsageSettingsPage(props) {
         placeholder: meta.name + " API Key（留空则回退到「设置 → 模型」中的凭据）",
         value: settingText(value, fields.apiKey),
         disabled: !writable,
-        onChange: (function (key) { return function (e) { form.set(key, e.target.value) } })(fields.apiKey),
+        onChange: (function (key) { return function (e) { api.set(key, e.target.value) } })(fields.apiKey),
       }))
     }
     if (enabled && meta.noCredential) {
@@ -910,7 +919,7 @@ function apply(ctx) {
         name: 'settings.plugins.tab',
         id: 'plan-usage',
         order: 40,
-        label: function () { return '套餐用量' },
+        label: function () { return 'Usage Dock' },
         inject: function () { return { form: form } },
       }, PlanUsageSettingsPage)
     })
