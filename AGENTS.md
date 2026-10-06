@@ -135,12 +135,33 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
 ## 8. 发布
 
 ```powershell
-# 版本号（package.json）→ 提交 → 推送 → 发布
+# 1) 改 package.json 版本号 + 更新文档 → 提交 → 推送
 git -C "E:\WorkSpace\DSH\DSH Usage Dock" push origin main
-npm publish   # 需在交互式终端输入 OTP；agent 无法代劳
+
+# 2) npm 发布（需在交互式终端输入 OTP；agent 无法代劳）
+npm publish
+
+# 3) 打标签并推送（标签命名 v<版本号>）
+git -C "E:\WorkSpace\DSH\DSH Usage Dock" tag -a v0.6.3 -m "dsh-usage-dock v0.6.3"
+git -C "E:\WorkSpace\DSH\DSH Usage Dock" push origin v0.6.3
 ```
 
 > npm 发布需要 2FA 验证码，**agent 环境无法完成**（npm 会把认证链接脱敏成 `***`），必须由人执行。
+
+**GitHub Release**：本机**没有装 `gh`**，用 REST API 创建即可（已验证可行）：
+
+```powershell
+# 凭据从已存的 git 凭据里取（本机装了 GCM；token 不要打印出来）
+$token = (("protocol=https`nhost=github.com`n`n" | git credential fill) -replace '^password=','' |
+  Where-Object { $_ -notlike 'protocol=*' -and $_ -notlike 'host=*' -and $_ -notlike 'username=*' })
+# 然后 POST https://api.github.com/repos/Slacom/dsh-usage-dock/releases
+#   { tag_name, name, body（markdown，UTF-8 字节发送）, draft:false, prerelease:false }
+```
+
+- 发布说明写在仓库里（如 `docs/release-notes-v0.6.2.md`），既进版本库、又可直接作为 Release 正文；
+- 历史：**v0.6.2 是本仓库的第一个 tag 与第一个 GitHub Release**；npm 上 0.4.x/0.5.x/0.6.0
+  从未单独发布，用户是从 `0.3.0` 直接跳到 `0.6.1`/`0.6.2` 的——写发布说明时注意这一点，
+  否则「相比上一版」会漏掉一大段变更。
 
 ## 9. 目录说明
 
