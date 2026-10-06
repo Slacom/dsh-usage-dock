@@ -1,5 +1,8 @@
 # dsh-usage-dock
 
+[![npm version](https://img.shields.io/npm/v/dsh-usage-dock.svg)](https://www.npmjs.com/package/dsh-usage-dock)
+[![license](https://img.shields.io/npm/l/dsh-usage-dock.svg)](https://github.com/Slacom/dsh-usage-dock/blob/main/LICENSE)
+
 DeepSeek Harness（DSH）的**套餐用量角标**插件：在 Web 界面**左侧状态栏底部**显示各
 AI 套餐的用量与余额，点击可展开详情面板。
 
@@ -28,7 +31,15 @@ AI 套餐的用量与余额，点击可展开详情面板。
 - DSH `0.1.5` 或更高
 - **Windows：需要安装 Python**（DSH 沙箱内 curl 无法完成 TLS 握手，插件会改用随附的 Python 脚本取数；curl 可用时自动走 curl）
 
-### 一条命令
+### 方式一：从 npm 安装（推荐）
+
+```powershell
+dsh plugin --profile web add dsh-usage-dock
+```
+
+也可以在 DSH 的「**设置 → 插件 → 添加插件**」中直接填入包名 `dsh-usage-dock`。
+
+### 方式二：从 GitHub 安装
 
 ```powershell
 dsh plugin --profile web add github:Slacom/dsh-usage-dock
@@ -55,7 +66,9 @@ dsh plugin --profile web add github:Slacom/dsh-usage-dock
 
 ```powershell
 dsh plugin --profile web remove dsh-usage-dock
-dsh plugin --profile web add github:Slacom/dsh-usage-dock
+dsh plugin --profile web add dsh-usage-dock          # npm 源
+# 或
+dsh plugin --profile web add github:Slacom/dsh-usage-dock   # GitHub 源
 ```
 
 ## 卸载
