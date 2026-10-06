@@ -28,6 +28,11 @@ DeepSeek Harness（DSH）的**侧栏用量/余额插件**：在 Web/桌面端左
 > ⚠️ `app.asar` 是 **121MB 的归档文件**，Node/PowerShell 等独立进程**无法**直接读里面的路径；
 > 只有 DSH 运行时会注入 asar 支持。用 `dsh.cmd` 调 CLI，不要试图 `node <asar内路径>`。
 
+> 📁 **本项目位于 DSH 工作区之外（E 盘）**。DSH 沙箱首次访问该目录时会自动做一次 ACL 诊断，
+> 并为当前用户补上完全控制权限（这是必要的，否则读写会失败），同时在 `E:\WorkSpace\DSH\` 下
+> 留下 `acl-recovery-<slug>/` 目录（含原始权限备份与回滚脚本）。诊断结论若为 `rollback: not-needed`，
+> 该目录即可删除——**不要**按回滚脚本恢复原权限，那会让沙箱重新无法访问。
+
 ## 3. 架构
 
 ```
