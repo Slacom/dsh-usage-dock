@@ -48,6 +48,15 @@ dsh plugin --profile web add github:Slacom/dsh-usage-dock
 安装后**重启 `dsh web` 进程**，浏览器硬刷新（Ctrl+Shift+R）。
 
 
+## 兼容性
+
+- **DSH 0.1.5+** 均可用。
+- **DSH 0.2.0 起**：DSH 移除了 `ctx.settings.register(namespace, Schema)` 这套旧 API；
+  本插件因此把配置改为**插件自有的 JSON 文件**（`$DSH_HOME/plan-usage.json`），
+  不再依赖 DSH 的 settings 服务，可跨 DSH 版本稳定工作。
+- 从 0.1.x 升级过来时，请在「设置 → 插件 → 套餐用量」里**重新填写各渠道的 API Key**
+  （旧版把这些存在 DSH 的 `settings.yaml` 中，新版本不再读取该文件）。
+
 ## 配置
 
 打开「**设置 → 插件 → 套餐用量**」，可分别开关各渠道并填写 API Key：

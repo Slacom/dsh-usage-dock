@@ -7,9 +7,10 @@
  * GLM 两渠道共享 plans/glm.js 的实现），plans/index.js 是注册表。本文件只负责
  * 路由、配置读写与通用编排，全部经注册表驱动——新增套餐不需要改动这里。
  *
- * 配置持久化使用 `plan-usage` 设置命名空间（in-process 读写，不依赖 harness 的
- * 配置客户端白名单），浏览器端通过插件自己的 /config 路由读写，因此本插件
- * 无需修改 harness 源码即可在「设置 → 插件 → 插件配置」里提供配置卡片。
+ * 配置持久化：写入 `$DSH_HOME/plan-usage.json`（原子替换），**不依赖 DSH 的
+ * settings 服务**。DSH 0.2.0 起移除了 `ctx.settings.register(ns, Schema)`，改用
+ * SettingsForms + Cordis 配置；本插件通过自己的 /config 路由让浏览器读写，
+ * 因此把存储放在插件自有的 JSON 文件里，可跨 DSH 版本稳定工作。
  *
  * 每个套餐的 API Key 解析优先级相同（见 plans/util.js 的 resolveApiKey）：
  * 1. 插件配置里该套餐的 `apiKey`（若留空则跳过）；
@@ -20,27 +21,39 @@
  * 与 @deepseek-ai/dsh-settings 声明（二者由 profile 的 node_modules 提升解析）。
  */
 
-import z from '@deepseek-ai/schemastery'
-import { PLANS, PLAN_BY_ID, planSchemaFields } from './plans/index.js'
-
-/** 插件配置的设置命名空间（仅作为本插件的持久化存储，不经 wire 暴露）。 */
-const NS = 'plan-usage'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { PLANS, PLAN_BY_ID } from './plans/index.js'
 
 export const name = 'plan-usage'
-export const inject = ['webServer', 'settings']
+/** 只需 webServer：配置存储是本插件自有的 JSON 文件，不用 settings 服务。 */
+export const inject = ['webServer']
 
-/**
- * 插件配置 schema（apiKey/cookie 均为 write-only 密钥，绝不通过 wire 返回）：
- * - `enabled` 全局开关，关闭后角标整体隐藏；
- * - 其余字段由各套餐模块的 `schema` 声明（plans/index.js 合并）：
- *   `apiKey` 为 v0.1 遗留键名，即 OpenCode Go 的插件级 Key；各套餐的
- *   开关（`*Enabled`）与密钥（`*ApiKey`）；`kimiCodeCookie` 为 Kimi
- *   会员月度额度的可选 kimi-auth 会话 Cookie。
- */
-const Config = z.object(Object.assign(
-  { enabled: z.boolean().default(true) },
-  planSchemaFields(),
-))
+/** 配置文件位置：`$DSH_HOME/plan-usage.json`，默认 `~/.dsh/plan-usage.json`。 */
+function configFile() {
+  const home = process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
+  return path.join(home, 'plan-usage.json')
+}
+
+/** 读取配置；文件缺失或损坏时返回空对象（等价于全部默认值）。 */
+function readConfigFile() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(configFile(), 'utf8'))
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch (err) {
+    return {}
+  }
+}
+
+/** 原子写入配置：先写同目录临时文件再改名，避免读到半截内容。 */
+function writeConfigFile(cfg) {
+  const file = configFile()
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const tmp = file + '.tmp'
+  fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2) + '\n', 'utf8')
+  fs.renameSync(tmp, file)
+}
 
 function json(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
@@ -49,7 +62,6 @@ function json(res, status, body) {
 
 /** 配置的浏览器视图：只含非敏感字段（密钥的值永不返回）。 */
 function configView(ctx, cfg) {
-  const settings = ctx.get('settings')
   const plans = {}
   for (const plan of PLANS) {
     const fields = plan.fields
@@ -64,7 +76,8 @@ function configView(ctx, cfg) {
   return {
     enabled: cfg.enabled !== false,
     plans,
-    writable: settings !== undefined && settings.writable === true,
+    // 存储是本插件自有的 JSON 文件，只要进程能写就视为可写。
+    writable: true,
   }
 }
 
@@ -76,11 +89,22 @@ async function readBody(req) {
 }
 
 export function apply(ctx, config) {
-  // 组合层配置（cordis.yml 中的 plan-usage 行）作为 base 层；用户层由设置文档覆盖。
+  // 组合层配置（cordis 行）作为 base 层；$DSH_HOME/plan-usage.json 为权威存储。
   const entry = config != null && typeof config === 'object' ? config : {}
-  // 直接注册设置命名空间：`settings` 作为硬依赖，注册发生在 apply 内同步完成。
-  const scope = ctx.settings.register(NS, Config, { base: entry })
-  const current = () => scope.get()
+  let cfg = Object.assign({}, entry, readConfigFile())
+  const current = () => cfg
+  /** 合并一个补丁并落盘（原子替换）。 */
+  const update = (patch) => {
+    cfg = Object.assign({}, cfg, patch)
+    writeConfigFile(cfg)
+  }
+  /** 删除一个键并落盘（等价于旧版 settings.mutate 的 unset）。 */
+  const unset = (key) => {
+    const next = Object.assign({}, cfg)
+    delete next[key]
+    cfg = next
+    writeConfigFile(cfg)
+  }
 
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
@@ -156,33 +180,33 @@ export function apply(ctx, config) {
         }
       }
       try {
-        if (input.enabled !== undefined) await scope.update({ enabled: input.enabled === true })
+        if (input.enabled !== undefined) await update({ enabled: input.enabled === true })
         for (const plan of PLANS) {
           const up = planUpdates[plan.id]
           if (up === undefined) continue
           const fields = plan.fields
-          if (up.enabled !== undefined) await scope.update({ [fields.enabled]: up.enabled === true })
+          if (up.enabled !== undefined) await update({ [fields.enabled]: up.enabled === true })
           if (fields.apiKey !== undefined) {
             if (up.clearKey === true) {
-              await ctx.settings.mutate(NS, [{ op: 'unset', path: [fields.apiKey] }])
+              unset(fields.apiKey)
             } else if (typeof up.apiKey === 'string' && up.apiKey.trim() !== '') {
-              await scope.update({ [fields.apiKey]: up.apiKey.trim() })
+              await update({ [fields.apiKey]: up.apiKey.trim() })
             }
           }
           // 可选会话 Cookie（目前仅 kimi-code：月度会员额度）。
           if (fields.cookie !== undefined) {
             if (up.clearCookie === true) {
-              await ctx.settings.mutate(NS, [{ op: 'unset', path: [fields.cookie] }])
+              unset(fields.cookie)
             } else if (typeof up.cookie === 'string' && up.cookie.trim() !== '') {
-              await scope.update({ [fields.cookie]: up.cookie.trim() })
+              await update({ [fields.cookie]: up.cookie.trim() })
             }
           }
         }
         // 兼容旧客户端（v0.1）：顶层 apiKey / clearKey 视作 opencode-go 套餐的更新。
         if (input.clearKey === true) {
-          await ctx.settings.mutate(NS, [{ op: 'unset', path: ['apiKey'] }])
+          unset('apiKey')
         } else if (typeof input.apiKey === 'string' && input.apiKey.trim() !== '') {
-          await scope.update({ apiKey: input.apiKey.trim() })
+          await update({ apiKey: input.apiKey.trim() })
         }
         json(res, 200, { ok: true, data: configView(ctx, current() || {}) })
       } catch (err) {
