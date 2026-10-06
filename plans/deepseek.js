@@ -61,35 +61,38 @@ function pickBalance(wallets) {
  * @returns { balance, isAvailable }；账号服务不可用/未登录/失败时返回 null 表示应回退。
  */
 async function fetchAccountBalance(ctx) {
-  const account = ctx.get('deepseekAccount')
-  if (account === undefined || typeof account.getBalance !== "function") return null
+  const account = ctx.get("deepseekAccount")
+  if (account === undefined) return { ok: false, reason: "账号服务未加载（deepseekAccount 不可用）" }
+  if (typeof account.getBalance !== "function") return { ok: false, reason: "账号服务没有 getBalance 方法" }
   try {
     const summary = await account.getBalance(CLIENT_METADATA)
-    if (summary === null || typeof summary !== "object") return null
+    if (summary === null || summary === undefined) return { ok: false, reason: "账号未登录（getBalance 返回空）" }
+    if (typeof summary !== "object") return { ok: false, reason: "账号返回了非对象结果" }
     const normal = pickBalance(summary.normal_wallets)
     const bonus = pickBalance(summary.bonus_wallets)
-    // 赠金与普通余额相加；两者都缺失才算读取失败。
-    if (normal === null && bonus === null) return null
-    return { balance: (normal || 0) + (bonus || 0), isAvailable: true }
+    if (normal === null && bonus === null) {
+      return { ok: false, reason: "账号余额为空（wallets: " + JSON.stringify(Object.keys(summary)) + "）" }
+    }
+    return { ok: true, balance: (normal || 0) + (bonus || 0) }
   } catch (err) {
-    // 未登录、凭证过期或 Platform 不可达：交给 API Key 回退处理。
-    return null
+    const msg = err && err.message ? err.message : String(err)
+    return { ok: false, reason: "账号余额读取失败: " + msg }
   }
 }
 
 /** 拉取 DeepSeek 余额：优先 DSH 账号，回退开放平台 API Key。 */
 export async function fetchPlan(ctx, shell, cfg) {
   // 1) 账号余额（桌面端登录即可用，无需任何 Key）
-  const viaAccount = await fetchAccountBalance(ctx)
-  if (viaAccount !== null) {
-    return Object.assign(planBase(plan), viaAccount, { via: 'account' })
+  const account = await fetchAccountBalance(ctx)
+  if (account.ok) {
+    return Object.assign(planBase(plan), { balance: account.balance, isAvailable: true, via: "account" })
   }
 
   // 2) 回退：开放平台 API Key
   const apiKey = await resolveApiKey(ctx, cfg, fields.apiKey, source.refs)
   if (apiKey === undefined) {
     return Object.assign(noKey(plan), {
-      message: 'DSH 账号未登录，且未配置 DeepSeek API Key：请在桌面端登录账号，或在插件设置里填入 Key',
+      message: "账号余额不可用（" + account.reason + "），且未配置 DeepSeek API Key",
     })
   }
   try {
@@ -97,7 +100,12 @@ export async function fetchPlan(ctx, shell, cfg) {
       auth: apiKey,
       bearer: source.bearer,
     })
-    if (err !== undefined) return Object.assign(planBase(plan), err)
+    if (err !== undefined) {
+      // API Key 回退也失败时，把账号侧原因一并带上，便于定位。
+      return Object.assign(planBase(plan), err, {
+        message: (err.message || "DeepSeek 余额获取失败") + "（API Key 方式；账号侧：" + account.reason + "）",
+      })
+    }
     const infos = Array.isArray(data.balance_infos) ? data.balance_infos : []
     const cny = infos.find((b) => b && b.currency === "CNY")
     const info = cny !== undefined ? cny : infos[0]
@@ -105,10 +113,10 @@ export async function fetchPlan(ctx, shell, cfg) {
     return Object.assign(planBase(plan), {
       balance: balance,
       isAvailable: data.is_available === true,
-      via: 'api',
+      via: "api",
     })
   } catch (err) {
-    return execError(plan)
+    return Object.assign(execError(plan), { message: "上游请求异常；账号侧：" + account.reason })
   }
 }
 

@@ -25,7 +25,8 @@ export const inject = ['webServer']
 
 /** 插件配置 schema：DSH 据此渲染设置页并持久化到 profile 的 Cordis patch。 */
 export const Config = z.object(Object.assign(
-  { enabled: z.boolean().default(true) },
+  // .volatile() 是 DSH 设置表单显示该字段的前提。
+  { enabled: z.boolean().default(true).volatile() },
   planSchemaFields(),
 ))
 

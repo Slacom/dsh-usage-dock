@@ -17,9 +17,20 @@ export const PLANS = [opencodeGo, glmZai, glmZhipu, kimiCode, deepseek, codex]
 /** id → plan 的索引（配置读写路由校验未知套餐用）。 */
 export const PLAN_BY_ID = Object.fromEntries(PLANS.map((plan) => [plan.id, plan]))
 
-/** 所有套餐 schema 字段的并集：index.js 据此组装插件的 Config 对象。 */
+/**
+ * 所有渠道 schema 字段的并集：index.js 据此组装插件的 Config 对象。
+ *
+ * 这里给每个字段统一补上 `.volatile()`——DSH 的设置表单**只展示 volatile 字段**
+ * （见 @deepseek-ai/dsh-settings 文档），没有它插件不会出现设置页。
+ * 各渠道模块因此无需自行声明 volatile。
+ */
 export function planSchemaFields() {
   const fields = {}
-  for (const plan of PLANS) Object.assign(fields, plan.schema)
+  for (const plan of PLANS) {
+    for (const key of Object.keys(plan.schema)) {
+      const field = plan.schema[key]
+      fields[key] = field != null && typeof field.volatile === 'function' ? field.volatile() : field
+    }
+  }
   return fields
 }
