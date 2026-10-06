@@ -65,14 +65,16 @@ async function fetchAccountBalance(ctx) {
   if (account === undefined) return { ok: false, reason: "账号服务未加载（deepseekAccount 不可用）" }
   if (typeof account.getBalance !== "function") return { ok: false, reason: "账号服务没有 getBalance 方法" }
   try {
+    // Remote 契约：null（未登录）| { status: "ready", value: [...], bonusWallets: [...] } | { status: "failed" }
     const summary = await account.getBalance(CLIENT_METADATA)
-    if (summary === null || summary === undefined) return { ok: false, reason: "账号未登录（getBalance 返回空）" }
+    if (summary === null || summary === undefined) return { ok: false, reason: "账号未登录" }
     if (typeof summary !== "object") return { ok: false, reason: "账号返回了非对象结果" }
-    const normal = pickBalance(summary.normal_wallets)
-    const bonus = pickBalance(summary.bonus_wallets)
-    if (normal === null && bonus === null) {
-      return { ok: false, reason: "账号余额为空（wallets: " + JSON.stringify(Object.keys(summary)) + "）" }
-    }
+    if (summary.status === "failed") return { ok: false, reason: "账号余额读取失败（Platform 返回 failed）" }
+    if (summary.status !== "ready") return { ok: false, reason: "账号返回未知状态: " + String(summary.status) }
+    // value = 普通余额钱包；bonusWallets = 赠金钱包。
+    const normal = pickBalance(summary.value)
+    const bonus = pickBalance(summary.bonusWallets)
+    if (normal === null && bonus === null) return { ok: false, reason: "账号余额为空" }
     return { ok: true, balance: (normal || 0) + (bonus || 0) }
   } catch (err) {
     const msg = err && err.message ? err.message : String(err)

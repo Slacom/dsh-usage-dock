@@ -57,6 +57,12 @@ dsh plugin --profile web add github:Slacom/dsh-usage-dock
 - 从 0.1.x 升级过来时，请在「设置 → 插件 → 套餐用量」里**重新填写各渠道的 API Key**
   （旧版把这些存在 DSH 的 `settings.yaml` 中，新版本不再读取该文件）。
 
+## 设置页（0.5.0 起）
+
+插件在「**设置 → 内置插件**」里拥有独立标签页（与 Codex Connect 并列），可直接勾选要显示的渠道、
+填写各渠道 API Key。实现方式：客户端注册 DSH 的 `settings.plugins.tab` 席位，配置读写走
+`configForms` 服务（命名空间即 profile 条目 id `plan-usage`），由 DSH 负责修订号校验与持久化。
+
 ## 配置方式（0.4.0 起）
 
 插件导出 `Config` schema，**DSH 会自动在「设置 → 插件」里生成本插件的设置页**，

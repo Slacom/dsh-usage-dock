@@ -57,15 +57,16 @@ var PLAN_NAME = '套餐用量'
  * 额度增强，未配置时角标只显示 5小时/周限）。
  */
 var PLANS = [
-  { id: 'opencode-go', name: 'OpenCode Go', credentialHint: 'opencode-go' },
-  { id: 'glm-zai', name: 'GLM Z.AI', credentialHint: 'ZAI' },
-  { id: 'glm-zhipu', name: 'GLM 智谱', credentialHint: 'ZHIPU / GLM' },
-  { id: 'kimi-code', name: 'Kimi Code', credentialHint: 'KIMI_CODE', cookieHint: 'kimi-auth' },
+  // fields 与 Host 半各模块的 fields 一一对应：设置页用它读写 DSH 托管的 Config。
+  { id: 'opencode-go', name: 'OpenCode Go', credentialHint: 'opencode-go', fields: { enabled: 'opencodeGoEnabled', apiKey: 'apiKey' } },
+  { id: 'glm-zai', name: 'GLM Z.AI', credentialHint: 'ZAI', fields: { enabled: 'glmEnabled', apiKey: 'glmApiKey' } },
+  { id: 'glm-zhipu', name: 'GLM 智谱', credentialHint: 'ZHIPU / GLM', fields: { enabled: 'glmZhipuEnabled', apiKey: 'glmZhipuApiKey' } },
+  { id: 'kimi-code', name: 'Kimi Code', credentialHint: 'KIMI_CODE', cookieHint: 'kimi-auth', fields: { enabled: 'kimiCodeEnabled', apiKey: 'kimiCodeApiKey', cookie: 'kimiCodeCookie' } },
   // [local patch] DeepSeek 官网 API 余额：右侧只显示剩余余额（元）；
   // balanceThreshold=30：余额低于 30 元时状态灯显示红灯。
-  { id: 'deepseek', name: 'DeepSeek 官网', credentialHint: 'DEEPSEEK', balanceThreshold: 30 },
+  { id: 'deepseek', name: 'DeepSeek', credentialHint: 'DEEPSEEK', balanceThreshold: 30, fields: { enabled: 'deepseekEnabled', apiKey: 'deepseekApiKey' } },
   // 复用 dsh-codex-connect 的 ChatGPT OAuth，无需另填 API Key。
-  { id: 'codex', name: 'OpenAI Codex', noCredential: true, percentMode: 'remaining', credentialNote: '复用 Codex Connect 的 ChatGPT 登录；请先在 Codex Connect 配置中完成登录。' },
+  { id: 'codex', name: 'OpenAI Codex', noCredential: true, percentMode: 'remaining', credentialNote: '复用 Codex Connect 的 ChatGPT 登录；请先在 Codex Connect 配置中完成登录。', fields: { enabled: 'codexEnabled' } },
 ]
 
 function planMeta(id) {
@@ -786,10 +787,103 @@ function PlanUsageConfigCard(props) {
 }
 
 // ===========================================================================
+// 「内置插件」里的设置页（settings.plugins.tab 席位）
+// ===========================================================================
+// 配置由 DSH 托管：Host 半导出 Config schema，客户端通过 configForms 服务
+// 读写当前 profile 条目的配置（命名空间 = 条目 id，即 plan-usage）。
+// 表单控制器负责修订号校验、写队列与持久化，这里只负责渲染。
+
+var settingsPageStyle = { display: "flex", flexDirection: "column", gap: 14, maxWidth: 640 }
+var settingsIntroStyle = { margin: 0, color: "var(--dsw-alias-label-tertiary)", fontSize: 13, lineHeight: "20px" }
+var settingsGroupStyle = { display: "flex", flexDirection: "column", gap: 6, paddingTop: 10, borderTop: "0.5px solid var(--dsw-alias-border-l2)" }
+var settingsRowStyle = { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13, color: "var(--dsw-alias-label-primary)" }
+var settingsInputStyle = { boxSizing: "border-box", width: "100%", padding: "6px 9px", borderRadius: 8, border: "1px solid var(--dsw-alias-border-l2)", background: "var(--dsw-alias-bg-layer-3)", color: "var(--dsw-alias-label-primary)", fontSize: 13 }
+var settingsHintStyle = { margin: 0, color: "var(--dsw-alias-label-tertiary)", fontSize: 12, lineHeight: "18px" }
+
+/** 读取当前配置里的布尔值（未设置时按 schema 默认值处理）。 */
+function settingBool(value, key, fallback) {
+  var raw = value[key]
+  return typeof raw === "boolean" ? raw : fallback
+}
+
+/** 读取当前配置里的字符串值。 */
+function settingText(value, key) {
+  var raw = value[key]
+  return typeof raw === "string" ? raw : ""
+}
+
+/**
+ * 设置页组件：一个全局开关 + 每个渠道的开关与（可选）密钥输入。
+ * props.form 由 ConfigForms.get(entryId) 提供。
+ */
+function PlanUsageSettingsPage(props) {
+  var form = props.form
+  var snap = React.useSyncExternalStore(form.subscribe, form.getSnapshot)
+  var value = (snap && snap.value) || {}
+  var writable = snap ? snap.writable === true : false
+  var rows = []
+
+  rows.push(h("label", { key: "__global", style: settingsRowStyle },
+    h("input", {
+      type: "checkbox",
+      checked: settingBool(value, "enabled", true),
+      disabled: !writable,
+      onChange: function (e) { form.set("enabled", e.target.checked) },
+    }),
+    h("span", {}, "启用套餐用量角标"),
+  ))
+
+  for (var i = 0; i < PLANS.length; i++) {
+    var meta = PLANS[i]
+    var fields = meta.fields || {}
+    var enabledKey = fields.enabled
+    if (enabledKey === undefined) continue
+    var enabled = settingBool(value, enabledKey, true)
+    var children = [
+      h("label", { key: "row", style: settingsRowStyle },
+        h("input", {
+          type: "checkbox",
+          checked: enabled,
+          disabled: !writable,
+          onChange: (function (key) { return function (e) { form.set(key, e.target.checked) } })(enabledKey),
+        }),
+        h("span", {}, meta.name),
+      ),
+    ]
+    // 密钥输入：仅在渠道启用时显示（Codex 走 OAuth，没有密钥字段）。
+    if (enabled && fields.apiKey !== undefined) {
+      children.push(h("input", {
+        key: "key",
+        type: "password",
+        autoComplete: "off",
+        style: settingsInputStyle,
+        placeholder: meta.name + " API Key（留空则回退到「设置 → 模型」中的凭据）",
+        value: settingText(value, fields.apiKey),
+        disabled: !writable,
+        onChange: (function (key) { return function (e) { form.set(key, e.target.value) } })(fields.apiKey),
+      }))
+    }
+    if (enabled && meta.noCredential) {
+      children.push(h("p", { key: "note", style: settingsHintStyle },
+        "复用 Codex Connect 的 ChatGPT 登录，无需 API Key；请先在 Codex Connect 中完成登录。"))
+    }
+    rows.push(h("div", { key: meta.id, style: settingsGroupStyle }, children))
+  }
+
+  return h("div", { style: settingsPageStyle },
+    h("p", { style: settingsIntroStyle },
+      writable
+        ? "选择要显示的渠道并填入各自的 API Key。配置由 DSH 保存到当前 profile，改动即时生效。"
+        : "当前部署的设置为只读，无法在此修改。"),
+    rows,
+  )
+}
+// ===========================================================================
 // apply
 // ===========================================================================
 
-var inject = ['slots']
+// configForms 提供 DSH 托管的配置表单（读写当前 profile 条目的 Config）。
+var inject = ['slots', 'configForms']
 
 function apply(ctx) {
   // 配置由 DSH 基于 Host 半导出的 Config schema 自动生成设置页并持久化，
@@ -806,6 +900,21 @@ function apply(ctx) {
       inject: function () { return {} },
     }, PlanUsageBadge)
   })
+  // 设置页：注册进「内置插件」页面的 tab 席位 settings.plugins.tab，
+  // 与 Codex Connect 的做法一致。configForms 提供该条目的配置表单，
+  // whileServed 保证只有 Host 真正提供该命名空间时才出现这个页面。
+  var form = ctx.configForms.get('plan-usage')
+  ctx.effect(function () {
+    return ctx.configForms.whileServed(['plan-usage'], function () {
+      return ctx.slots.register({
+        name: 'settings.plugins.tab',
+        id: 'plan-usage',
+        order: 40,
+        label: function () { return '套餐用量' },
+        inject: function () { return { form: form } },
+      }, PlanUsageSettingsPage)
+    })
+  }, 'plan-usage: settings page')
 }
 
 module.exports = { name: 'plan-usage', inject: inject, apply: apply }
