@@ -166,9 +166,18 @@ git -C "E:\WorkSpace\DSH\DSH Usage Dock" push origin v0.6.4
 npm publish
 ```
 
-> **npm publish 只能由人在交互式终端执行**：本机 `~/.npmrc` 里那个 `_authToken` 已失效
-> （实测 `npm whoami` → **401**，`npm publish` → **404/E404**），而且 npm 的 2FA 验证码只在人手里。
+> **npm publish 只能由人在交互式终端执行**：npm 的 2FA 验证码只在人手里，
 > agent 最多做到 `npm publish --dry-run` 核对打包内容（0.6.3 时为 16 个文件、35.8 kB）。
+>
+> ⚠️ **`~/.npmrc` 里的登录 token 会过期**（2026-10-08 实测，浪费过一次排查时间）：
+> `npm login` 在 **10-06 12:28** 写入的 `_authToken`，当天 **14:15** 还能成功发布 0.6.2，
+> 两天后再发就变成 `npm whoami` → **401 Unauthorized**、`npm publish` → **E404 Not Found - PUT
+> https://registry.npmjs.org/dsh-usage-dock**。
+> 「404 找不到包」这个假象极具迷惑性（包确实存在、账号也是 maintainer），**根因是凭据失效**，
+> 与包名、scope、权限、代码都无关。排查顺序固定为：
+> `npm whoami`（401 = 凭据问题，先解决它）→ `npm publish --dry-run`（打包是否正常）→ 再真发。
+> 处理办法二选一：重新 `npm login`（浏览器授权，写入新 token）；或在 npmjs.com 生成一个
+> **Automation 类型的 token**（可绕过 2FA）写进 `~/.npmrc`，此后 `npm publish` 可非交互完成。
 
 **GitHub Release**：本机**没有装 `gh`**，用 REST API 创建即可（已验证可行）：
 
