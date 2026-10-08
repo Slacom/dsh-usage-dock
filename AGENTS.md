@@ -58,6 +58,7 @@ Copy-Item "<本仓库>\index.js","<本仓库>\client.js" "C:\Users\Slacom\.dsh\p
 Copy-Item "<本仓库>\plans\*" "C:\Users\Slacom\.dsh\profiles\desktop\node_modules\dsh-usage-dock\plans\" -Force
 # 3) 重启 DSH 桌面端（client bundle 在插件激活时缓存，改文件不会热生效）
 # 4) 浏览器硬刷新 Ctrl+Shift+R
+# 5) 交给用户安装测试 —— 用户确认之前不要 push / 打标签 / 发 Release（见第 8 节的推送闸门）
 ```
 
 **本地自测**（无需重启，能在部署前抓出大部分错误）：
@@ -141,19 +142,33 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
 
 ## 8. 发布
 
+> ⛔ **推送闸门（用户 2026-10-08 明确要求，优先于本节其余内容）**：
+> 版本构建完成后**不要急着 push / 打标签 / 发 Release / npm publish**。
+> 先在本地部署、由**用户安装测试**，**用户确认没问题之后**才做推送与发布。
+> 反例：0.6.3 是在用户测试前就推送并发了 Release，用户随后纠正了这一点。
+> 如果用户需要**在平板等其它设备上试装**（那些设备只能从 npm / GitHub 取包），
+> 先问用户希望怎么给包，不要自行推送。
+
+用户确认测试通过之后的发布次序：
+
 ```powershell
-# 1) 改 package.json 版本号 + 更新文档 → 提交 → 推送
+# 1) 改 package.json 版本号 + 更新文档（含 docs/release-notes-v<版本>.md）
+# 2) 提交并推送主干
 git -C "E:\WorkSpace\DSH\DSH Usage Dock" push origin main
 
-# 2) npm 发布（需在交互式终端输入 OTP；agent 无法代劳）
-npm publish
-
 # 3) 打标签并推送（标签命名 v<版本号>）
-git -C "E:\WorkSpace\DSH\DSH Usage Dock" tag -a v0.6.3 -m "dsh-usage-dock v0.6.3"
-git -C "E:\WorkSpace\DSH\DSH Usage Dock" push origin v0.6.3
+git -C "E:\WorkSpace\DSH\DSH Usage Dock" tag -a v0.6.4 -m "dsh-usage-dock v0.6.4"
+git -C "E:\WorkSpace\DSH\DSH Usage Dock" push origin v0.6.4
+
+# 4) GitHub Release（见下）
+
+# 5) npm 发布（只能由人执行，见下面的说明）
+npm publish
 ```
 
-> npm 发布需要 2FA 验证码，**agent 环境无法完成**（npm 会把认证链接脱敏成 `***`），必须由人执行。
+> **npm publish 只能由人在交互式终端执行**：本机 `~/.npmrc` 里那个 `_authToken` 已失效
+> （实测 `npm whoami` → **401**，`npm publish` → **404/E404**），而且 npm 的 2FA 验证码只在人手里。
+> agent 最多做到 `npm publish --dry-run` 核对打包内容（0.6.3 时为 16 个文件、35.8 kB）。
 
 **GitHub Release**：本机**没有装 `gh`**，用 REST API 创建即可（已验证可行）：
 
@@ -193,4 +208,4 @@ $token = (("protocol=https`nhost=github.com`n`n" | git credential fill) -replace
 
 ---
 
-*文档更新时间：2026-10-06*
+*文档更新时间：2026-10-08*
