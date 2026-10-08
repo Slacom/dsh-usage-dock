@@ -11,7 +11,7 @@ DeepSeek Harness（DSH）的**侧栏用量/余额插件**：在 Web/桌面端左
 用量与余额，点击可展开详情面板。fork 自 `chendefine/dsh-plugins-plan-usage`，改名 `dsh-usage-dock`
 以避免与上游混淆，并做了一系列定制（见第 6 节）。
 
-**当前版本**：0.6.2　|　**已发布**：GitHub + npm　|　**已安装**：desktop profile
+**当前版本**：0.6.3　|　**已发布**：GitHub + npm　|　**已安装**：desktop profile
 
 ## 2. 关键路径
 
@@ -44,6 +44,7 @@ plans/util.js     共用工具：curlJson（原生 fetch / Python / curl 三后�
 plans/http-fetch.py  兜底取数脚本（Windows 沙箱内 curl 的 TLS 不可用时的 Python/OpenSSL 方案）
 cordis.patch.yml  插件向 profile 贡献的配置层（insert 一个 plan-usage 条目）
 tools/test-fetch-backends.mjs  取数后端 + DeepSeek 渠道回归测试（见第 4 节）
+tools/test-collapsed-pill.mjs  浏览器半回归测试：缩略（rail）状态不可交互（见第 4 节）
 ```
 
 **已接入渠道**：OpenCode Go、GLM Z.AI、GLM 智谱、Kimi Code、DeepSeek（账号余额优先/API Key 回退）、OpenAI Codex。
@@ -69,8 +70,11 @@ node --input-type=module -e "const m=await import('./plans/index.js'); console.l
 # 取数后端 + DeepSeek 渠道回归测试（8 项，含「平板场景」复现；T4/T5 需出网）
 node tools/test-fetch-backends.mjs
 
-# 客户端：用 mock 的 require/React/ctx 加载模块并渲染页面组件（历史上抓到过两次真实错误）
-# 见 docs/ 或直接照着旧测试脚本写：mock window.__ModuleLoader__ + React + ctx.slots/configForms
+# 浏览器半回归测试：缩略（rail）状态下胶囊必须不可交互（4 项，离线，无需 React 依赖）
+node tools/test-collapsed-pill.mjs
+
+# 客户端（设置页）：同上思路，mock window.__ModuleLoader__ + React + ctx.slots/configForms
+# 历史上抓到过两次真实错误（设置页白屏、this 丢失）
 ```
 
 > 回归测试需要 `@deepseek-ai/schemastery`（渠道模块的 import）。仓库里没有它的副本时，
@@ -102,7 +106,8 @@ DSH 0.2.0 相对 0.1.x 有**破坏性变更**，以下每一条都是实际踩�
 | 8 | 设置页读取的是 `entry.fiber.runtime.Config` | 插件必须导出 `Config`，且 loader 已激活该条目 |
 | 9 | Windows 沙箱内 curl 无法完成 TLS 握手（`SEC_E_NO_CREDENTIALS`） | 用随附的 Python 脚本取数；`util.js` 已做 Python⇄curl 自适应 |
 | 10 | **移动端（Android APK）没有任何取数命令**：设备上没有 python，curl 也不可用，于是「shell + 外部命令」这条路全断，DeepSeek 用 API Key 只能显示「upstream request failed」（0.6.1 的真实故障） | **在 Host 进程内用原生 fetch**（`util.js` 的 fetch 后端，0.6.2 起首选）；移动端宿主本身能出网（模型请求、codex-connect 都在同一个进程里跑 fetch），所以这条路一定通；Python/curl 退化为兜底 |
-| 11 | 裸的 `fetch` 报错只有一句 `fetch failed`，看不出 DNS/TLS/代理原因 | 读 `err.cause` 的 `code`/`message` 一并带上（见 `fetchBackend`）；失败信息里同时点名后端与退出码 |
+| 11 | 裸的 `fetch` 报错只有一句 `fetch failed`，看不出 DNS/TLS/代理原因 | 读 `err.cause` 的 `code`/`message` 一并带上（见 `fetchBackend`）；失败信息里同时点名失败后端与退出码 |
+| 12 | **侧栏缩略（rail）后 slot 仍照常渲染**：`sidebar.footer.action` 的 `wide` 由 sidebar 经 ownerProps 注入（`renderSlot(name, { wide })`，其值为 `!collapsed \|\| !settled`）；rail 宽度只有约 **56px** | 缩略状态不要挂 `onClick`、也不要渲染 `position:absolute; width:100%` 的面板——它会被压成一条竖排乱码（0.6.3 的真实故障，移动端 Web UI 才看得出来，桌面端侧栏够宽所以不显现）。详情面板只在展开态渲染（`open && wide`），否则「先展开点击、再折叠」时 effect 生效前会闪一帧 |
 
 **账号余额调用方式**（Host 端）：
 
@@ -122,6 +127,8 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
 6. **取数后端自适应**：原生 fetch（首选，Host 进程内）⇄ Python shim ⇄ curl 自动选择，
    只有传输层失败才换下一个后端；上游答复（含 HTTP 错误）立即返回
 7. **刷新间隔**：60 秒 → 30 秒
+8. **缩略（rail）状态胶囊不可交互**：折叠后只剩状态圆点，且不挂点击、不渲染详情面板
+   ——详情只在展开状态点击打开（0.6.3，移动端 Web UI 反馈）
 
 ## 7. 已知限制
 
@@ -181,6 +188,8 @@ $token = (("protocol=https`nhost=github.com`n`n" | git credential fill) -replace
 4. 加入独立设置页、可配置阈值、保存/放弃按钮、实时配置过滤
 5. 0.6.2 修掉移动端（Android APK）取数全断的问题：改为 Host 进程内原生 fetch，
    Python/curl 降级兜底；顺带补上逐后端失败原因与 8 项回归测试
+6. 0.6.3 修掉移动端 Web UI 侧栏缩略时点击状态点弹出竖排乱码面板的问题：
+   缩略状态不再挂点击、面板只在展开态渲染；新增浏览器半回归测试（4 项）
 
 ---
 

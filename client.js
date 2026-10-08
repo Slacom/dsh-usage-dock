@@ -293,20 +293,34 @@ function PlanUsageBadge(props) {
     text = '—'
   }
 
+  // [local patch 0.6.3] 缩略（rail）状态下胶囊**不可交互**：rail 只有约 56px 宽，
+  // 而详情面板是 `position:absolute; width:100%`，在 rail 里会被压成一条竖排的
+  // 乱码（移动端 Web UI 实测，桌面端因侧栏够宽不显现）。详情面板只在展开状态
+  // 点击获得；这里在缩略状态**根本不挂 onClick**，元素也从 button 换成 div，
+  // 连键盘/回车都触发不了。
+  // 折叠信号来自 sidebar 的 renderSlot('sidebar.footer.action', { wide })。
+  // 缺失该属性（旧版 sidebar / 其他宿主）时按展开处理，保持既有行为。
   var wide = props.wide !== false
-  var pill = h('button', {
+  var interactive = wide
+  var pillProps = {
     className: 'dsh-plan-usage-pill',
     style: Object.assign({}, pillStyle, {
       width: '100%',
       boxSizing: 'border-box',
       justifyContent: wide ? undefined : 'center',
       borderRadius: capsuleRows.length > 1 ? 12 : 999,
+      // 缩略状态不再显示手型光标，避免暗示「可以点」。
+      cursor: interactive ? 'pointer' : 'default',
     }),
-    type: 'button',
-    onClick: function () { setOpen(!open) },
     title: pillTitle,
-    'aria-expanded': open,
-  },
+  }
+  if (interactive) {
+    pillProps.type = 'button'
+    pillProps.onClick = function () { setOpen(!open) }
+    pillProps['aria-expanded'] = open
+    pillProps['aria-haspopup'] = 'true'
+  }
+  var pill = h(interactive ? 'button' : 'div', pillProps,
     capsuleRows.length > 0
       ? capsuleRows.map(function (r, idx) {
         return h('span', { style: pillRowStyle, key: idx },
@@ -322,7 +336,9 @@ function PlanUsageBadge(props) {
   )
 
   var panel = null
-  if (open) {
+  // 面板只可能在展开状态出现：`wide` 一并作为渲染条件，避免「先展开点击、
+  // 再折叠」时effect 生效前的那一帧里在 rail 内闪出面板。
+  if (open && wide) {
     var sections = plans.map(function (plan) {
       var meta = planMeta(plan.id)
       var title = meta.name + (meta.balanceThreshold !== undefined ? ' 余额' : (meta.percentMode === 'remaining' ? ' 剩余额度' : ' 用量')) + (plan.level ? ' · ' + plan.level : '')
