@@ -177,7 +177,17 @@ npm publish
 > 与包名、scope、权限、代码都无关。排查顺序固定为：
 > `npm whoami`（401 = 凭据问题，先解决它）→ `npm publish --dry-run`（打包是否正常）→ 再真发。
 > 处理办法二选一：重新 `npm login`（浏览器授权，写入新 token）；或在 npmjs.com 生成一个
-> **Automation 类型的 token**（可绕过 2FA）写进 `~/.npmrc`，此后 `npm publish` 可非交互完成。
+> **Automation 类型的 token**（可绕过 2FA；2026-10-08 起本机已配置一个 90 天有效期的）
+> 写进 `~/.npmrc`，此后 `npm publish` 可非交互完成。
+
+> ℹ️ **发布成功后 registry 有短暂延迟**（2026-10-08 实测约 **2 分钟**）：`npm publish` 打印
+> `+ dsh-usage-dock@0.6.3` 和 “Your package is being processed and may take a few minutes to
+> become available.” 之后，服务端才真正对外生效。这段时间 `npm view <pkg> version`
+> **读的是本地缓存**，会继续显示旧版本（连查两次都一样），极易误判成发布失败。正确校验方式：
+> `npm view dsh-usage-dock@0.6.3 version --prefer-online`，或直接请求版本端点
+> `https://registry.npmjs.org/<pkg>/<version>`（200 = 已上线）。也可以比对线上 `dist.shasum`
+> 与本地 `npm publish --dry-run` 的 shasum，确认线上产物就是被测过的那一个
+> （0.6.3 两者一致：`2c76b6a38b0a11522bfbb5f08306d4b5b0d54523`）。
 
 **GitHub Release**：本机**没有装 `gh`**，用 REST API 创建即可（已验证可行）：
 
