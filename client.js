@@ -146,6 +146,8 @@ function quotaToneColor(meta, p, limited) {
 // （list 类型，与「更新 / 远程控制」等按钮同行），不再依赖任何 DSH 核心包补丁，
 // 因此 DSH 升级或插件重装都不会让胶囊消失。
 // flex:1 1 auto 占满按钮之外的空间；minWidth:0 允许在窄侧栏里收缩。
+// [local patch 0.7.0] 该席位是多个插件共享的**横向 flex 行**，因此挂载后由 useOwnRow()
+// 把容器改成可换行、并把胶囊声明成整行（flex-basis:100%），避免与其他插件抢同一行。
 var rootStyle = { position: 'relative', flex: '1 1 auto', minWidth: 0, boxSizing: 'border-box', zIndex: 1000, fontFamily: 'inherit' }
 // 胶囊外形自适应：只有一行时保持圆弧（borderRadius 999）；多行时改为圆角矩形。
 var pillStyle = { display: 'flex', flexDirection: 'column', gap: 2, padding: '6px 6px', background: 'var(--dsw-alias-bg-layer-2)', border: '1px solid var(--dsw-alias-border-l1)', boxShadow: '0 2px 12px rgba(0,0,0,0.18)', cursor: 'pointer', color: 'var(--dsw-alias-label-primary)', fontSize: 12, userSelect: 'none' }
@@ -189,6 +191,52 @@ function worstPercent(plan, meta) {
   return found ? worst : -1
 }
 
+/**
+ * [local patch 0.7.0] 让胶囊独占侧栏底部的一整行，而不是与其他插件抢同一行。
+ *
+ * 底部席位 `sidebar.footer.action` 是 **list** 类型：DSH 把所有插件注册的动作放在
+ * 同一个**横向 flex 行**里（0.1.x 核心包里叫 footerActions，规则就是 `display:flex`）。
+ * 胶囊此前用 `flex:1 1 auto` 参与这一行，于是和别的插件（如 ds-harness-remote，
+ * 它用 order:-20 注册）挤在一起互相抢宽度。
+ *
+ * 做法：挂载后向上找最近的 flex 容器——
+ *   - `flex-direction: row`：给容器补一条 `flex-wrap: wrap`（只动这一条，不碰其他样式），
+ *     并把胶囊声明为 `flex-basis:100%`。这样胶囊必然独占一行，其他插件各自成行，
+ *     上下顺序交给各插件的 slot order 决定；
+ *   - 纵向容器（旧版 footArea 就是 column）：什么都不做，保持 `flex:1 1 auto`——
+ *     纵向容器里 basis:100% 会被解释成「高度」，会压扁同列的其他条目。
+ *
+ * 用运行时探测而不是写死类名：DSH 的 CSS Module 类名带哈希（如 hHd-Xa_footerActions）、
+ * 跨版本会变，而 `:has()` 在旧版 Android WebView 上又不保证支持。
+ */
+function useOwnRow() {
+  var ref = React.useRef(null)
+  var hook = React.useState(false)
+  var ownRow = hook[0]
+  var setOwnRow = hook[1]
+  React.useEffect(function () {
+    var el = ref.current
+    if (!el || typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return
+    var node = el.parentElement
+    var hops = 0
+    while (node && hops < 8) {
+      var cs = window.getComputedStyle(node)
+      var display = cs != null && typeof cs.display === 'string' ? cs.display : ''
+      if (display.indexOf('flex') !== -1) {
+        var direction = (cs.flexDirection != null ? cs.flexDirection : 'row')
+        if (direction.indexOf('row') === 0) {
+          if ((cs.flexWrap != null ? cs.flexWrap : 'nowrap') === 'nowrap') node.style.flexWrap = 'wrap'
+          setOwnRow(true)
+        }
+        return
+      }
+      node = node.parentElement
+      hops++
+    }
+  }, [])
+  return [ref, ownRow]
+}
+
 function PlanUsageBadge(props) {
   // 订阅 DSH 托管的配置：DSH 的插件配置在运行时不会热重载 Host 半，
   // 因此「取消勾选某渠道」需要在这里即时过滤，才能立刻反映到胶囊上。
@@ -202,6 +250,10 @@ function PlanUsageBadge(props) {
   var openHook = React.useState(false)
   var open = openHook[0]
   var setOpen = openHook[1]
+  // [local patch 0.7.0] 底部席位是被多个插件共享的横向 flex 行：让自己独占一行。
+  var rowHook = useOwnRow()
+  var rootRef = rowHook[0]
+  var ownRow = rowHook[1]
 
   // [local patch] 侧栏折叠（wide→false）时自动收起详情面板：rail 窄条下
   // absolute 面板会溢出错乱，折叠即关闭。
@@ -415,7 +467,12 @@ function PlanUsageBadge(props) {
     )
   }
 
-  return h('div', { style: rootStyle }, pill, panel)
+  // [local patch 0.7.0] 独占一行时把胶囊声明为整行宽（basis:100%）；保留 flex-shrink，
+  // 万一宿主容器仍是 nowrap，也只是按比例分宽，不会把其他插件的按钮挤没。
+  var rootStyleNow = ownRow
+    ? Object.assign({}, rootStyle, { flex: '1 1 100%', width: '100%' })
+    : rootStyle
+  return h('div', { style: rootStyleNow, ref: rootRef }, pill, panel)
 }
 
 // ===========================================================================

@@ -6,175 +6,12 @@
  * 在约 56px 宽的 rail 里被压成一条竖排乱码（桌面端侧栏够宽，所以看不出来）。
  * 0.6.3 起：缩略状态不挂 onClick、元素由 button 换成 div，面板也只在展开态渲染。
  *
- * 做法：本仓库没有 jsdom/React 依赖，这里用**极简 hooks 运行时**加载真实的
- * client.js（沿用 AGENTS.md 第 4 节记载的 mock 思路：mock window.__ModuleLoader__
- * + React + ctx.slots/configForms），再把组件树当数据结构断言。
+ * 运行时与加载器见 tools/mock-react.mjs（0.7.0 起与 test-footer-row.mjs 共用）。
  *
  * 用法：node tools/test-collapsed-pill.mjs
  */
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-
-// ---------------------------------------------------------------------------
-// 极简 hooks 运行时（只实现 client.js 用到的 React API：
-// createElement / useState / useEffect / useMemo / useSyncExternalStore）
-// ---------------------------------------------------------------------------
-function createRuntime() {
-  let Component = null
-  let instance = null
-  let current = null
-  let dirty = false
-  let pending = []
-
-  const sameDeps = (a, b) => Array.isArray(a) && Array.isArray(b)
-    && a.length === b.length && a.every((v, i) => Object.is(v, b[i]))
-
-  function slot(kind) {
-    const index = current.cursor++
-    let s = current.hooks[index]
-    if (s === undefined || s.kind !== kind) {
-      s = { kind }
-      current.hooks[index] = s
-    }
-    return s
-  }
-
-  const React = {
-    createElement(type, props) {
-      // 与 React 一致：children 保留 null/false 占位（渲染时忽略），不打平数组实参。
-      const out = Object.assign({}, props)
-      const kids = []
-      for (let i = 2; i < arguments.length; i++) kids.push(arguments[i])
-      if (kids.length === 1) out.children = kids[0]
-      else if (kids.length > 1) out.children = kids
-      return { type, props: out }
-    },
-    useState(init) {
-      const s = slot('state')
-      if (!('value' in s)) s.value = typeof init === 'function' ? init() : init
-      return [s.value, (next) => {
-        s.value = typeof next === 'function' ? next(s.value) : next
-        dirty = true
-      }]
-    },
-    useEffect(fn, deps) {
-      const s = slot('effect')
-      if (s.deps === undefined || !sameDeps(s.deps, deps)) {
-        s.deps = deps
-        pending.push(fn)
-      }
-    },
-    useMemo(fn, deps) {
-      const s = slot('memo')
-      if (s.deps === undefined || !sameDeps(s.deps, deps)) {
-        s.value = fn()
-        s.deps = deps
-      }
-      return s.value
-    },
-    // client.js 只用它读配置快照；测试里 configForm 为 null，subscribe/getSnapshot 都是空实现。
-    useSyncExternalStore(_subscribe, getSnapshot) { return getSnapshot() },
-  }
-
-  function pass(props) {
-    current = instance
-    instance.cursor = 0
-    const tree = Component(props)
-    current = null
-    const queued = pending
-    pending = []
-    for (const fn of queued) fn()
-    return tree
-  }
-
-  return {
-    React,
-    mount(Comp, props) {
-      Component = Comp
-      instance = { hooks: [], cursor: 0 }
-      return pass(props)
-    },
-    /** 单帧渲染：用于捕捉「折叠当帧是否闪出面板」。 */
-    renderOnce(props) { return pass(props) },
-    /** 反复渲染直到没有 setState，并让 fetch 的 promise 链落定。 */
-    async settle(props, rounds = 10) {
-      let tree = pass(props)
-      for (let i = 0; i < rounds; i++) {
-        await Promise.resolve()
-        await new Promise((resolve) => setTimeout(resolve, 0))
-        if (!dirty) return tree
-        dirty = false
-        tree = pass(props)
-      }
-      return tree
-    },
-  }
-}
-
-/** 收集子树里的可见文本（忽略 title 等属性）。 */
-function textOf(node) {
-  if (node === null || node === undefined || typeof node === 'boolean') return ''
-  if (typeof node === 'string' || typeof node === 'number') return String(node)
-  if (Array.isArray(node)) return node.map(textOf).join('')
-  return textOf(node.props ? node.props.children : undefined)
-}
-
-// ---------------------------------------------------------------------------
-// 加载真实的 client.js（mock window.__ModuleLoader__ + require('react')）
-// ---------------------------------------------------------------------------
-const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
-const runtime = createRuntime()
-const React = runtime.React
-let exported = null
-
-globalThis.window = {
-  __ModuleLoader__: {
-    load({ factory }) {
-      exported = factory((name) => {
-        if (name === 'react') return React
-        throw new Error('未预期的模块依赖: ' + name)
-      })
-    },
-  },
-}
-
-// 定时器：胶囊每 30 秒轮询一次，测试里不需要它真的跑（否则进程不退出）。
-const realSetInterval = globalThis.setInterval
-globalThis.setInterval = () => 0
-globalThis.clearInterval = () => {}
-
-// 上游数据用真机截图里的同一组数值（DeepSeek ¥7.38 / Codex 33% 72%）。
-const API_PAYLOAD = {
-  ok: true,
-  data: {
-    plans: [
-      { id: 'deepseek', name: 'DeepSeek', balance: 7.38, isAvailable: true, via: 'account', warnThreshold: 10 },
-      {
-        id: 'codex',
-        name: 'OpenAI Codex',
-        rollingUsage: { status: null, percent: 33, resetsAt: null, resetInSec: null },
-        weeklyUsage: { status: null, percent: 72, resetsAt: null, resetInSec: null },
-      },
-    ],
-  },
-}
-globalThis.fetch = async () => ({ json: async () => API_PAYLOAD })
-
-new Function(source)()
-
-// 通过 apply(ctx) 取到胶囊组件（它只经席位注册暴露，不直接导出）。
-let Badge = null
-exported.apply({
-  configForms: {
-    get: () => null,
-    whileServed: () => () => {},
-  },
-  slots: {
-    inject: (_name, cb) => cb(),
-    register: (_spec, Comp) => { Badge = Comp; return () => {} },
-  },
-  effect: (fn) => fn(),
-})
+import { createRuntime, loadClient, textOf, API_PAYLOAD } from './mock-react.mjs'
 
 const results = []
 function record(name, status, note) {
@@ -182,12 +19,16 @@ function record(name, status, note) {
   console.log('[' + status + '] ' + name + (note ? ' — ' + note : ''))
 }
 
+const runtime = createRuntime()
+const client = loadClient(runtime, { payload: API_PAYLOAD })
+const Badge = client.Badge
+assert.ok(Badge, '未能从 apply(ctx) 取到胶囊组件')
+
 // ---------------------------------------------------------------------------
 // T1 — 展开状态：可点击，点击后出现详情面板
 // ---------------------------------------------------------------------------
 {
   try {
-    assert.ok(Badge, '未能从 apply(ctx) 取到胶囊组件')
     runtime.mount(Badge, { wide: true, configForm: null })
     const tree = await runtime.settle({ wide: true, configForm: null })
     const [pill, panel] = tree.props.children
@@ -278,8 +119,7 @@ function record(name, status, note) {
   }
 }
 
-globalThis.setInterval = realSetInterval
-
+client.restore()
 const failed = results.filter((r) => r.status === 'FAIL')
 console.log('\n' + results.length + ' 项：' + (results.length - failed.length) + ' 通过, ' + failed.length + ' 失败')
 process.exit(failed.length === 0 ? 0 : 1)
