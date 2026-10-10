@@ -24,7 +24,9 @@ function record(name, status, note) {
 const runtime = createRuntime()
 const client = loadClient(runtime, { payload: API_PAYLOAD })
 
-const ROOT_FLEX_WHEN_OWN_ROW = '1 1 100%'
+// 展开态独占一行时的根节点宽度/边距（0.7.1 起：整行 + 向外贴边 4px，同 ds-harness-remote）
+const ROOT_WIDTH_WHEN_OWN_ROW = 'calc(100% + 8px)'
+const ROOT_BLEED = -4
 
 /** 每个用例都重新挂载（hooks/state 归零），并返回 [root 元素, pill, panel]。 */
 async function render(parent) {
@@ -42,11 +44,15 @@ async function render(parent) {
     const row = fakeNode({ display: 'flex', flexDirection: 'row', flexWrap: 'nowrap' })
     const [root, pill] = await render(row)
     assert.equal(row.style.flexWrap, 'wrap', '横向容器应被补上 flex-wrap: wrap')
-    assert.equal(root.props.style.flex, ROOT_FLEX_WHEN_OWN_ROW, '胶囊应声明整行（flex-basis:100%）')
-    assert.equal(root.props.style.width, '100%')
+    // [0.7.1] 展开态：整行 + 向外贴边 4px（同 ds-harness-remote 的 width:calc(100% + 8px);margin:4px -4px），
+    // 否则悬停灰底会被整行的内距缩进、比别家按钮两侧各短一截。
+    assert.equal(root.props.style.flex, '0 0 auto')
+    assert.equal(root.props.style.width, 'calc(100% + 8px)', '展开态宽度应外扩 8px')
+    assert.equal(root.props.style.marginLeft, -4, '左外侧应贴边 4px')
+    assert.equal(root.props.style.marginRight, -4, '右外侧应贴边 4px')
     assert.equal(root.props.style.position, 'relative', '定位不能丢：详情面板靠它做绝对定位')
     assert.equal(pill.type, 'button', '展开状态下仍可点击')
-    record('T1 横向 flex 行：容器开放换行 + 胶囊独占整行', 'PASS')
+    record('T1 横向 flex 行：容器开放换行 + 胶囊独占整行并向外贴边', 'PASS')
   } catch (err) {
     record('T1 横向 flex 行独占一行', 'FAIL', err.message)
   }
@@ -79,7 +85,7 @@ async function render(parent) {
     const [root] = await render(wrapper)
     assert.equal(row.style.flexWrap, 'wrap', '应跨过非 flex 包裹层找到行容器')
     assert.equal(wrapper.style.flexWrap, undefined, '中间的包裹层不应被改')
-    assert.equal(root.props.style.flex, ROOT_FLEX_WHEN_OWN_ROW)
+    assert.equal(root.props.style.width, ROOT_WIDTH_WHEN_OWN_ROW)
     record('T3 跨过非 flex 包裹层找到行容器', 'PASS')
   } catch (err) {
     record('T3 跨层查找行容器', 'FAIL', err.message)
@@ -94,7 +100,8 @@ async function render(parent) {
     const row = fakeNode({ display: 'flex', flexDirection: 'row', flexWrap: 'wrap' })
     const [root] = await render(row)
     assert.equal(row.style.flexWrap, undefined, '宿主本来就允许换行时不应改写它的行内样式')
-    assert.equal(root.props.style.flex, ROOT_FLEX_WHEN_OWN_ROW)
+    assert.equal(root.props.style.width, ROOT_WIDTH_WHEN_OWN_ROW)
+    assert.equal(root.props.style.marginLeft, ROOT_BLEED)
     record('T4 容器本就允许换行：不改宿主样式，胶囊仍独占整行', 'PASS')
   } catch (err) {
     record('T4 已可换行的容器', 'FAIL', err.message)
@@ -188,6 +195,25 @@ async function render(parent) {
     record('T8 注入样式表：悬停/聚焦规则正确，且不碰宿主选择器', 'PASS')
   } catch (err) {
     record('T8 注入样式表', 'FAIL', err.message)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// T9 — 缩略（rail）态不得向外贴边：rail 只有约 36px 宽，外扩会溢出侧栏
+// ---------------------------------------------------------------------------
+{
+  try {
+    const row = fakeNode({ display: 'flex', flexDirection: 'row', flexWrap: 'nowrap' })
+    runtime.setParent(row)
+    runtime.mount(client.Badge, { wide: false, configForm: null })
+    const tree = await runtime.settle({ wide: false, configForm: null })
+    assert.equal(tree.props.style.flex, '1 1 100%', '缩略态仍独占一行，但不外扩')
+    assert.equal(tree.props.style.width, '100%')
+    assert.equal(tree.props.style.marginLeft, undefined, '缩略态不得贴边外扩')
+    assert.equal(tree.props.style.marginRight, undefined)
+    record('T9 缩略态不贴边（避免在 36px 宽的 rail 里溢出）', 'PASS')
+  } catch (err) {
+    record('T9 缩略态不贴边', 'FAIL', err.message)
   }
 }
 

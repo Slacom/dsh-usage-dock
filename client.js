@@ -148,6 +148,13 @@ function quotaToneColor(meta, p, limited) {
 // flex:1 1 auto 占满按钮之外的空间；minWidth:0 允许在窄侧栏里收缩。
 // [local patch 0.7.0] 该席位是多个插件共享的**横向 flex 行**，因此挂载后由 useOwnRow()
 // 把容器改成可换行、并把胶囊声明成整行（flex-basis:100%），避免与其他插件抢同一行。
+//
+// [local patch 0.7.1] 只声明整行还不够：这一行会给条目留内距（实测内容区 x 15..334，
+// 而整行可用宽度是 x 10..339），于是悬停灰底比别家按钮两侧各短约 5px。
+// ds-harness-remote 的解法是显式向外贴边：
+//   .dshRemoteSidebarEntry.isWide{width:calc(100% + 8px);height:34px;margin:4px -4px}
+// 我们照抄同样的 4px（ROW_BLEED），让两种灰底的左右边界对齐。
+var ROW_BLEED = 4
 var rootStyle = { position: 'relative', flex: '1 1 auto', minWidth: 0, boxSizing: 'border-box', zIndex: 1000, fontFamily: 'inherit' }
 // [local patch 0.7.0] 外形与 DSH 侧栏里的其他按钮保持一致：默认**完全透明**、
 // 无边框无阴影（不再是那个「边缘分明的胶囊」），只保留状态点 + 套餐额度文字；
@@ -518,9 +525,21 @@ function PlanUsageBadge(props) {
 
   // [local patch 0.7.0] 独占一行时把胶囊声明为整行宽（basis:100%）；保留 flex-shrink，
   // 万一宿主容器仍是 nowrap，也只是按比例分宽，不会把其他插件的按钮挤没。
-  var rootStyleNow = ownRow
-    ? Object.assign({}, rootStyle, { flex: '1 1 100%', width: '100%' })
-    : rootStyle
+  var rowStyle = null
+  if (ownRow) {
+    rowStyle = wide
+      // [local patch 0.7.1] 展开态额外向外贴边 4px（同 ds-harness-remote），
+      // 抵消整行给条目留的内距，让悬停灰底的左右边界与别家按钮对齐。
+      ? {
+          flex: '0 0 auto',
+          width: 'calc(100% + ' + (ROW_BLEED * 2) + 'px)',
+          marginLeft: -ROW_BLEED,
+          marginRight: -ROW_BLEED,
+        }
+      // 缩略（rail）态不贴边：rail 只有约 36px 宽，外扩会溢出。
+      : { flex: '1 1 100%', width: '100%' }
+  }
+  var rootStyleNow = rowStyle === null ? rootStyle : Object.assign({}, rootStyle, rowStyle)
   return h('div', { style: rootStyleNow, ref: rootRef }, pill, panel)
 }
 
