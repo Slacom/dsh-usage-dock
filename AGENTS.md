@@ -176,23 +176,28 @@ git -C "E:\WorkSpace\DSH\DSH Usage Dock" push origin v0.6.4
 
 # 4) GitHub Release（见下）
 
-# 5) npm 发布（只能由人执行，见下面的说明）
-npm publish
+# 5) npm 发布 —— 由 agent 执行（用户 2026-10-10 起授权，别再让用户手动跑）
+npm publish --dry-run      # 先核对打包内容与 shasum
+npm publish                # Automation token 已配置，非交互可直接发
 ```
 
-> **npm publish 只能由人在交互式终端执行**：npm 的 2FA 验证码只在人手里，
-> agent 最多做到 `npm publish --dry-run` 核对打包内容（0.6.3 时为 16 个文件、35.8 kB）。
+> ✅ **npm publish 现在由 agent 负责**（用户 2026-10-10 明确授权：「之后 npm 也由你来推送」）。
+> `~/.npmrc` 里是一个 **Automation 类型的 token**（绕过 2FA），所以 `npm publish` 非交互可完成，
+> 不需要用户输验证码。发布前先 `npm publish --dry-run` 核对（0.7.0 为 16 个文件 / 38.9 kB）。
 >
-> ⚠️ **`~/.npmrc` 里的登录 token 会过期**（2026-10-08 实测，浪费过一次排查时间）：
-> `npm login` 在 **10-06 12:28** 写入的 `_authToken`，当天 **14:15** 还能成功发布 0.6.2，
-> 两天后再发就变成 `npm whoami` → **401 Unauthorized**、`npm publish` → **E404 Not Found - PUT
+> ⏳ **两个时间点要记住**：
+> - 该 token 创建于 **2026-10-08、有效期 90 天**（约 **2027-01-06** 到期）——到期后发布同样会报
+>   401/E404，需要用户重新生成一个 Automation token 并写进 `~/.npmrc`；
+> - npm 已公告 **2027 年 1 月**起取消「bypass-2FA token 直接发布」的能力，届时要么走
+>   Trusted Publishing（仅 CI 场景），要么回到人工 `npm publish` + OTP。
+>
+> ⚠️ **token 失效的假象（2026-10-08 实测，浪费过一次排查时间）**：`npm login` 在 10-06 12:28
+> 写入的 token 当天 14:15 还能发布 0.6.2，两天后同样的命令变成
+> `npm whoami` → **401 Unauthorized**、`npm publish` → **E404 Not Found - PUT
 > https://registry.npmjs.org/dsh-usage-dock**。
-> 「404 找不到包」这个假象极具迷惑性（包确实存在、账号也是 maintainer），**根因是凭据失效**，
+> 「404 找不到包」极具迷惑性（包确实存在、账号也是 maintainer），**根因是凭据失效**，
 > 与包名、scope、权限、代码都无关。排查顺序固定为：
 > `npm whoami`（401 = 凭据问题，先解决它）→ `npm publish --dry-run`（打包是否正常）→ 再真发。
-> 处理办法二选一：重新 `npm login`（浏览器授权，写入新 token）；或在 npmjs.com 生成一个
-> **Automation 类型的 token**（可绕过 2FA；2026-10-08 起本机已配置一个 90 天有效期的）
-> 写进 `~/.npmrc`，此后 `npm publish` 可非交互完成。
 
 > ℹ️ **发布成功后 registry 有短暂延迟**（2026-10-08 实测约 **2 分钟**）：`npm publish` 打印
 > `+ dsh-usage-dock@0.6.3` 和 “Your package is being processed and may take a few minutes to
@@ -244,4 +249,4 @@ $token = (("protocol=https`nhost=github.com`n`n" | git credential fill) -replace
 
 ---
 
-*文档更新时间：2026-10-08*
+*文档更新时间：2026-10-10*
