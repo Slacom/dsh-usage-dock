@@ -156,6 +156,15 @@ export function loadClient(runtime, options) {
     },
   }
 
+  // 极简 document：只覆盖插件用到的 createElement / head.appendChild / querySelector，
+  // 用来断言「注入的样式表」内容（:hover 这类伪类规则无法内联表达）。
+  const styleTags = []
+  globalThis.document = {
+    createElement(tagName) { return { tagName, dataset: {}, textContent: '' } },
+    head: { appendChild(node) { styleTags.push(node) } },
+    querySelector() { return styleTags.length > 0 ? styleTags[0] : null },
+  }
+
   const realSetInterval = globalThis.setInterval
   globalThis.setInterval = () => 0
   globalThis.clearInterval = () => {}
@@ -164,13 +173,14 @@ export function loadClient(runtime, options) {
 
   new Function(source)()
 
-  // 通过 apply(ctx) 取到胶囊组件（组件只经席位注册暴露，不直接导出）。
+  // 通过 apply(ctx) 取到胶囊组件与席位注册规格（两者都只经 ctx 暴露，不直接导出）。
   let Badge = null
+  let registration = null
   exportedModule.apply({
     configForms: { get: () => null, whileServed: () => () => {} },
     slots: {
       inject: (_name, cb) => cb(),
-      register: (_spec, Comp) => { Badge = Comp; return () => {} },
+      register: (spec, Comp) => { registration = spec; Badge = Comp; return () => {} },
     },
     effect: (fn) => fn(),
   })
@@ -178,7 +188,12 @@ export function loadClient(runtime, options) {
   return {
     module: exportedModule,
     Badge,
-    restore() { globalThis.setInterval = realSetInterval },
+    registration,
+    styleTags,
+    restore() {
+      globalThis.setInterval = realSetInterval
+      delete globalThis.document
+    },
   }
 }
 

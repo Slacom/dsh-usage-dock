@@ -149,17 +149,39 @@ function quotaToneColor(meta, p, limited) {
 // [local patch 0.7.0] 该席位是多个插件共享的**横向 flex 行**，因此挂载后由 useOwnRow()
 // 把容器改成可换行、并把胶囊声明成整行（flex-basis:100%），避免与其他插件抢同一行。
 var rootStyle = { position: 'relative', flex: '1 1 auto', minWidth: 0, boxSizing: 'border-box', zIndex: 1000, fontFamily: 'inherit' }
-// 胶囊外形自适应：只有一行时保持圆弧（borderRadius 999）；多行时改为圆角矩形。
-var pillStyle = { display: 'flex', flexDirection: 'column', gap: 2, padding: '6px 6px', background: 'var(--dsw-alias-bg-layer-2)', border: '1px solid var(--dsw-alias-border-l1)', boxShadow: '0 2px 12px rgba(0,0,0,0.18)', cursor: 'pointer', color: 'var(--dsw-alias-label-primary)', fontSize: 12, userSelect: 'none' }
-var pillRowStyle = { display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap', lineHeight: 1.4 }
-var pillSegStyle = { display: 'inline-flex', alignItems: 'center', gap: 4 }
+// [local patch 0.7.0] 外形与 DSH 侧栏里的其他按钮保持一致：默认**完全透明**、
+// 无边框无阴影（不再是那个「边缘分明的胶囊」），只保留状态点 + 套餐额度文字；
+// 只有鼠标悬停（且当前可交互）时才浮出与其他按钮同款的灰色底
+// —— 见下面 ensureStyles() 注入的 .dsh-plan-usage-pill[data-interactive]:hover。
+// 圆角保留 8px，让悬停底色和侧栏其他条目一样是圆角矩形。
+var pillStyle = { display: 'flex', flexDirection: 'column', gap: 2, padding: '6px 8px', background: 'transparent', border: 0, boxShadow: 'none', borderRadius: 8, cursor: 'pointer', color: 'var(--dsw-alias-label-secondary)', fontSize: 12, userSelect: 'none' }
+var pillRowStyle = { display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap', lineHeight: 1.4 }
+var pillSegStyle = { display: 'inline-flex', alignItems: 'center', gap: 6 }
 var dotStyle = { width: 7, height: 7, borderRadius: '50%', flex: 'none' }
 // [local patch] 名称列按内容自然宽度；数值列 marginLeft:auto 贴右缘，
 // 空隙自动落在名称与数值之间，胶囊随侧栏宽度变化。
-var capNameStyle = { flex: 'none', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis' }
+// 名称用侧栏次要文字色（继承 pill 的 label-secondary），数值用主文字色，读数更清楚。
+var capNameStyle = { flex: 'none', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis' }
 // 用量值列固定宽度：保证各行百分比右缘对齐（最宽场景如 "100% 100% 100%" 也放得下）。
-var capValueStyle = { flex: 'none', width: 80, marginLeft: 'auto', fontVariantNumeric: 'tabular-nums' }
+var capValueStyle = { flex: 'none', width: 80, marginLeft: 'auto', textAlign: 'right', color: 'var(--dsw-alias-label-primary)', fontVariantNumeric: 'tabular-nums' }
 var valueStyle = { fontVariantNumeric: 'tabular-nums' }
+
+/**
+ * [local patch 0.7.0] 悬停/焦点态无法内联表达，这里注入一枚极小的样式表。
+ * 只针对本插件自己的类名，不碰 DSH 的任何选择器；同名标签只会插一次。
+ */
+function ensureStyles() {
+  if (typeof document === 'undefined' || document.head == null) return
+  if (typeof document.querySelector === 'function' && document.querySelector('style[data-plan-usage-style]') !== null) return
+  var tag = document.createElement('style')
+  tag.dataset.planUsageStyle = '1'
+  tag.textContent = [
+    // 悬停底色与 sidebar 的 .iconButton:hover 同款令牌，保证观感一致。
+    '.dsh-plan-usage-pill[data-interactive]:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+    '.dsh-plan-usage-pill[data-interactive]:focus-visible{outline:2px solid var(--dsw-alias-border-l3);outline-offset:-2px}',
+  ].join('')
+  document.head.appendChild(tag)
+}
 // [local patch] 侧栏版面板：left:0/right:0 使其宽度 = 胶囊宽度，
 // 左边界与胶囊左侧对齐（不再超出屏幕左缘），右边界与胶囊右侧一致，
 // 随侧栏宽度自动伸缩；minWidth 去掉以免窄栏溢出。
@@ -356,11 +378,14 @@ function PlanUsageBadge(props) {
   var interactive = wide
   var pillProps = {
     className: 'dsh-plan-usage-pill',
+    // 悬停底色只给「可交互」的形态（见 ensureStyles 注入的 CSS）；缩略态不加。
+    'data-interactive': interactive ? 'true' : undefined,
     style: Object.assign({}, pillStyle, {
       width: '100%',
       boxSizing: 'border-box',
       justifyContent: wide ? undefined : 'center',
-      borderRadius: capsuleRows.length > 1 ? 12 : 999,
+      // 与侧栏其他按钮同为 8px 圆角（悬停底色的形状要和它们一致）。
+      borderRadius: 8,
       // 缩略状态不再显示手型光标，避免暗示「可以点」。
       cursor: interactive ? 'pointer' : 'default',
     }),
@@ -1092,11 +1117,17 @@ function apply(ctx) {
   // 该席位是 list 类型，可容纳多个条目；order 10 让胶囊排在既有按钮之后。
   // configForms 的表单在这里获取一次，同时供胶囊订阅（实时反映设置改动）与设置页使用。
   var form = ctx.configForms.get('plan-usage')
+  // [local patch 0.7.0] 注入悬停/焦点用的极小样式表（只作用于本插件自己的类名）。
+  ensureStyles()
   ctx.slots.inject('sidebar.footer.action', function () {
     return ctx.slots.register({
       name: 'sidebar.footer.action',
       id: 'plan-usage',
-      order: 10,
+      // [local patch 0.7.0] order 取一个很小的负数，让本插件排到**最上面一行**：
+      // 详情面板是向上展开的（bottom: 100% + 10px），排在最后一行时会盖住
+      // 其他插件的底部按钮；排到最上面就没有可遮挡的对象了。
+      // 参考：ds-harness-remote 用 order:-20。
+      order: -1000,
       // wide 由 sidebar 渲染时通过 ownerProps 注入（renderSlot('sidebar.footer.action', { wide })）
       inject: function () { return { configForm: form } },
     }, PlanUsageBadge)

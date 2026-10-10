@@ -76,7 +76,7 @@ node tools/test-fetch-backends.mjs
 # 浏览器半回归测试：缩略（rail）状态下胶囊必须不可交互（4 项，离线，无需 React 依赖）
 node tools/test-collapsed-pill.mjs
 
-# 浏览器半回归测试：胶囊独占侧栏底部一行、不与别的插件抢位（5 项，离线）
+# 浏览器半回归测试：胶囊独占底部一行、排在最上面、外观对齐侧栏按钮（8 项，离线）
 node tools/test-footer-row.mjs
 
 # 上面两个 client 测试共用 tools/mock-react.mjs（极简 React 运行时 + client.js 加载器）
@@ -137,8 +137,9 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
 7. **刷新间隔**：60 秒 → 30 秒
 8. **缩略（rail）状态胶囊不可交互**：折叠后只剩状态圆点，且不挂点击、不渲染详情面板
    ——详情只在展开状态点击打开（0.6.3，移动端 Web UI 反馈）
-9. **底部席位独占一行**：胶囊不再与其他插件（如 Remote）抢同一条横向行，而是整行独占、
-   上下排列（0.7.0；做法见第 5 节第 13 条）
+9. **底部席位独占一行、且排在最上面一行**：胶囊不再与其他插件（如 Remote）抢同一条横向行，
+   而是整行独占、上下排列；席位 `order` 取 `-1000`，这样向上展开的详情面板不会遮挡别的按钮；
+   外观也与侧栏按钮对齐（默认透明、无边框无阴影，悬停才出灰底）——0.7.0，做法见第 5 节第 13 条
 
 ## 7. 已知限制
 
@@ -233,8 +234,9 @@ $token = (("protocol=https`nhost=github.com`n`n" | git credential fill) -replace
    Python/curl 降级兜底；顺带补上逐后端失败原因与 8 项回归测试
 6. 0.6.3 修掉移动端 Web UI 侧栏缩略时点击状态点弹出竖排乱码面板的问题：
    缩略状态不再挂点击、面板只在展开态渲染；新增浏览器半回归测试（4 项）
-7. 0.7.0 修掉底部席位多个插件挤同一行的问题：胶囊改为整行独占、随其他插件上下让位；
-   新增 footer 行回归测试（5 项），并把浏览器半测试的 mock 运行时抽成 tools/mock-react.mjs
+7. 0.7.0 修掉底部席位多个插件挤同一行的问题：胶囊改为整行独占、席位 `order:-1000` 排到最上面
+   （详情面板向上展开不再遮挡其他按钮），外观也改成与侧栏按钮一致（透明 + 悬停灰底）；
+   新增 footer 行回归测试（8 项），并把浏览器半测试的 mock 运行时抽成 tools/mock-react.mjs
 
 ---
 

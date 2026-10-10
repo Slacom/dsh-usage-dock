@@ -115,6 +115,67 @@ async function render(parent) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// T6 — 层级：order 必须排在所有已知的底部插件之前（最上面一行）
+//     详情面板向上展开，排在最后一行时会盖住其他插件的底部按钮
+// ---------------------------------------------------------------------------
+{
+  try {
+    const order = client.registration && client.registration.order
+    assert.equal(typeof order, 'number', '注册席位时必须声明 order')
+    assert.ok(order < 0, 'order 应为负数才排得到前面，实际 ' + order)
+    assert.ok(order < -20, '必须比 ds-harness-remote（order:-20）更靠前，实际 ' + order)
+    assert.equal(client.registration.name, 'sidebar.footer.action')
+    record('T6 席位 order=' + order + '：排在 Remote(-20) 之前，详情面板不再遮挡其他按钮', 'PASS')
+  } catch (err) {
+    record('T6 席位层级', 'FAIL', err.message)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// T7 — 外观：不再是「边缘分明的胶囊」，只剩状态点 + 文字；悬停底色交给注入的 CSS
+// ---------------------------------------------------------------------------
+{
+  try {
+    const row = fakeNode({ display: 'flex', flexDirection: 'row', flexWrap: 'nowrap' })
+    const [, pill] = await render(row)
+    assert.equal(pill.props.style.background, 'transparent', '默认必须完全透明，不再有胶囊底色')
+    assert.equal(pill.props.style.border, 0, '不得有边框')
+    assert.equal(pill.props.style.boxShadow, 'none', '不得有阴影')
+    assert.equal(pill.props.style.borderRadius, 8, '圆角应与侧栏其他按钮一致（8px）')
+    assert.equal(pill.props.style.color, 'var(--dsw-alias-label-secondary)', '文字用侧栏次要色')
+    assert.equal(pill.props['data-interactive'], 'true', '展开态需要 data-interactive 才会出现悬停底色')
+    // 状态点仍在（用户明确要求保留）
+    const firstRow = pill.props.children[0]
+    assert.equal(firstRow.props.children[0].props.style.borderRadius, '50%', '状态点必须保留')
+
+    // 缩略态不是可交互形态，因此不该有悬停底色
+    const railTree = await runtime.settle({ wide: false, configForm: null })
+    assert.equal(railTree.props.children[0].props['data-interactive'], undefined, '缩略态不应触发悬停底色')
+    record('T7 外观：透明、无边框无阴影（仅状态点 + 文字），悬停态另配', 'PASS')
+  } catch (err) {
+    record('T7 外观对齐侧栏按钮', 'FAIL', err.message)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// T8 — 注入的样式表：悬停底色用 sidebar 同款令牌，且只注入一次
+// ---------------------------------------------------------------------------
+{
+  try {
+    assert.equal(client.styleTags.length, 1, '应只注入一枚样式表')
+    const tag = client.styleTags[0]
+    assert.equal(tag.dataset.planUsageStyle, '1')
+    assert.match(tag.textContent, /\.dsh-plan-usage-pill\[data-interactive\]:hover\{background:var\(--dsw-alias-interactive-bg-hover\)\}/,
+      '悬停必须用 sidebar 的交互底色令牌')
+    assert.match(tag.textContent, /:focus-visible/, '键盘聚焦也要有可见反馈')
+    assert.ok(!/body|\.hHd|sidebar-/.test(tag.textContent), '只允许作用于本插件自己的类名')
+    record('T8 注入样式表：悬停/聚焦规则正确，且不碰宿主选择器', 'PASS')
+  } catch (err) {
+    record('T8 注入样式表', 'FAIL', err.message)
+  }
+}
+
 client.restore()
 const failed = results.filter((r) => r.status === 'FAIL')
 console.log('\n' + results.length + ' 项：' + (results.length - failed.length) + ' 通过, ' + failed.length + ' 失败')
