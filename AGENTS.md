@@ -140,7 +140,10 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
    ——详情只在展开状态点击打开（0.6.3，移动端 Web UI 反馈）
 9. **底部席位独占一行、且排在最上面一行**：胶囊不再与其他插件（如 Remote）抢同一条横向行，
    而是整行独占、上下排列；席位 `order` 取 `-1000`，这样向上展开的详情面板不会遮挡别的按钮；
-   外观也与侧栏按钮对齐（默认透明、无边框无阴影，悬停才出灰底）——0.7.0，做法见第 5 节第 13 条
+   外观也与侧栏按钮对齐（默认透明、无边框无阴影，悬停才出灰底）——0.7.0，做法见第 5 节第 13 条。
+   **圆角/内距照抄侧栏条目**：`border-radius:12px` + `padding:6px 10px`，出处是 DSH 自带
+   「新会话」按钮与 `ds-harness-remote` 的 `.dshRemoteSidebarEntry.isWide .dshRemoteModeButton`
+   （`iconButton` 那类 28px 圆形按钮用 50%，与条目不通用）——改这两个值前先回去核对，别凭感觉调
 
 ## 7. 已知限制
 

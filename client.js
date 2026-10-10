@@ -151,16 +151,21 @@ function quotaToneColor(meta, p, limited) {
 var rootStyle = { position: 'relative', flex: '1 1 auto', minWidth: 0, boxSizing: 'border-box', zIndex: 1000, fontFamily: 'inherit' }
 // [local patch 0.7.0] 外形与 DSH 侧栏里的其他按钮保持一致：默认**完全透明**、
 // 无边框无阴影（不再是那个「边缘分明的胶囊」），只保留状态点 + 套餐额度文字；
-// 只有鼠标悬停（且当前可交互）时才浮出与其他按钮同款的灰色底
-// —— 见下面 ensureStyles() 注入的 .dsh-plan-usage-pill[data-interactive]:hover。
-// 圆角保留 8px，让悬停底色和侧栏其他条目一样是圆角矩形。
+// 只有鼠标悬停（且当前可交互）时才浮出与其他按钮同款的灰色底。
+//
+// 圆角/内距照抄侧栏其它条目（不是拍脑袋取的数）：
+//   - 圆角 **12px**：DSH 自带的「新会话」按钮是 `border-radius:12px`；
+//     社区插件 ds-harness-remote 的侧栏条目 `.dshRemoteSidebarEntry.isWide
+//     .dshRemoteModeButton{height:34px;padding:6px 48px 6px 10px;border-radius:12px}`
+//     同样是 12px（`iconButton` 那种 28px 圆形按钮用 50%，与条目不通用）。
+//   - 内距 `6px 10px`：与上面那条 Remote 规则的左内距一致，悬停底色左右留白对得上。
+// 改这两个值前先去那两个出处核对，别再凭感觉调。
 //
 // ⚠️ 这里**绝不能**写行内 `background`：行内样式优先级高于任何选择器，会把
 // `:hover` 的底色彻底压死 —— 0.7.0 的第一版就踩了这个坑（鼠标移上去没有灰底，
 // 但 title 提示照常弹出，说明 :hover 其实在触发、只是被行内盖住）。
-// 因此基础底色放在下面 ensureStyles() 注入的样式表里，行内只留 hover 不会覆盖的属性；
-// `appearance:'none'` 同时去掉 button 的原生外观，避免按钮回落到系统灰底。
-var pillStyle = { display: 'flex', flexDirection: 'column', gap: 2, padding: '6px 8px', appearance: 'none', border: 0, boxShadow: 'none', borderRadius: 8, cursor: 'pointer', color: 'var(--dsw-alias-label-secondary)', fontSize: 12, userSelect: 'none' }
+// 悬停底色现在由 React 状态直接写行内（见组件里的 hot 状态），不经过选择器。
+var pillStyle = { display: 'flex', flexDirection: 'column', gap: 2, padding: '6px 10px', appearance: 'none', border: 0, boxShadow: 'none', borderRadius: 12, cursor: 'pointer', color: 'var(--dsw-alias-label-secondary)', fontSize: 12, userSelect: 'none' }
 var pillRowStyle = { display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap', lineHeight: 1.4 }
 var pillSegStyle = { display: 'inline-flex', alignItems: 'center', gap: 6 }
 var dotStyle = { width: 7, height: 7, borderRadius: '50%', flex: 'none' }
@@ -397,8 +402,7 @@ function PlanUsageBadge(props) {
       width: '100%',
       boxSizing: 'border-box',
       justifyContent: wide ? undefined : 'center',
-      // 与侧栏其他按钮同为 8px 圆角（悬停底色的形状要和它们一致）。
-      borderRadius: 8,
+      // 圆角/内距统一由 pillStyle 提供（12px / 6px 10px，出处见上面的注释），此处不再覆盖。
       // 缩略状态不再显示手型光标，避免暗示「可以点」。
       cursor: interactive ? 'pointer' : 'default',
       // 悬停/聚焦底色：直接由状态写入行内，不经过 CSS 优先级。

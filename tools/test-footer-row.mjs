@@ -143,7 +143,10 @@ async function render(parent) {
     assert.equal(pill.props.style.appearance, 'none', 'button 需要 appearance:none，否则会回落到系统灰底')
     assert.equal(pill.props.style.border, 0, '不得有边框')
     assert.equal(pill.props.style.boxShadow, 'none', '不得有阴影')
-    assert.equal(pill.props.style.borderRadius, 8, '圆角应与侧栏其他按钮一致（8px）')
+    // 圆角/内距必须与侧栏其它条目一致：DSH「新会话」按钮与 ds-harness-remote 的侧栏条目
+    // 用的都是 12px（Remote: .dshRemoteSidebarEntry.isWide .dshRemoteModeButton{border-radius:12px}）
+    assert.equal(pill.props.style.borderRadius, 12, '圆角应与侧栏条目一致（12px，不是 8px）')
+    assert.equal(pill.props.style.padding, '6px 10px', '内距应与侧栏条目一致')
     assert.equal(pill.props.style.color, 'var(--dsw-alias-label-secondary)', '文字用侧栏次要色')
     assert.equal(pill.props['data-interactive'], 'true', '展开态需要标记可交互')
     // 悬停必须由 React 状态驱动：只写 CSS :hover 会被行内样式压死（0.7.0 第一版的真实故障）

@@ -61,7 +61,8 @@
 | 背景 | `--dsw-alias-bg-layer-2` 深色底 | **透明**（与「调试」「Remote」一致） |
 | 边框 | 1px 描边 | **无** |
 | 阴影 | 有 | **无** |
-| 圆角 | 999（单行）/ 12（多行） | **8px**（悬停底色的形状与其他按钮一致） |
+| 圆角 | 999（单行）/ 12（多行） | **12px**，与侧栏其它条目完全一致（DSH 自带「新会话」按钮是 `border-radius:12px`；`ds-harness-remote` 的侧栏条目 `.dshRemoteSidebarEntry.isWide .dshRemoteModeButton{height:34px;padding:6px 48px 6px 10px;border-radius:12px}` 同样是 12px） |
+| 内距 | `6px 6px` | `6px 10px`（对齐上面那条 Remote 规则的左内距，悬停底色左右留白对得上） |
 | 悬停 | 无变化 | **浮出同款灰底** `--dsw-alias-interactive-bg-hover`（sidebar 的 `.iconButton:hover` 用的就是它） |
 | 文字 | 统一主文字色 | 套餐名用**次要色**、数值用主文字色 |
 
