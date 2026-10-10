@@ -11,7 +11,7 @@ DeepSeek Harness（DSH）的**侧栏用量/余额插件**：在 Web/桌面端左
 用量与余额，点击可展开详情面板。fork 自 `chendefine/dsh-plugins-plan-usage`，改名 `dsh-usage-dock`
 以避免与上游混淆，并做了一系列定制（见第 6 节）。
 
-**当前版本**：0.7.1　|　**已发布**：GitHub + npm　|　**已安装**：desktop profile
+**当前版本**：0.7.2　|　**已发布**：GitHub + npm　|　**已安装**：desktop profile
 
 ## 2. 关键路径
 
@@ -76,7 +76,7 @@ node tools/test-fetch-backends.mjs
 # 浏览器半回归测试：缩略（rail）状态下胶囊必须不可交互（4 项，离线，无需 React 依赖）
 node tools/test-collapsed-pill.mjs
 
-# 浏览器半回归测试：胶囊独占底部一行、排在最上面、外观对齐侧栏按钮（9 项，离线）
+# 浏览器半回归测试：胶囊独占底部一行、排在最上面、外观对齐侧栏按钮（11 项，离线）
 node tools/test-footer-row.mjs
 
 # 上面两个 client 测试共用 tools/mock-react.mjs（极简 React 运行时 + client.js 加载器）
@@ -119,6 +119,8 @@ DSH 0.2.0 相对 0.1.x 有**破坏性变更**，以下每一条都是实际踩�
 | 14 | **行内样式优先级高于任何选择器**：元素上一旦写了行内 `background`，再注入 `.x:hover{background:…}` 也**永远不生效**（0.7.0 第一版的真实故障：鼠标移上去没有灰底，但 `title` 提示照常弹出——「提示能弹、样式不变」正是这类问题的关键线索，说明 `:hover` 在触发、只是被行内盖住） | 交互态（hover / focus）**用 React 状态写行内**，别指望 CSS 伪类去覆盖行内：`onMouseEnter/onMouseLeave/onFocus/onBlur` 切一个 `hot` 状态直接决定行内底色。行内只保留交互态不会覆盖的属性；`appearance:none` 用来去掉 `button` 的原生外观（否则会回落到系统灰底） |
 | 15 | **该行还会给条目留内距**：`sidebar.footer.action` 的整行可用宽度是 x 10..339，但条目内容区只有 x 15..334。只写 `width:100%` 的话，悬停底色会比同容器里的 Remote **左右各短约 5px**（0.7.1 的真实故障，靠量真机截图的像素才发现：Remote 灰底 330px / 我们 320px） | 照抄 `ds-harness-remote` 的向外贴边写法：`.dshRemoteSidebarEntry.isWide{width:calc(100% + 8px);height:34px;margin:4px -4px}` → 本插件在 client.js 里用 `ROW_BLEED = 4`，展开态给根节点 `width:calc(100% + 8px)` + `margin:0 -4px`。**缩略（rail）态绝不能贴边**（rail 仅约 36px 宽，外扩会溢出）。量像素的办法：用打包的 Python + Pillow 找悬停灰底 `#ECEEF0` 的逐行游程，比肉眼可靠 |
 | 16 | **同一件事在 DSH 里有三个不同宽度，别量错基准**（2026-10-10 实测，同一张截图的绝对值）：DSH 自带列表行（工作区／「调试」悬停）= x 15..334 = **320px**；同容器里的 `ds-harness-remote` 条目 = x 10..339 = **330px**；「新会话」按钮的常驻边框 = x 23..324 = **302px**（那是按钮表面，不是悬停底色） | 本插件**按 330px 对齐 Remote**——同一容器里的直接邻居；这是用户看过三者数据后**明确选定**的基准（2026-10-10），**不要**因为「DSH 原生行是 320」就擅自改回去。若将来 DSH 改了内距，重新量一遍再决定 |
+| 17 | **`var` 没有块级作用域：组件里的同名局部变量会静默遮蔽模块级样式常量**。0.7.1 在组件内写了 `var rowStyle = null`（本意是根节点的贴边样式），把模块级给**详情面板额度行**用的 `var rowStyle = {display:'flex',…}` 遮蔽掉了 —— 面板里所有额度行丢掉 `display:flex`，进度条塌成 0 宽度直接消失，真机表现是「Codex 没有额度条了、标签和百分比竖着堆」（2026-10-10 用户发现的真实故障，是 0.7.1 引入的回归） | 组件作用域内**不要复用模块级样式常量的名字**；本插件已把贴边样式改名 `ownRowStyle` 并在注释里写明禁令，新增样式常量前先 grep 同名。守卫用例：`test-footer-row.mjs` 的 **T10**（打开面板、遍历组件树，断言额度行仍是 `display:flex` 四列结构且进度条轨道与百分比填充都在）——它先在 v0.7.1 上失败、在修复版上通过 |
+| 18 | **column 方向的 flex 容器里，`justifyContent` 管的是纵轴**。胶囊是 `flexDirection: column`，所以折叠态想「让状态点水平居中」写 `justifyContent:'center'` 是无效的；子项还因默认 `align-items: stretch` 被拉成满宽，圆点贴在左端（0.6.3→0.7.1 一直如此，2026-10-10 用户发现） | 横向居中要用 **`alignItems:'center'`**（子项按内容宽度居中）。**只改缩略态**、展开态保持 `undefined`（默认 stretch），否则会动到「圆点 + 名称 + 数值」的横向位置。守卫用例：`test-footer-row.mjs` 的 **T11** |
 
 **账号余额调用方式**（Host 端）：
 
@@ -250,6 +252,9 @@ $token = (("protocol=https`nhost=github.com`n`n" | git credential fill) -replace
    新增 footer 行回归测试（8 项），并把浏览器半测试的 mock 运行时抽成 tools/mock-react.mjs
 8. 0.7.1 修掉悬停灰底比别家按钮两侧各短约 5px 的问题（照抄 Remote 的 `+8px / -4px` 向外贴边，
    见第 5 节第 15 条）；footer 行测试增至 9 项（新增「缩略态不得贴边」）
+9. 0.7.2 修两个显示问题：① 0.7.1 因 `var rowStyle` 遮蔽导致**详情面板额度条消失**
+   （见第 5 节第 17 条）；② 缩略态状态点贴左 → 水平居中（见第 5 节第 18 条）。
+   footer 行测试增至 11 项（T10 面板额度行、T11 缩略态居中），两条都先在 v0.7.1 上失败
 
 ## 11. 未来方向（roadmap）
 

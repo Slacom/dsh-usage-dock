@@ -408,6 +408,12 @@ function PlanUsageBadge(props) {
     style: Object.assign({}, pillStyle, {
       width: '100%',
       boxSizing: 'border-box',
+      // [local patch 0.7.2] 缩略（rail）态把状态点**水平居中**。
+      // 注意：pill 是 column 方向的 flex 容器，`justifyContent` 管的是纵轴，用它对
+      // 状态点居中无效（0.7.1 及以前就是这样：rail 里圆点贴在左边）。
+      // 横向居中要用 `alignItems: 'center'`：子项不再被拉伸成满宽，而是按内容宽度居中。
+      // 展开态保持 undefined（默认 stretch），这样「圆点 + 名称 + 数值」的左右位置不受影响。
+      alignItems: wide ? undefined : 'center',
       justifyContent: wide ? undefined : 'center',
       // 圆角/内距统一由 pillStyle 提供（12px / 6px 10px，出处见上面的注释），此处不再覆盖。
       // 缩略状态不再显示手型光标，避免暗示「可以点」。
@@ -525,9 +531,15 @@ function PlanUsageBadge(props) {
 
   // [local patch 0.7.0] 独占一行时把胶囊声明为整行宽（basis:100%）；保留 flex-shrink，
   // 万一宿主容器仍是 nowrap，也只是按比例分宽，不会把其他插件的按钮挤没。
-  var rowStyle = null
+  //
+  // ⚠️ 变量名必须是 ownRowStyle —— 0.7.1 曾把它写成 rowStyle，而 `var` 会提升到整个
+  // 组件作用域，于是**遮蔽**了模块级那个面板额度行样式（rowStyle = display:flex…），
+  // 导致详情面板里的额度行全部丢掉 display:flex、进度条被压成竖排文字
+  // （真机故障：2026-10-10 用户发现面板里 Codex 没有额度条了）。
+  // 这个作用域里的任何局部变量都不要再叫 rowStyle。
+  var ownRowStyle = null
   if (ownRow) {
-    rowStyle = wide
+    ownRowStyle = wide
       // [local patch 0.7.1] 展开态额外向外贴边 4px（同 ds-harness-remote），
       // 抵消整行给条目留的内距，让悬停灰底的左右边界与别家按钮对齐。
       ? {
@@ -539,7 +551,7 @@ function PlanUsageBadge(props) {
       // 缩略（rail）态不贴边：rail 只有约 36px 宽，外扩会溢出。
       : { flex: '1 1 100%', width: '100%' }
   }
-  var rootStyleNow = rowStyle === null ? rootStyle : Object.assign({}, rootStyle, rowStyle)
+  var rootStyleNow = ownRowStyle === null ? rootStyle : Object.assign({}, rootStyle, ownRowStyle)
   return h('div', { style: rootStyleNow, ref: rootRef }, pill, panel)
 }
 

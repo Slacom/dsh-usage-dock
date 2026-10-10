@@ -217,6 +217,76 @@ async function render(parent) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// T10 — 详情面板里的额度行必须仍是 flex 容器并带进度条
+//       回归背景：0.7.1 在组件里写了 `var rowStyle = null`，因 var 提升遮蔽了模块级的
+//       额度行样式，面板里的行全部丢掉 display:flex —— 真机上表现为「没有额度条、
+//       标签和百分比竖着堆」。这条用例就是守住它。
+// ---------------------------------------------------------------------------
+{
+  try {
+    const row = fakeNode({ display: 'flex', flexDirection: 'row', flexWrap: 'nowrap' })
+    runtime.setParent(row)
+    runtime.mount(client.Badge, { wide: true, configForm: null })
+    await runtime.settle({ wide: true, configForm: null })
+    const pill = (await runtime.settle({ wide: true, configForm: null })).props.children[0]
+    pill.props.onClick()
+    const opened = await runtime.settle({ wide: true, configForm: null })
+    const panel = opened.props.children[1]
+    assert.ok(panel, '应能打开详情面板')
+
+    // 找到面板里 Codex 的两个窗口行（含进度条的那两行）
+    const quotaRows = []
+    const walk = (node) => {
+      if (node === null || node === undefined || typeof node !== 'object') return
+      if (Array.isArray(node)) { node.forEach(walk); return }
+      const kids = node.props ? node.props.children : undefined
+      if (Array.isArray(kids)) kids.forEach(walk)
+      else if (kids !== undefined) walk(kids)
+      if (node.props && node.props.style && node.props.style.display === 'flex'
+        && Array.isArray(node.props.children) && node.props.children.length === 4) {
+        quotaRows.push(node)
+      }
+    }
+    walk(panel)
+    assert.ok(quotaRows.length >= 2, '面板里应有 5小时/周限 两条额度行，实际 ' + quotaRows.length)
+
+    for (const qr of quotaRows) {
+      const bar = qr.props.children[1]
+      assert.equal(bar.props.style.height, 6, '进度条轨道应存在（height 6）')
+      const fill = bar.props.children
+      assert.ok(fill && fill.props && typeof fill.props.style.width === 'string',
+        '进度条填充应带百分比宽度')
+      assert.match(fill.props.style.width, /^\d+(\.\d+)?%$/, '填充宽度应是百分比')
+    }
+    record('T10 面板额度行：flex 布局 + 进度条完整（守住 var 遮蔽回归）', 'PASS')
+  } catch (err) {
+    record('T10 面板额度行', 'FAIL', err.message)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// T11 — 缩略（rail）态状态点必须水平居中，且展开态不得被加上居中
+// ---------------------------------------------------------------------------
+{
+  try {
+    const row = fakeNode({ display: 'flex', flexDirection: 'row', flexWrap: 'nowrap' })
+    const [, pillWide] = await render(row)
+    assert.equal(pillWide.props.style.alignItems, undefined,
+      '展开态不得加 alignItems：那会改变圆点/文字的横向位置')
+
+    runtime.setParent(row)
+    runtime.mount(client.Badge, { wide: false, configForm: null })
+    const railTree = await runtime.settle({ wide: false, configForm: null })
+    const railPill = railTree.props.children[0]
+    assert.equal(railPill.props.style.alignItems, 'center', '缩略态圆点必须水平居中')
+    assert.equal(railPill.props.style.justifyContent, 'center')
+    record('T11 缩略态圆点居中，展开态位置不受影响', 'PASS')
+  } catch (err) {
+    record('T11 缩略态圆点居中', 'FAIL', err.message)
+  }
+}
+
 client.restore()
 const failed = results.filter((r) => r.status === 'FAIL')
 console.log('\n' + results.length + ' 项：' + (results.length - failed.length) + ' 通过, ' + failed.length + ' 失败')
