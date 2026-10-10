@@ -154,7 +154,13 @@ var rootStyle = { position: 'relative', flex: '1 1 auto', minWidth: 0, boxSizing
 // 只有鼠标悬停（且当前可交互）时才浮出与其他按钮同款的灰色底
 // —— 见下面 ensureStyles() 注入的 .dsh-plan-usage-pill[data-interactive]:hover。
 // 圆角保留 8px，让悬停底色和侧栏其他条目一样是圆角矩形。
-var pillStyle = { display: 'flex', flexDirection: 'column', gap: 2, padding: '6px 8px', background: 'transparent', border: 0, boxShadow: 'none', borderRadius: 8, cursor: 'pointer', color: 'var(--dsw-alias-label-secondary)', fontSize: 12, userSelect: 'none' }
+//
+// ⚠️ 这里**绝不能**写行内 `background`：行内样式优先级高于任何选择器，会把
+// `:hover` 的底色彻底压死 —— 0.7.0 的第一版就踩了这个坑（鼠标移上去没有灰底，
+// 但 title 提示照常弹出，说明 :hover 其实在触发、只是被行内盖住）。
+// 因此基础底色放在下面 ensureStyles() 注入的样式表里，行内只留 hover 不会覆盖的属性；
+// `appearance:'none'` 同时去掉 button 的原生外观，避免按钮回落到系统灰底。
+var pillStyle = { display: 'flex', flexDirection: 'column', gap: 2, padding: '6px 8px', appearance: 'none', border: 0, boxShadow: 'none', borderRadius: 8, cursor: 'pointer', color: 'var(--dsw-alias-label-secondary)', fontSize: 12, userSelect: 'none' }
 var pillRowStyle = { display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap', lineHeight: 1.4 }
 var pillSegStyle = { display: 'inline-flex', alignItems: 'center', gap: 6 }
 var dotStyle = { width: 7, height: 7, borderRadius: '50%', flex: 'none' }
@@ -176,8 +182,9 @@ function ensureStyles() {
   var tag = document.createElement('style')
   tag.dataset.planUsageStyle = '1'
   tag.textContent = [
-    // 悬停底色与 sidebar 的 .iconButton:hover 同款令牌，保证观感一致。
-    '.dsh-plan-usage-pill[data-interactive]:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+    // 兜底的基础底色（正常情况下行内也写着 transparent）。
+    '.dsh-plan-usage-pill{background:transparent}',
+    // 悬停/聚焦底色由 React 状态写行内（见 hotHook），这里只补键盘聚焦的可见轮廓。
     '.dsh-plan-usage-pill[data-interactive]:focus-visible{outline:2px solid var(--dsw-alias-border-l3);outline-offset:-2px}',
   ].join('')
   document.head.appendChild(tag)
@@ -272,6 +279,12 @@ function PlanUsageBadge(props) {
   var openHook = React.useState(false)
   var open = openHook[0]
   var setOpen = openHook[1]
+  // [local patch 0.7.0] 悬停/聚焦态由 React 状态驱动，而不是靠 CSS :hover ——
+  // 行内样式优先级高于任何选择器，用 :hover 会被行内 background 压死（第一版就是这样翻车的）。
+  // 状态驱动顺带解决了焦点态：键盘 Tab 聚焦也能看到同款底色。
+  var hotHook = React.useState(false)
+  var hot = hotHook[0]
+  var setHot = hotHook[1]
   // [local patch 0.7.0] 底部席位是被多个插件共享的横向 flex 行：让自己独占一行。
   var rowHook = useOwnRow()
   var rootRef = rowHook[0]
@@ -378,7 +391,7 @@ function PlanUsageBadge(props) {
   var interactive = wide
   var pillProps = {
     className: 'dsh-plan-usage-pill',
-    // 悬停底色只给「可交互」的形态（见 ensureStyles 注入的 CSS）；缩略态不加。
+    // 悬停底色的开关（见 ensureStyles 注入的 CSS）；缩略态不加。
     'data-interactive': interactive ? 'true' : undefined,
     style: Object.assign({}, pillStyle, {
       width: '100%',
@@ -388,12 +401,19 @@ function PlanUsageBadge(props) {
       borderRadius: 8,
       // 缩略状态不再显示手型光标，避免暗示「可以点」。
       cursor: interactive ? 'pointer' : 'default',
+      // 悬停/聚焦底色：直接由状态写入行内，不经过 CSS 优先级。
+      background: interactive && hot ? 'var(--dsw-alias-interactive-bg-hover)' : 'transparent',
+      transition: 'background .16s var(--ds-ease-in-out)',
     }),
     title: pillTitle,
   }
   if (interactive) {
     pillProps.type = 'button'
     pillProps.onClick = function () { setOpen(!open) }
+    pillProps.onMouseEnter = function () { setHot(true) }
+    pillProps.onMouseLeave = function () { setHot(false) }
+    pillProps.onFocus = function () { setHot(true) }
+    pillProps.onBlur = function () { setHot(false) }
     pillProps['aria-expanded'] = open
     pillProps['aria-haspopup'] = 'true'
   }

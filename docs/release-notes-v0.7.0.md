@@ -66,15 +66,23 @@
 | 文字 | 统一主文字色 | 套餐名用**次要色**、数值用主文字色 |
 
 状态点（7px 圆点）与套餐额度文字**完全保留** —— 去掉的只是那层「胶囊外壳」。
-悬停/聚焦这类伪类无法内联，因此在 `apply` 里注入一枚**只作用于本插件类名**的极小样式表：
+
+**悬停底色由 React 状态驱动，不靠 CSS `:hover`** —— 这是踩坑后的选择：行内样式优先级高于
+任何选择器，只要行内写了 `background`，注入的 `:hover` 规则就永远不生效（本版第一版就是这样：
+鼠标移上去没有灰底，但 `title` 提示照常弹出，说明 `:hover` 其实在触发、只是被行内盖住）。
+现在用 `onMouseEnter` / `onMouseLeave`（以及 `onFocus` / `onBlur`，键盘聚焦同样可见）切换
+`hot` 状态，直接写行内底色，不经过优先级之争。行内只留不会被交互态覆盖的属性
+（`appearance:none` 去掉 button 的原生外观，避免回落到系统灰底）。
+
+注入的样式表因此只剩兜底与键盘可达性：
 
 ```css
-.dsh-plan-usage-pill[data-interactive]:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dsh-plan-usage-pill{background:transparent}
 .dsh-plan-usage-pill[data-interactive]:focus-visible{outline:2px solid var(--dsw-alias-border-l3);outline-offset:-2px}
 ```
 
-> `data-interactive` 只在**展开且可点击**时才输出：缩略（rail）状态胶囊是纯展示、点不动，
-> 因此也不该出现悬停底色。
+> `data-interactive`（以及悬停处理器）只在**展开且可点击**时才输出：缩略（rail）状态胶囊是纯展示、
+> 点不动，因此既没有悬停底色、也不该有手型光标。
 
 > **为什么用运行时探测而不是写死 CSS 类名**：DSH 的 CSS Module 类名带哈希（如 `hHd-Xa_footerActions`），
 > 跨版本会变；`:has()` 选择器在旧版 Android WebView 上又不保证支持。探测 `getComputedStyle`

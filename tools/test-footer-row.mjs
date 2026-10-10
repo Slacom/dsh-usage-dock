@@ -139,20 +139,32 @@ async function render(parent) {
   try {
     const row = fakeNode({ display: 'flex', flexDirection: 'row', flexWrap: 'nowrap' })
     const [, pill] = await render(row)
-    assert.equal(pill.props.style.background, 'transparent', '默认必须完全透明，不再有胶囊底色')
+    assert.equal(pill.props.style.background, 'transparent', '默认底色应为透明')
+    assert.equal(pill.props.style.appearance, 'none', 'button 需要 appearance:none，否则会回落到系统灰底')
     assert.equal(pill.props.style.border, 0, '不得有边框')
     assert.equal(pill.props.style.boxShadow, 'none', '不得有阴影')
     assert.equal(pill.props.style.borderRadius, 8, '圆角应与侧栏其他按钮一致（8px）')
     assert.equal(pill.props.style.color, 'var(--dsw-alias-label-secondary)', '文字用侧栏次要色')
-    assert.equal(pill.props['data-interactive'], 'true', '展开态需要 data-interactive 才会出现悬停底色')
+    assert.equal(pill.props['data-interactive'], 'true', '展开态需要标记可交互')
+    // 悬停必须由 React 状态驱动：只写 CSS :hover 会被行内样式压死（0.7.0 第一版的真实故障）
+    assert.equal(typeof pill.props.onMouseEnter, 'function', '展开态必须挂 onMouseEnter')
+    pill.props.onMouseEnter()
+    const hovered = (await runtime.settle({ wide: true, configForm: null })).props.children[0]
+    assert.equal(hovered.props.style.background, 'var(--dsw-alias-interactive-bg-hover)', '鼠标移上去必须出现灰底')
+    hovered.props.onMouseLeave()
+    const left = (await runtime.settle({ wide: true, configForm: null })).props.children[0]
+    assert.equal(left.props.style.background, 'transparent', '鼠标移开后必须恢复透明')
     // 状态点仍在（用户明确要求保留）
     const firstRow = pill.props.children[0]
     assert.equal(firstRow.props.children[0].props.style.borderRadius, '50%', '状态点必须保留')
 
-    // 缩略态不是可交互形态，因此不该有悬停底色
+    // 缩略态不是可交互形态：不挂处理器，也不该出现悬停底色
     const railTree = await runtime.settle({ wide: false, configForm: null })
-    assert.equal(railTree.props.children[0].props['data-interactive'], undefined, '缩略态不应触发悬停底色')
-    record('T7 外观：透明、无边框无阴影（仅状态点 + 文字），悬停态另配', 'PASS')
+    const railPill = railTree.props.children[0]
+    assert.equal(railPill.props['data-interactive'], undefined, '缩略态不应标记可交互')
+    assert.equal(railPill.props.onMouseEnter, undefined, '缩略态不应挂悬停处理')
+    assert.equal(railPill.props.style.background, 'transparent')
+    record('T7 外观：透明无边框，悬停/移开由状态驱动（灰底 ↔ 透明）', 'PASS')
   } catch (err) {
     record('T7 外观对齐侧栏按钮', 'FAIL', err.message)
   }
@@ -166,9 +178,9 @@ async function render(parent) {
     assert.equal(client.styleTags.length, 1, '应只注入一枚样式表')
     const tag = client.styleTags[0]
     assert.equal(tag.dataset.planUsageStyle, '1')
-    assert.match(tag.textContent, /\.dsh-plan-usage-pill\[data-interactive\]:hover\{background:var\(--dsw-alias-interactive-bg-hover\)\}/,
-      '悬停必须用 sidebar 的交互底色令牌')
-    assert.match(tag.textContent, /:focus-visible/, '键盘聚焦也要有可见反馈')
+    assert.ok(tag.textContent.indexOf('.dsh-plan-usage-pill{background:transparent}') !== -1,
+      '兜底的基础透明底色应存在')
+    assert.match(tag.textContent, /:focus-visible/, '键盘聚焦要有可见轮廓（悬停底色本身由状态驱动）')
     assert.ok(!/body|\.hHd|sidebar-/.test(tag.textContent), '只允许作用于本插件自己的类名')
     record('T8 注入样式表：悬停/聚焦规则正确，且不碰宿主选择器', 'PASS')
   } catch (err) {
