@@ -272,8 +272,14 @@ $token = (("protocol=https`nhost=github.com`n`n" | git credential fill) -replace
    额度条的降级哲学（它失败时静默隐藏、错误只进 `quotaError` 字段，日常 UI 从不报错）。
    附带修**轮询防卡死**：客户端 `fetch('/api/plan-usage')` 无超时 + `inFlight` 不复位 =
    请求挂起即轮询永久停摆；Host 端 `getBalance` 也要包超时，别拖死 `Promise.all`。
+4. **Host 端 `/api/plan-usage` 结果缓存 + 请求合并**（⚠️ 配套方案，roadmap 方向 4 里负面效果
+   与风险写得很全，动手前必读）：按渠道独立内存缓存（TTL 30s 起步）+ single-flight +
+   stale-if-error，收敛多窗口翻倍打上游的请求量。**最大风险：与方向 2 直接冲突**——
+   加缓存后充值可见延迟从 ≤30s 恶化到 ≈60~90s，**`?fresh=1` 强制刷新通道是前置条件、
+   不能倒序排期**；语义错误（no-key/signed-out/reauth-required）绝不许 stale 顶着；
+   响应必须带 `fetchedAt`/`stale`。渠道级降频用户已否决，不要重提。
 
-三条都**尚未排期**，动手前先读 roadmap 里的现状数据流与实现要点。
+四条都**尚未排期**，动手前先读 roadmap 里的现状数据流与实现要点。
 
 ---
 
