@@ -56,7 +56,26 @@ async function fetchStatus(base, path) {
   const timer = setTimeout(() => controller.abort(), STATUS_TIMEOUT_MS)
   try {
     const res = await fetch(base + path, {
-      headers: { accept: 'application/json' },
+      // [0.8.2] 显式声明 accept-encoding: identity。
+      //
+      // 背景（宿主 bug 绕过，非本插件问题）：DSHA 的内置插件 dsh-web-mobile
+      // @3.0.5 用 compress.js 改写 ServerResponse.prototype 做响应压缩，会把
+      // 「可延迟」的响应头攒起来晚一拍提交；而 dsh-host-webserver 的 gzip
+      // 中间件（threshold=1024）在 res.end 代理里看到 headersSent 仍为 false，
+      // 会自己再调一次 res.writeHead(statusCode)。该重入落到 compress.js 的
+      // patchedWriteHead 时，它先 flush 把攒着的头提交掉（headersSent 变 true），
+      // 紧接着下面的 guard 又因这个 true 去调原生 writeHead()，抛
+      // ERR_HTTP_HEADERS_SENT；webServer 兜底 catch 视 headersSent 为真而
+      // res.destroy()，客户端只看到 fetch failed。
+      //
+      // 触发条件是「响应体 < 1 KiB 且带显式 Content-Length」：ai/status 的 52 B
+      // signed-out、update 的 72 B 都中招，而 cn/status（3.5 KB）正常。声明
+      // identity 后无编码可协商，gzip 中间件不进入该重入分支，问题消失。
+      //
+      // 注：/root/dsha-web-mobile 是受完整性保护的内置插件目录，直接改它的
+      // compress.js 会在 App 重启时被还原（实测 07:59:55 被重写回官方版本），
+      // 因此只能在消费侧绕过。
+      headers: { accept: 'application/json', 'accept-encoding': 'identity' },
       signal: controller.signal,
     })
     // 404 = workbuddy-connect 未安装（或旧版本无该端点）。
@@ -113,6 +132,7 @@ async function fetchPlanWithBase(base) {
   ]
   const results = await Promise.all(variants.map((v) => fetchStatus(base, v.path)))
   const signedIn = []
+  const degraded = [] // [0.8.2] 记录各版本为何没数据（partial 脚注用）
   let notFound = 0
   let transportError = null
   let semanticError = null
@@ -121,19 +141,28 @@ async function fetchPlanWithBase(base) {
     const r = results[i]
     const label = VARIANT_LABELS[variants[i].key]
     if (r.notFound === true) { notFound += 1; continue }
-    if (r.err !== undefined) { transportError = r.err; continue }
+    if (r.err !== undefined) {
+      // [0.8.2] 记录而非直接判死：只要另一个版本取到了数据，
+      // 就把失败降级为「部分数据」提示（见下方 signedIn 非空的处理）。
+      if (transportError === null) transportError = r.err
+      degraded.push(label + '：' + (r.err && r.err.message ? r.err.message : String(r.err)))
+      continue
+    }
     const body = r.body
     if (body === null || typeof body !== 'object') {
-      transportError = new Error('invalid status response')
+      if (transportError === null) transportError = new Error('invalid status response')
+      degraded.push(label + '：响应结构无效')
       continue
     }
     if (body.status === 'signed-out') continue // 未登录的版本直接不显示
     if (body.creditsError !== undefined) {
       // 语义错误（如令牌过期/上游拒答）：透传第一条，不拿旧值顶。
+      const detail = typeof body.creditsError === 'string' ? body.creditsError : '积分读取失败'
       if (semanticError === null) {
-        semanticError = typeof body.creditsError === 'string' ? body.creditsError : '积分读取失败'
+        semanticError = detail
         semanticLabel = label
       }
+      degraded.push(label + '：' + detail)
       continue
     }
     const credits = creditsOf(body)
@@ -142,6 +171,7 @@ async function fetchPlanWithBase(base) {
         semanticError = '积分响应结构无法解析'
         semanticLabel = label
       }
+      degraded.push(label + '：积分响应结构无法解析')
       continue
     }
     signedIn.push({ label, credits })
@@ -153,22 +183,31 @@ async function fetchPlanWithBase(base) {
       message: '未安装 dsh-workbuddy-connect（WorkBuddy 积分来自该插件）',
     })
   }
-  // 任一已配置版本失败都不能把另一版本的部分积分伪装成完整合计。
-  // signed-out / 404 不算失败；真正的错误交给客户端按语义/传输分别处理。
-  if (semanticError !== null) {
-    return Object.assign(planBase(plan), {
-      error: 'api',
-      message: semanticLabel + '：' + semanticError,
-    })
-  }
-  if (transportError !== null) {
-    const msg = transportError && transportError.message ? transportError.message : String(transportError)
-    return Object.assign(planBase(plan), {
-      error: 'exec',
-      message: 'WorkBuddy 状态读取失败（' + msg + '）',
-    })
-  }
+  // [0.8.2] 失败降级策略。
+  //
+  // 原策略：任一已配置版本失败就直接报错，理由是「不能把另一版本的部分积分
+  // 伪装成完整合计」。该顾虑合理，但代价过大——只要另一个版本取不到数（哪怕
+  // 它压根没登录或本就没有部署），已登录版本的真实积分也会被一并丢弃。
+  //
+  // 新策略：先看有没有任何一个版本真的拿到了 credits。
+  //   - 有 → 照常展示该版本的合计，并标记 partial/partialNote，由客户端在面板
+  //          里以灰色脚注说明「另一版本未取到」，不把部分值伪装成完整合计；
+  //   - 没有 → 保持原有语义错误 / 传输错误 / 未登录的分类与文案，行为不变。
+  // signed-out / 404 依旧不算失败（它们不是「另一方坏了」，只是没登录/没装）。
   if (signedIn.length === 0) {
+    if (semanticError !== null) {
+      return Object.assign(planBase(plan), {
+        error: 'api',
+        message: semanticLabel + '：' + semanticError,
+      })
+    }
+    if (transportError !== null) {
+      const msg = transportError && transportError.message ? transportError.message : String(transportError)
+      return Object.assign(planBase(plan), {
+        error: 'exec',
+        message: 'WorkBuddy 状态读取失败（' + msg + '）',
+      })
+    }
     return Object.assign(planBase(plan), {
       error: 'signed-out',
       message: '未登录 WorkBuddy：请安装并登录 WorkBuddy / WorkBuddy AI 桌面应用（dsh-workbuddy-connect）',
@@ -192,12 +231,15 @@ async function fetchPlanWithBase(base) {
       accounts.push(Object.assign({ variant: row.label }, account))
     }
   }
+  const partial = degraded.length > 0
   return Object.assign(planBase(plan), {
     creditsTotal: unlimited ? null : total,
     creditsUnlimited: unlimited,
     creditsAccounts: accounts,
     variants: variantsOut,
     isAvailable: true,
+    // 部分取数：客户端据此加一条灰色脚注，避免把部分合计误读为完整合计。
+    ...partial ? { partial: true, partialNote: '以下版本未取到数据：' + degraded.join('；') } : {},
   })
 }
 

@@ -96,7 +96,8 @@ async function withServer(routes, fn) {
   check('W7 传输失败 → exec + 原因', wire.error === 'exec' && wire.message.includes('WorkBuddy 状态读取失败'), wire)
 }
 
-// W8 另一版本失败时不能将部分积分报告成完整合计。
+// W8 [0.8.2 降级策略] 另一版本失败时不再整体报错：已取到数据的版本照常展示，
+// 并以 partial/partialNote 标记「部分取数」，避免把部分合计误读成完整合计。
 {
   const original = globalThis.fetch
   try {
@@ -110,8 +111,16 @@ async function withServer(routes, fn) {
         return { status: 200, json: async () => ({ status: 'signed-in', credits: { total: 100 } }) }
       }
       const wire = await fetchPlan()
-      check('W8 部分成功 + ' + kind + ' 不静默少算', wire.error === (kind === 'semantic' ? 'api' : 'exec') && wire.creditsTotal === undefined, wire)
+      check('W8a 部分成功 + ' + kind + ' → 展示已取到版本', wire.creditsTotal === 100, wire)
+      check('W8b 部分成功 + ' + kind + ' → partial 标记 + 脚注', wire.partial === true
+        && typeof wire.partialNote === 'string' && wire.partialNote.includes('WorkBuddy AI'), wire)
+      check('W8c 部分成功 + ' + kind + ' → 不再报错', wire.error === undefined, wire)
     }
+    // 两方都失败 → 仍按原语义报 exec（不产生无数据的 partial）。
+    globalThis.fetch = async () => { throw new Error('offline') }
+    const both = await fetchPlan()
+    check('W8d 两方都失败 → 仍报 exec', both.error === 'exec' && both.message.includes('WorkBuddy 状态读取失败'), both)
+    check('W8e 两方都失败 → 不带 partial', both.partial === undefined && both.creditsTotal === undefined, both)
     globalThis.fetch = undefined
     const unavailable = await fetchPlan()
     check('W9 缺 fetch 返回结构化错误', unavailable.error === 'exec', unavailable)
@@ -121,6 +130,27 @@ async function withServer(routes, fn) {
       const exceptional = await fetchPlan()
       check('W10 外层异常返回结构化错误（execError 导入守卫）', exceptional.error === 'exec', exceptional)
     } finally { globalThis.AbortController = aborter }
+  } finally { globalThis.fetch = original }
+}
+
+// W11 [0.8.2] status 请求必须声明 accept-encoding: identity——DSHA 宿主
+// （dsh-web-mobile compress.js × gzip 中间件踩踏）会对「<1 KiB 且带
+// Content-Length 的 gzip 协商响应」reset 连接，identity 是消费侧绕过。
+{
+  const original = globalThis.fetch
+  try {
+    setWebBase('http://127.0.0.1:12345')
+    const seen = []
+    globalThis.fetch = async (url, init) => {
+      seen.push({ url: String(url), headers: (init && init.headers) || null })
+      return { status: 200, json: async () => ({ status: 'signed-out' }) }
+    }
+    await fetchPlan()
+    check('W11 两条 status 请求都发出', seen.length === 2, seen)
+    check('W11a 请求头带 accept-encoding: identity', seen.every((s) => s.headers
+      && s.headers['accept-encoding'] === 'identity'), seen)
+    check('W11b 请求头带 accept: application/json', seen.every((s) => s.headers
+      && s.headers['accept'] === 'application/json'), seen)
   } finally { globalThis.fetch = original }
 }
 

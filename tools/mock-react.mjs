@@ -11,7 +11,12 @@
  */
 import { readFileSync } from 'node:fs'
 
-export function createRuntime() {
+export function createRuntime(options) {
+  // [0.8.2] waapi:true 时给每个元素挂 animate 记录器（默认关闭——
+  // test-android-compat 断言 PeakBar 在「无 WAAPI」环境走静态 transform 兜底，
+  // 全局打开会破坏该前提；只有需要验证面板动画的测试显式开启）。
+  const opts = options || {}
+  const animations = []
   let Component = null
   let instance = null
   let current = null
@@ -41,7 +46,14 @@ export function createRuntime() {
       if (kids.length === 1) out.children = kids[0]
       else if (kids.length > 1) out.children = kids
       const el = { type, props: out }
+      if (opts.waapi === true) {
+        el.animate = (frames, animOpts) => {
+          animations.push({ frames, opts: animOpts })
+          return { cancel() {}, currentTime: 0 }
+        }
+      }
       // 带 ref 的元素（= 胶囊根节点）：附着 ref 并挂上测试构造的父链。
+      // 子元素的 parentElement 链在渲染后统一补（见 pass 里的 wireDomChain）。
       if (out.ref != null && typeof out.ref === 'object') {
         out.ref.current = el
         if (currentParent !== null) el.parentElement = currentParent
@@ -60,7 +72,13 @@ export function createRuntime() {
       const s = slot('effect')
       if (s.deps === undefined || !sameDeps(s.deps, deps)) {
         s.deps = deps
-        pending.push(fn)
+        // [0.8.2] 与 React 对齐：effect 返回的 cleanup 要保存；deps 变化重跑前
+        // 先执行旧 cleanup。此前 mock 直接丢弃返回值，全局监听（外点关闭等）
+        // 在测试里永远拆不掉。mount() 卸载时也会统一跑 cleanup。
+        pending.push(() => {
+          if (typeof s.cleanup === 'function') s.cleanup()
+          s.cleanup = fn()
+        })
       }
     },
     useMemo(fn, deps) {
@@ -79,9 +97,22 @@ export function createRuntime() {
     useSyncExternalStore(_subscribe, getSnapshot) { return getSnapshot() },
   }
 
+  /**
+   * [0.8.2] 渲染后补全 mock DOM 父子链：沿 children 递归，给每个元素挂
+   * parentElement。真实 DOM 天然有这条链，外点关闭的「上溯到根」判定
+   * 依赖它；根元素的 parent 已由 createElement 的 ref 分支指向测试宿主。
+   */
+  function wireDomChain(node, parent) {
+    if (node === null || node === undefined || typeof node !== 'object') return
+    if (Array.isArray(node)) { for (const k of node) wireDomChain(k, parent); return }
+    if (node.type === undefined) return // 文本节点没有 children
+    if (parent !== undefined) node.parentElement = parent
+    const kids = node.props ? node.props.children : undefined
+    if (Array.isArray(kids)) { for (const k of kids) wireDomChain(k, node) }
+    else if (kids !== undefined) wireDomChain(kids, node)
+  }
+
   function pass(props) {
-    // 容错：调用方忘了 mount 时自动建实例（否则 hook 会在 current===null 上崩，
-    // 报出 "Cannot set properties of null" 这种与真实原因无关的错误）。
     if (instance === null) instance = { hooks: [], cursor: 0 }
     current = instance
     instance.cursor = 0
@@ -90,6 +121,7 @@ export function createRuntime() {
     const queued = pending
     pending = []
     for (const fn of queued) fn()
+    wireDomChain(tree, tree.parentElement)
     return tree
   }
 
@@ -97,7 +129,14 @@ export function createRuntime() {
     React,
     /** 设定胶囊根节点的父链（模拟 DOM）；用 fakeFlexNode() 构造。 */
     setParent(node) { currentParent = node },
+    /** [0.8.2] waapi 运行时里所有 element.animate 的记录（供动画断言）。 */
+    animations,
     mount(Comp, props) {
+      // [0.8.2] 与真实 React 对齐：重新 mount 前先跑上一轮 effect cleanup，
+      // 否则打开面板挂的全局监听会泄漏进下一个用例。
+      for (const s of (instance && instance.hooks) || []) {
+        if (s.kind === 'effect' && typeof s.cleanup === 'function') { s.cleanup(); s.cleanup = undefined }
+      }
       Component = Comp
       instance = { hooks: [], cursor: 0 }
       return pass(props)
@@ -160,6 +199,7 @@ export function loadClient(runtime, options) {
   // [local patch 0.8.0] 极简事件目标：0.8.0 起 client.js 会在 window/document 上
   // 挂 focus / visibilitychange 监听（充值后余额同步的刷新触发点），mock 需要
   // 承接这两个 API，并保留监听表供测试触发/断言。
+  // [0.8.2] dispatch 支持携带事件字段（如 keydown 的 event.key），供外点/Esc 关闭测试用。
   function makeEventTarget() {
     const listeners = {}
     return {
@@ -170,9 +210,9 @@ export function loadClient(runtime, options) {
         const i = arr.indexOf(fn)
         if (i >= 0) arr.splice(i, 1)
       },
-      dispatch(type) {
+      dispatch(type, extra) {
         const arr = (listeners[type] || []).slice()
-        for (const fn of arr) fn({ type })
+        for (const fn of arr) fn(Object.assign({ type }, extra))
       },
     }
   }

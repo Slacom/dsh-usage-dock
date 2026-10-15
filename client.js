@@ -254,15 +254,19 @@ function isBalancePlan(plan) {
 
 var peakWrapStyle = { display: 'flex', flexDirection: 'column', marginTop: 6, minWidth: 0 }
 // 单一无边框坐标面：图案、动画测量与标记共用同一宽度；不再混用轨道 border-box / 内容宽。
-var peakStageStyle = { position: 'relative', height: 8, marginTop: 5, minWidth: 0 }
+// [0.8.2] marginBottom 6 为下方小正三角（轨道下缘外再占 6px）预留空间，避免压到脚注。
+var peakStageStyle = { position: 'relative', height: 8, marginTop: 5, marginBottom: 6, minWidth: 0 }
 var peakTrackStyle = { position: 'relative', width: '100%', height: '100%', borderRadius: 999, overflow: 'hidden', background: 'var(--dsw-alias-bg-layer-3)' }
 var peakPatternStyle = { position: 'absolute', left: 0, top: 0, height: '100%', willChange: 'transform' }
 // 两个图形只共享一个 50% 锚点，子项只相对于 x=0 定位；不以负 margin / 独立行补偿。
 var peakMarkerStyle = { position: 'absolute', left: '50%', top: 0, bottom: 0, width: 0, pointerEvents: 'none', zIndex: 2 }
-// 替代样式待用户选定；此次仅修正几何，保留原来的 2px 柱。
-var peakCursorStyle = { position: 'absolute', left: 0, top: 0, bottom: 0, width: 2, background: 'var(--dsw-alias-bg-base)', transform: 'translateX(-50%)' }
-// 明确的 8×5 图形盒，避免零宽 border 三角受宿主通用 box-sizing / border 样式影响。
-var peakCaretStyle = { position: 'absolute', left: 0, top: -5, width: 8, height: 5, background: 'var(--dsw-alias-label-tertiary)', clipPath: 'polygon(0 0, 100% 0, 50% 100%)', transform: 'translateX(-50%)' }
+// [0.8.2] 方案 K「上下对尖」（用户定稿，出自 docs/demos/cursor-directions-v2.html K）：
+// 白柱整体移出轨道——上方 8×5 倒三角 + 下方 6×4 小正三角夹住「现在」，
+// 色条内部没有任何覆盖物，也没有类似边界的竖线。与演示页一致：倒三角底缘
+// 与轨道上缘留 1px 空隙（top:-6 + height 5 → 底缘 y=-1），小正三角顶缘与
+// 轨道下缘留 2px 空隙（top:10）。stage 的 marginBottom:6 为下三角预留高度。
+var peakCaretStyle = { position: 'absolute', left: 0, top: -6, width: 8, height: 5, background: 'var(--dsw-alias-label-tertiary)', clipPath: 'polygon(0 0, 100% 0, 50% 100%)', transform: 'translateX(-50%)' }
+var peakFootStyle = { position: 'absolute', left: 0, top: 10, width: 6, height: 4, background: 'var(--dsw-alias-label-tertiary)', clipPath: 'polygon(50% 0, 100% 100%, 0 100%)', transform: 'translateX(-50%)' }
 // 与面板脚注同款灰字（sectionNoteStyle 的字号/行高），无背景无边框。
 var peakNoteStyle = { color: 'var(--dsw-alias-label-tertiary)', fontSize: 11, lineHeight: 1.5, margin: '3px 0 2px' }
 
@@ -404,10 +408,11 @@ function PeakBar(props) {
       h('div', { style: peakTrackStyle, ref: trackRef, 'data-peak-track': '' },
         h('div', { style: Object.assign({}, peakPatternStyle, { width: (spanMs * scale) + 'px' }) }, children),
       ),
-      // marker 是轨道的兄弟，不被圆角裁切；三角尖端 y=0，恰好接触轨道上缘。
+      // marker 是轨道的兄弟，不被圆角裁切；上下两个三角同轴于 50% 锚点（x=0），
+      // 色条内部无任何覆盖物（方案 K：「上下对尖」夹住「现在」）。
       h('div', { style: peakMarkerStyle, 'data-peak-marker': '' },
-        h('span', { style: peakCursorStyle, 'data-peak-cursor': '' }),
         h('span', { style: peakCaretStyle, 'data-peak-caret': '' }),
+        h('span', { style: peakFootStyle, 'data-peak-foot': '' }),
       ),
     ),
     h('div', { style: peakNoteStyle }, peakNoteText(phase)),
@@ -580,6 +585,9 @@ function PlanUsageBadge(props) {
   var openHook = React.useState(false)
   var open = openHook[0]
   var setOpen = openHook[1]
+  // [0.8.2] 外点关闭：需要拿到胶囊与详情面板的真实元素做「点击是否在卡片内」判定。
+  var pillRef = React.useRef(null)
+  var panelRef = React.useRef(null)
   // [local patch 0.7.0] 悬停/聚焦态由 React 状态驱动，而不是靠 CSS :hover ——
   // 行内样式优先级高于任何选择器，用 :hover 会被行内 background 压死（第一版就是这样翻车的）。
   // 状态驱动顺带解决了焦点态：键盘 Tab 聚焦也能看到同款底色。
@@ -596,6 +604,56 @@ function PlanUsageBadge(props) {
   React.useEffect(function () {
     if (props.wide === false) setOpen(false)
   }, [props.wide])
+
+  // [0.8.2] 详情卡片打开时，点击卡片外的任意位置自动关闭；Esc 同样关闭。
+  //   - 开/关仍由胶囊的 click 翻转（键盘 Enter 也能开）。这里只负责「外部按下」：
+  //     pointerdown 走 window 捕获，比 click 更早，也不受宿主 UI stopPropagation
+  //     影响；按在胶囊或面板内（root.contains / panel.contains / Shadow DOM
+  //     composedPath）不关，按在外部立即关——关闭发生在按下瞬间，观感接近原生浮层。
+  //     胶囊自身的按下会命中 root.contains，天然豁免，无需事件标记；
+  //   - 窗口失焦/切换应用不清面板：只响应「明确点在面板外」的动作。
+  // 面板仅在展开态渲染，监听只在 open && wide 时存在，收起即随之拆除。
+  var panelOpenNow = open && props.wide !== false
+  React.useEffect(function () {
+    if (!panelOpenNow) return
+    if (typeof document === 'undefined' || typeof document.addEventListener !== 'function') return
+    // 「是否点在卡片内」：从事件 target 沿 parentElement 上溯到胶囊根或面板即算内。
+    // 用上溯而不是 root.contains(node)：面板/胶囊的嵌套子节点在真实 DOM 里
+    // 会逐层挂 parentElement，mock 测试的假节点也一样，两端语义一致。
+    // ref 在事件发生时现读（不闭包捕获）：重渲染后 ref 总是指向当前元素。
+    function inCard(node) {
+      var root = rootRef.current
+      var panel = panelRef.current
+      var hops = 0
+      var n = node
+      while (n && hops < 16) {
+        if (root !== null && n === root) return true
+        if (panel !== null && n === panel) return true
+        // Shadow DOM：composedPath 命中胶囊根/面板即算「卡片内」。
+        if (typeof n.composedPath === 'function') {
+          var path = n.composedPath()
+          for (var i = 0; i < path.length; i++) {
+            if ((root !== null && path[i] === root) || (panel !== null && path[i] === panel)) return true
+          }
+        }
+        n = n.parentElement
+        hops++
+      }
+      return false
+    }
+    function onOutside(event) {
+      if (!inCard(event.target)) setOpen(false)
+    }
+    function onKey(event) {
+      if (event && event.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('pointerdown', onOutside, true)
+    document.addEventListener('keydown', onKey, true)
+    return function () {
+      window.removeEventListener('pointerdown', onOutside, true)
+      document.removeEventListener('keydown', onKey, true)
+    }
+  }, [panelOpenNow])
 
   // [local patch 0.8.0] 轮询数据层重写：
   //   1. **失败降级**（roadmap 方向 3 定稿）：单渠道失败先保留上次成功值、数值
@@ -774,6 +832,24 @@ function PlanUsageBadge(props) {
     }
   }, [enabled])
 
+  // [0.8.2] 展开动画：面板从胶囊处向上展开（下缘为原点，轻微上浮 + 渐显），
+  // 参考 DSH 桌面端左侧工作区「点击项目展开会话记录」的入场动效语言。
+  // 走 WAAPI（element.animate，transform/opacity 合成器路径，与峰谷条动画同款）：
+  //   - 无 WAAPI 的环境（旧 WebView / 测试 mock）直接静态呈现，行为与 0.8.1 一致；
+  //   - 只在「面板出现」那一帧播一次；打开期间的数据刷新不重播（deps 只有 open）。
+  React.useEffect(function () {
+    var el = panelRef.current
+    if (!panelOpenNow || !el || typeof el.animate !== 'function') return
+    var anim = el.animate(
+      [
+        { transform: 'translateY(6px)', opacity: 0 },
+        { transform: 'translateY(0)', opacity: 1 },
+      ],
+      { duration: 170, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' },
+    )
+    return function () { anim.cancel() }
+  }, [panelOpenNow])
+
   if (enabled === false || (state && state.error === 'disabled')) return null
 
   // 只展示当前仍启用的套餐（禁用后旧数据一并丢弃）。
@@ -868,6 +944,8 @@ function PlanUsageBadge(props) {
   var interactive = wide
   var pillProps = {
     className: 'dsh-plan-usage-pill',
+    // [0.8.2] 外点关闭用：胶囊元素引用（点击是否落在卡片内的判定起点）。
+    ref: pillRef,
     // 悬停底色的开关（见 ensureStyles 注入的 CSS）；缩略态不加。
     'data-interactive': interactive ? 'true' : undefined,
     style: Object.assign({}, pillStyle, {
@@ -973,6 +1051,12 @@ function PlanUsageBadge(props) {
               h('span', {}, formatCredit(plan.creditsTotal)),
             ),
             detailBlock,
+            // [0.8.2] 部分取数脚注：某个版本取不到数据时，合计只是已取到版本的
+            // 小计——用灰色说明行点出来，避免被误读为完整合计。
+            // 注意 creditMode 分支不走 planNotes()（后者只服务窗口型分支），必须内联。
+            plan.partial === true && plan.partialNote
+              ? h('div', { style: sectionNoteStyle, key: 'wbpartial' }, plan.partialNote)
+              : null,
           )
         } else {
           inner = h('div', { style: sectionNoteStyle }, '积分获取失败')
@@ -1068,7 +1152,7 @@ function PlanUsageBadge(props) {
         inner,
       )
     })
-    panel = h('div', { style: panelStyle },
+    panel = h('div', { style: panelStyle, ref: panelRef, 'data-plan-usage-panel': '' },
       h('div', { style: panelTitleStyle }, PLAN_NAME),
       sections,
     )

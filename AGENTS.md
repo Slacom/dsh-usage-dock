@@ -11,12 +11,17 @@ DeepSeek Harness（DSH）的**侧栏用量/余额插件**：在 Web/桌面端左
 用量与余额，点击可展开详情面板。fork 自 `chendefine/dsh-plugins-plan-usage`，改名 `dsh-usage-dock`
 以避免与上游混淆，并做了一系列定制（见第 6 节）。
 
-**当前版本**：0.8.1　|　**发布状态**：GitHub 主干 / v0.8.1 标签 / Release 已发布，npm publish 已接受（2026-10-15；registry 处理期间可能短暂 404）　|　**上一公开版**：0.7.2（0.8.0 未单独发布）
+**当前版本**：0.8.2（本地构建，待用户测试；推送闸门见第 8 节）　|　**上一公开版**：0.8.1（GitHub 主干 / v0.8.1 标签 / Release 已发布，npm publish 已接受 2026-10-15）　|　**更早**：0.7.2（0.8.0 未单独发布）
 
-> **2026-10-15 交接优先说明**：当前已增加 WorkBuddy 积分与渠道排序；充值入口已整体移除，峰谷条已改为固定中点 + 24h 平滑移动图案，倒三角和 2px 柱使用共享锚点。候选游标仅保留演示，不实装。
-> 下文 0.8.0 的 classic/充值记录是历史阶段，最终实现以 [v0.8.1 发布说明](docs/release-notes-v0.8.1.md) 为准。
+> **2026-10-15 0.8.2 说明**：主方向为 DSHA WorkBuddy「fetch failed」修复（宿主
+> dsh-web-mobile compress.js × gzip 中间件踩踏，消费侧两处绕过：status 请求声明
+> `accept-encoding: identity` + 失败降级为 partial 部分数据与灰色脚注）；另含
+> 详情卡片外点/Esc 关闭、向上展开渐变动画（WAAPI）、峰谷条方案 K「上下对尖」
+> 游标（白柱移出轨道）。根因诊断与宿主侧修复建议见 `DHSA移植反馈/交接文档-0.8.2修复.md`。
+> 0.8.1 时期：WorkBuddy 积分与渠道排序、充值入口整体移除、峰谷条固定中点 + 24h 平滑移动图案；
+> 0.8.0 的 classic/充值记录是历史阶段，最终实现以 [v0.8.2 发布说明](docs/release-notes-v0.8.2.md) 与 [v0.8.1 发布说明](docs/release-notes-v0.8.1.md) 为准。
 > DSHA/安卓检查包括无 shell、无账号/configEditor 服务、无 WAAPI/ResizeObserver 的降级与 hooks 稳定性；真实 WorkBuddy Connect 0.7.4 状态处理器对接通过，但并非 Android 真机联网实测。
-> 新测试：`test-android-compat.mjs`（13）、`test-settings.mjs`（6）、`test-workbuddy.mjs`（13）、`test-workbuddy-contract.mjs <上游lib/index.js>`（5）。
+> 测试：`test-android-compat.mjs`（13）、`test-settings.mjs`（6）、`test-workbuddy.mjs`（22）、`test-workbuddy-contract.mjs <上游lib/index.js>`（5）、`test-panel-interactions.mjs`（8，0.8.2 新增）、`test-peak-marker.mjs`（144 几何断言，0.8.2 改方案 K）。
 
 ## 2. 关键路径
 
@@ -282,6 +287,16 @@ $token = (("protocol=https`nhost=github.com`n`n" | git credential fill) -replace
    DeepSeek 峰谷时间条（classic）、新渠道小米 MiMo（控制台 Cookie → API 余额）。
    回归测试从 23 项增至 88 项（新增 degrade-refresh 22 / peak-phase 22 / mimo-parse 21）；
    期间抓到并修掉一个真实回归：降级转错误态时必须剥离旧 balance 字段，否则胶囊拿旧值顶替
+11. 0.8.2（2026-10-15）：DSHA WorkBuddy「fetch failed」修复——宿主 dsh-web-mobile
+   `compress.js` 与 gzip 中间件在「<1 KiB 且带 Content-Length」响应上互相踩踏致连接被
+   reset（根因与宿主侧修复建议见 `DHSA移植反馈/交接文档-0.8.2修复.md`）。消费侧两处绕过：
+   ① status 请求声明 `accept-encoding: identity`；② 失败降级——任一版本拿到 credits 即
+   展示合计并带 `partial`/`partialNote`，客户端渲染灰色脚注，全部失败才维持原分类。
+   另加：详情卡片点击外部/Esc 自动关闭（pointerdown 捕获 + parentElement 上溯 +
+   Shadow DOM composedPath）、面板从胶囊向上展开渐变动画（WAAPI 170ms，无 WAAPI 静态
+   降级）、峰谷条游标改方案 K「上下对尖」（上下三角夹住「现在」，白柱与轨道内覆盖物
+   全部移除）。测试：workbuddy 22 项、panel-interactions 8 项（新增）、peak-marker
+   144 几何断言（改方案 K）；mock-react 对齐 effect cleanup 与 mock DOM 父子链语义。
 
 ## 11. 未来方向（roadmap）
 
@@ -299,4 +314,4 @@ $token = (("protocol=https`nhost=github.com`n`n" | git credential fill) -replace
 
 ---
 
-*文档更新时间：2026-10-14*
+*文档更新时间：2026-10-15*

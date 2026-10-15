@@ -5,7 +5,7 @@
 
 DeepSeek Harness（DSH）的侧栏套餐用量插件：在左侧栏底部显示余额、积分和剩余额度，点击展开详情。
 
-> 当前版本 **0.8.1**：[发布说明](https://github.com/Slacom/dsh-usage-dock/releases/tag/v0.8.1)。
+> 当前版本 **0.8.2**：[发布说明](https://github.com/Slacom/dsh-usage-dock/releases/tag/v0.8.2)。
 
 ![侧栏余额与额度预览](https://raw.githubusercontent.com/Slacom/dsh-usage-dock/main/preview.png)
 
@@ -33,7 +33,7 @@ DeepSeek Harness（DSH）的侧栏套餐用量插件：在左侧栏底部显示�
 安卓端包括基于 `0.2.0-rc.2` 的 DSHA / DeepCode 移植环境。不同移植版本仍需核对宿主 API。
 
 ```sh
-dsh plugin --profile web add dsh-usage-dock@0.8.1
+dsh plugin --profile web add dsh-usage-dock@0.8.2
 ```
 
 桌面端按实际 profile 使用 `--profile desktop`；也可在「设置 → 插件」添加包名。
@@ -67,7 +67,8 @@ Usage Dock 复用同一 Host 内的这两个接口，不直接读取、复制或
 4. Usage Dock 设置页开启 WorkBuddy 渠道。
 
 国内版登录、国际版未登录可以正常显示国内版积分；无需两版同时登录。
-认证/计费失败会显示错误，暂时网络失败按失败降级规则处理；不会把部分成功静默当作完整合计。
+一方版本因网络或认证问题取不到数据时，另一版本的积分照常展示，并以灰色脚注
+标明未取到的版本（不会静默把部分合计当成完整合计）；两方都失败才显示错误。
 WorkBuddy Connect 自带的移动 UI 不出现，不等于它的 Host 状态接口不可用。
 不要公开上传认证文件、Cookie 或刷新令牌。
 

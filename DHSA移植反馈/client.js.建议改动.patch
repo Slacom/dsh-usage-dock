@@ -1,0 +1,14 @@
+--- package/client.js	1985-10-26 08:15:00.000000000 +0000
++++ /root/.dsh/profiles/web/node_modules/dsh-usage-dock/client.js	2026-10-15 08:17:15.378055576 +0000
+@@ -973,6 +973,11 @@
+               h('span', {}, formatCredit(plan.creditsTotal)),
+             ),
+             detailBlock,
++            // [local patch 0.8.2] 部分取数脚注：某个版本取不到数据时，合计只是
++            // 已取到版本的小计——用灰色说明行点出来，避免被误读为完整合计。
++            plan.partial === true && plan.partialNote
++              ? h('div', { style: sectionNoteStyle, key: 'wbpartial' }, plan.partialNote)
++              : null,
+           )
+         } else {
+           inner = h('div', { style: sectionNoteStyle }, '积分获取失败')
