@@ -11,7 +11,12 @@ DeepSeek Harness（DSH）的**侧栏用量/余额插件**：在 Web/桌面端左
 用量与余额，点击可展开详情面板。fork 自 `chendefine/dsh-plugins-plan-usage`，改名 `dsh-usage-dock`
 以避免与上游混淆，并做了一系列定制（见第 6 节）。
 
-**当前版本**：0.7.2　|　**已发布**：GitHub + npm　|　**已安装**：desktop profile
+**当前版本**：0.8.1　|　**发布状态**：用户已确认倒三角修复，授权检查通过后推送发布　|　**上一公开版**：0.7.2（0.8.0 未单独发布）
+
+> **2026-10-15 交接优先说明**：当前已增加 WorkBuddy 积分与渠道排序；充值入口已整体移除，峰谷条已改为固定中点 + 24h 平滑移动图案，倒三角和 2px 柱使用共享锚点。候选游标仅保留演示，不实装。
+> 下文 0.8.0 的 classic/充值记录是历史阶段，最终实现以 [v0.8.1 发布说明](docs/release-notes-v0.8.1.md) 为准。
+> DSHA/安卓检查包括无 shell、无账号/configEditor 服务、无 WAAPI/ResizeObserver 的降级与 hooks 稳定性；真实 WorkBuddy Connect 0.7.4 状态处理器对接通过，但并非 Android 真机联网实测。
+> 新测试：`test-android-compat.mjs`（13）、`test-settings.mjs`（6）、`test-workbuddy.mjs`（13）、`test-workbuddy-contract.mjs <上游lib/index.js>`（5）。
 
 ## 2. 关键路径
 
@@ -41,15 +46,19 @@ client.js         Browser 半：侧栏胶囊 + 「内置插件」里的设置页
 plans/index.js    渠道注册表（新增渠道只需在此登记）
 plans/<渠道>.js   每渠道一个模块，统一接口 { id, name, fields, schema, source, fetch }
 plans/util.js     共用工具：curlJson（原生 fetch / Python / curl 三后端自适应）、窗口归一化、凭据解析
+plans/peak-phase.js  DeepSeek 峰谷计价相位纯函数（峰窗口/周末/假日表，0.8.0）
 plans/http-fetch.py  兜底取数脚本（Windows 沙箱内 curl 的 TLS 不可用时的 Python/OpenSSL 方案）
 cordis.patch.yml  插件向 profile 贡献的配置层（insert 一个 plan-usage 条目）
 tools/test-fetch-backends.mjs  取数后端 + DeepSeek 渠道回归测试（见第 4 节）
 tools/mock-react.mjs           浏览器半测试共用的极简 React 运行时 + client.js 加载器
 tools/test-collapsed-pill.mjs  浏览器半回归测试：缩略（rail）状态不可交互（见第 4 节）
 tools/test-footer-row.mjs      浏览器半回归测试：胶囊独占侧栏底部一行（见第 4 节）
+tools/test-degrade-refresh.mjs 浏览器半回归测试：失败降级/取整/强刷/峰谷条/充值按钮/MiMo（0.8.0）
+tools/test-peak-phase.mjs      plans/peak-phase.js 单元测试（0.8.0）
+tools/test-mimo-parse.mjs      plans/mimo.js 纯函数单元测试（0.8.0）
 ```
 
-**已接入渠道**：OpenCode Go、GLM Z.AI、GLM 智谱、Kimi Code、DeepSeek（账号余额优先/API Key 回退）、OpenAI Codex。
+**已接入渠道**：OpenCode Go、GLM Z.AI、GLM 智谱、Kimi Code、DeepSeek（账号余额优先/API Key 回退）、OpenAI Codex、小米 MiMo（控制台 Cookie → API 余额，0.8.0）。
 
 ## 4. 开发流程
 
@@ -148,12 +157,25 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
    **圆角/内距照抄侧栏条目**：`border-radius:12px` + `padding:6px 10px`，出处是 DSH 自带
    「新会话」按钮与 `ds-harness-remote` 的 `.dshRemoteSidebarEntry.isWide .dshRemoteModeButton`
    （`iconButton` 那类 28px 圆形按钮用 50%，与条目不通用）——改这两个值前先回去核对，别凭感觉调
+10. **失败降级 + 点击强刷**（0.8.0）：取数失败保留上次成功值、灰字弱化，连续 2 轮失败才显示
+   「获取失败」（不加「更新于」标注，用户定稿）；点开详情面板 / 窗口 focus /
+   visibilitychange 时**作废 in-flight 请求立即重拉**；余额向下取整到分（对齐设置页截断）
+11. **DeepSeek 充值入口**（0.8.0）：面板余额行「充值」按钮，经 preload 暴露的
+   `dshPlatform.open("top-up", bounds)` 打开**原生充值页**（bounds 必须是合法的
+   `{x,y,width,height}` 数值对象，缺失会被主进程拒绝）；仅账号登录 + 桌面端（有桥）时渲染，
+   浏览器/移动端无桥、不渲染也不做外链回退（用户确认）
+12. **DeepSeek 峰谷时间条**（0.8.0）：classic 样式（照抄 dsh-cost-meter `cm-peak-classic`），
+   相位计算在 `plans/peak-phase.js`（纯函数，峰窗口 UTC 1-4/6-10、周末与假日全谷价），
+   host 在 `/api/plan-usage` 响应里给账号登录的 DeepSeek 条目附 `peakPhase`；假日表硬编码，
+   国务院公布新年份安排时在 `PEAK_HOLIDAYS` 里追加
+13. **小米 MiMo 渠道**（0.8.0）：控制台 Cookie 鉴权（非 API Key，需 userId + serviceToken），
+   只查 `GET /api/v1/balance` 显示账户余额（用户明确：不做套餐积分额度）；
+   `util.js` 的 `parseResult` 已放行 `{code:0}` 成功信封（code 非 0/非 200 才是错误）
 
 ## 7. 已知限制
 
-- **Host 半仍会拉取已禁用渠道的数据**（它读的是插件加载时的配置）。不影响显示，只是有无谓请求；
-  若在意，可让 Host 在每次请求时通过 `configEditor` 重读配置。
-- 插件配置改动**需要 Host 侧生效时必须重启**；显示层的过滤已做到实时。
+- 0.8.1 的 Host 已通过可选 `configEditor` 重读配置（2 秒内复用）；缺少该服务的旧版/移植端回退启动快照，修改凭据和 Host 开关后仍需重启引擎。显示层过滤与排序订阅表单。
+- WorkBuddy 积分依赖同一 profile 中已启用的 WorkBuddy Connect 及有效登录副本、可访问的计费上游。源码/模拟检查通过不等同所有 DSHA 设备真机验证。
 - 原生 fetch **不读系统代理设置**（Node/undici 默认行为）。必须走代理出网的环境里首次请求会先
   失败一次（最多 10 秒），随后自动落到会读代理的 Python shim 并被记住——功能不受影响，只是首次稍慢。
   若要让 fetch 直接支持代理，可给 Host 进程加 `NODE_USE_ENV_PROXY=1`（Node 24+）。
@@ -255,32 +277,26 @@ $token = (("protocol=https`nhost=github.com`n`n" | git credential fill) -replace
 9. 0.7.2 修两个显示问题：① 0.7.1 因 `var rowStyle` 遮蔽导致**详情面板额度条消失**
    （见第 5 节第 17 条）；② 缩略态状态点贴左 → 水平居中（见第 5 节第 18 条）。
    footer 行测试增至 11 项（T10 面板额度行、T11 缩略态居中），两条都先在 v0.7.1 上失败
+10. 0.8.0 功能版：失败降级（保留旧值+灰字+2 轮失败）与轮询防卡死、余额向下取整到分、
+   点击展开即刷 + focus 同步（充值后余额不再停在旧值）、DeepSeek 充值入口（原生 top-up 页）、
+   DeepSeek 峰谷时间条（classic）、新渠道小米 MiMo（控制台 Cookie → API 余额）。
+   回归测试从 23 项增至 88 项（新增 degrade-refresh 22 / peak-phase 22 / mimo-parse 21）；
+   期间抓到并修掉一个真实回归：降级转错误态时必须剥离旧 balance 字段，否则胶囊拿旧值顶替
 
 ## 11. 未来方向（roadmap）
 
 完整记录在 **[docs/roadmap.md](docs/roadmap.md)**，排新版本时从那里取。当前待做：
 
-1. **详情面板内提供 DeepSeek 充值入口**：与「设置 → 账号与余额」的充值按钮一致，
-   点击跳转 DSH 内嵌充值页；仅账号登录（`via === "account"`）时显示。
-2. **充值后胶囊余额与设置页余额实时同步**：设置页立即更新、胶囊却停在旧值
-   （2026-10-10 充值实测：设置 ¥34.42 vs 胶囊 ¥4.42）；优先事件驱动/订阅设置页同款数据源，
-   保底在 focus / 路由返回 / 面板展开时立即刷新，同样仅账号登录时实现。
-   附带：余额显示改**向下取整到分**与设置页截断语义对齐（2026-10-12 实测 `34.31662152`：
-   胶囊 `toFixed(2)` 四舍五入 → 34.32、设置页截断 → 34.31，用户看到的「总是略多一分」即此）。
-3. **失败保留旧值 + 弱化标注（推广到所有渠道）**：取数失败时保留上一次成功值，
-   加「更新于 HH:mm」灰字；连续 2~3 轮失败才显示「获取失败」——借鉴 codex-connect
-   额度条的降级哲学（它失败时静默隐藏、错误只进 `quotaError` 字段，日常 UI 从不报错）。
-   附带修**轮询防卡死**：客户端 `fetch('/api/plan-usage')` 无超时 + `inFlight` 不复位 =
-   请求挂起即轮询永久停摆；Host 端 `getBalance` 也要包超时，别拖死 `Promise.all`。
-4. **Host 端 `/api/plan-usage` 结果缓存 + 请求合并**（⚠️ 配套方案，roadmap 方向 4 里负面效果
+1. **Host 端 `/api/plan-usage` 结果缓存 + 请求合并**（⚠️ 配套方案，roadmap 方向 4 里负面效果
    与风险写得很全，动手前必读）：按渠道独立内存缓存（TTL 30s 起步）+ single-flight +
-   stale-if-error，收敛多窗口翻倍打上游的请求量。**最大风险：与方向 2 直接冲突**——
-   加缓存后充值可见延迟从 ≤30s 恶化到 ≈60~90s，**`?fresh=1` 强制刷新通道是前置条件、
-   不能倒序排期**；语义错误（no-key/signed-out/reauth-required）绝不许 stale 顶着；
+   stale-if-error，收敛多窗口翻倍打上游的请求量。**用户 2026-10-14 确认：备选方向，
+   暂不推进**。前置条件：`?fresh=1` 强制刷新通道（0.8.0 的三个立即刷新触发点必须能
+   绕过缓存）；语义错误（no-key/signed-out/reauth-required）绝不许 stale 顶着；
    响应必须带 `fetchedAt`/`stale`。渠道级降频用户已否决，不要重提。
 
-四条都**尚未排期**，动手前先读 roadmap 里的现状数据流与实现要点。
+原方向 1（充值入口）/2（充值后同步+取整）/3（失败降级+防卡死）均已在 0.8.0 落地，
+实现要点见 roadmap「已落地」节与 release-notes-v0.8.0.md。
 
 ---
 
-*文档更新时间：2026-10-12*
+*文档更新时间：2026-10-14*

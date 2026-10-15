@@ -68,16 +68,40 @@ function pickBalance(wallets) {
 }
 
 /**
+ * [local patch 0.8.0] 给 Promise 包一个超时。deepseekAccount.getBalance 内部没有
+ * 超时控制（roadmap 方向 3 排查结论）：Platform 慢响应会拖住整个 /api/plan-usage
+ * 的 Promise.all，其他渠道明明取到了数据也被一起挂着。超时按「账号侧失败」处理，
+ * 正常回退 API Key 路径。
+ */
+function withTimeout(promise, ms, label) {
+  let timer = null
+  return Promise.race([
+    promise,
+    new Promise((resolve) => {
+      timer = setTimeout(() => resolve({ ok: false, reason: label + "（" + Math.round(ms / 1000) + " 秒超时）" }), ms)
+    }),
+  ]).finally(() => { if (timer !== null) clearTimeout(timer) })
+}
+
+/** 账号余额读取的超时上限（毫秒）：与 plans/util.js 的单请求超时同量级。 */
+const ACCOUNT_TIMEOUT_MS = 20000
+
+/**
  * 读取 DSH 账号余额（正常余额 + 赠金）。
  * @returns { balance, isAvailable }；账号服务不可用/未登录/失败时返回 null 表示应回退。
  */
 async function fetchAccountBalance(ctx) {
   const account = ctx.get("deepseekAccount")
-  if (account === undefined) return { ok: false, reason: "账号服务未加载（deepseekAccount 不可用）" }
+  if (account == null) return { ok: false, reason: "账号服务未加载（deepseekAccount 不可用）" }
   if (typeof account.getBalance !== "function") return { ok: false, reason: "账号服务没有 getBalance 方法" }
   try {
     // Remote 契约：null（未登录）| { status: "ready", value: [...], bonusWallets: [...] } | { status: "failed" }
-    const summary = await account.getBalance(CLIENT_METADATA)
+    // [local patch 0.8.0] 包 20s 超时，防止慢响应拖死整个 Promise.all。
+    const summary = await withTimeout(
+      Promise.resolve(account.getBalance(CLIENT_METADATA)),
+      ACCOUNT_TIMEOUT_MS,
+      "账号余额读取失败",
+    )
     if (summary === null || summary === undefined) return { ok: false, reason: "账号未登录" }
     if (typeof summary !== "object") return { ok: false, reason: "账号返回了非对象结果" }
     if (summary.status === "failed") return { ok: false, reason: "账号余额读取失败（Platform 返回 failed）" }

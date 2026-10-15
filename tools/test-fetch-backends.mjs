@@ -308,10 +308,13 @@ function record(name, status, note) {
         assert.equal(typeof wire.id, 'string')
         assert.equal(typeof wire.name, 'string')
         // 无凭据的应报 no-key；Codex 例外：它依赖 dsh-codex-connect，未装时
-        // 报 not-installed / incompatible。关键是不能抛异常、不能返回 undefined。
+        // 报 not-installed / incompatible；WorkBuddy 例外：status 端点未注入
+        // （测试环境无 webServer）时报 unavailable。关键是不能抛异常、不能
+        // 返回 undefined。
         assert.ok(
-          wire.error === 'no-key' || wire.error === 'incompatible' || wire.error === 'not-installed',
-          '无凭据时应给出 no-key/incompatible/not-installed，实际: ' + JSON.stringify(wire),
+          wire.error === 'no-key' || wire.error === 'incompatible' || wire.error === 'not-installed'
+            || wire.error === 'unavailable',
+          '无凭据时应给出 no-key/incompatible/not-installed/unavailable，实际: ' + JSON.stringify(wire),
         )
       }
       record('T8 全渠道（' + PLANS.length + ' 个）在无 shell / 无凭据时降级正常', 'PASS')

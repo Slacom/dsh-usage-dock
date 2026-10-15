@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>峰谷条游标样式方案对比 — dsh-usage-dock</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px 16px 64px; font: 14px/1.6 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; background: #f7f8fa; color: #1f2329; }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 19px; margin: 0 0 6px; }
+  .sub { color: #57606a; margin: 0 0 20px; font-size: 13px; }
+  .panel { background: #fff; border: 1px solid #d7dce1; border-radius: 14px; padding: 16px 18px; margin-bottom: 16px; }
+  .panel h2 { font-size: 14.5px; margin: 0 0 2px; }
+  .panel .tag { font-size: 11px; font-weight: 600; color: #fff; border-radius: 999px; padding: 1px 8px; margin-left: 8px; vertical-align: 1px; }
+  .desc { color: #57606a; font-size: 12.5px; margin: 2px 0 12px; }
+  .scene { font-size: 11px; color: #8a929c; margin: 8px 0 3px; }
+  .stage { margin-bottom: 4px; }
+  .caretrow { position: relative; width: 100%; height: 5px; }
+  .caret { position: absolute; left: 50%; transform: translateX(-50%); width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid #6b7280; }
+  .track { position: relative; width: 100%; height: 8px; border-radius: 999px; overflow: hidden; border: 1px solid #d0d5da; background: #eceef0; }
+  .seg { position: absolute; top: 0; height: 100%; }
+  .s1 { left: 0; width: 42%; background: #3d7ff5; }
+  .s2 { left: 42%; width: 16%; background: #ff9800; }
+  .s3 { left: 58%; width: 42%; background: #3d7ff5; }
+  /* 压力场景：游标(50%)紧贴橙→蓝边界(51%) */
+  .p1 { left: 0; width: 51%; background: #ff9800; }
+  .p2 { left: 51%; width: 23%; background: #3d7ff5; }
+  .p3 { left: 74%; width: 26%; background: #ff9800; }
+  .cur { position: absolute; left: 50%; transform: translateX(-50%); top: 0; bottom: 0; }
+  .cur.A { width: 2px; background: #fff; }
+  .cur.B { width: 2px; background: #fff; box-shadow: 0 0 0 1px #6b7280; }
+  .cur.C { width: 4px; background: #fff; clip-path: polygon(0 0, 100% 0, 100% 85%, 50% 100%, 0 85%); }
+  .cur.D { width: 2px; background: #fff; }
+  .cap { position: absolute; left: 50%; transform: translateX(-50%); width: 5px; height: 5px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.14); }
+  .cap.top { top: 1px; transform: translate(-50%, -50%); }
+  .cap.bot { top: calc(100% - 1px); transform: translate(-50%, -50%); }
+  .cur.E { width: 0; height: 0; top: -1px; bottom: auto; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 9px solid #374151; filter: drop-shadow(0 1px 1px rgba(0,0,0,.25)); }
+  .cur.F-halo { width: 6px; background: rgba(255,255,255,.45); }
+  .cur.F-core { width: 2px; background: #fff; }
+  .verdict { margin-top: 10px; font-size: 12px; padding: 8px 10px; border-radius: 8px; background: #f2f3f5; color: #57606a; }
+  .good { background: #eaf6ee; color: #1a7f37; }
+  .bad { background: #fdecec; color: #b42318; }
+  footer { color: #8a929c; font-size: 12px; margin-top: 24px; line-height: 1.8; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>峰谷条游标样式方案对比</h1>
+  <p class="sub">白柱辨识度六选一（纯静态，无脚本，DSH 预览/浏览器双击均可看）。橙色 = 高峰时段，蓝色 = 空闲时段，游标固定正中；每方案两排——上排常规场景，下排「游标紧贴时段边界」的压力场景，专门检验描边类方案会不会造成「已切换」错觉。</p>
+
+  <!-- A 现状 -->
+  <section class="panel">
+    <h2>A · 现状 — 纯白细柱（2px）<span class="tag" style="background:#8a929c">基准</span></h2>
+    <p class="desc">当前实装：无描边，靠上方倒三角指示。在浅色主题下与橙/蓝背景对比都偏弱。</p>
+    <div class="scene">常规场景</div>
+    <div class="stage">
+      <div class="caretrow"><span class="caret"></span></div>
+      <div class="track"><span class="seg s1"></span><span class="seg s2"></span><span class="seg s3"></span><span class="cur A"></span></div>
+    </div>
+    <div class="scene">压力场景（游标紧贴时段边界）</div>
+    <div class="stage">
+      <div class="caretrow"><span class="caret"></span></div>
+      <div class="track"><span class="seg p1"></span><span class="seg p2"></span><span class="seg p3"></span><span class="cur A"></span></div>
+    </div>
+    <div class="verdict bad">辨识度弱：白色在浅色主题下不够显眼，贴橙段时尤其明显。</div>
+  </section>
+
+  <!-- B 描边 -->
+  <section class="panel">
+    <h2>B · 白柱加细描边（1px 灰）<span class="tag" style="background:#8a929c">已否决参考</span></h2>
+    <p class="desc">0.8.1 第一版描边方案。边界处灰描边与蓝段同色系，容易读成「已进入」。</p>
+    <div class="scene">常规场景</div>
+    <div class="stage">
+      <div class="caretrow"><span class="caret"></span></div>
+      <div class="track"><span class="seg s1"></span><span class="seg s2"></span><span class="seg s3"></span><span class="cur B"></span></div>
+    </div>
+    <div class="scene">压力场景（游标紧贴时段边界）</div>
+    <div class="stage">
+      <div class="caretrow"><span class="caret"></span></div>
+      <div class="track"><span class="seg p1"></span><span class="seg p2"></span><span class="seg p3"></span><span class="cur B"></span></div>
+    </div>
+    <div class="verdict bad">边界错觉：贴近蓝色段时灰描边糊进蓝段，看起来像已切换（0.8.1 实测翻车点）。</div>
+  </section>
+
+  <!-- C 加宽斜切 -->
+  <section class="panel">
+    <h2>C · 加宽白柱（4px）+ 两端斜切<span class="tag" style="background:#1a7f37">推荐</span></h2>
+    <p class="desc">加宽一倍提升辨识度；两端用 clip-path 斜切收尖，不产生与时段分界平行的「新边」，压力场景下无「已切换」错觉。</p>
+    <div class="scene">常规场景</div>
+    <div class="stage">
+      <div class="caretrow"><span class="caret"></span></div>
+      <div class="track"><span class="seg s1"></span><span class="seg s2"></span><span class="seg s3"></span><span class="cur C"></span></div>
+    </div>
+    <div class="scene">压力场景（游标紧贴时段边界）</div>
+    <div class="stage">
+      <div class="caretrow"><span class="caret"></span></div>
+      <div class="track"><span class="seg p1"></span><span class="seg p2"></span><span class="seg p3"></span><span class="cur C"></span></div>
+    </div>
+    <div class="verdict good">无平行边 → 无边界错觉；4px 宽在橙/蓝上都清楚。首推。</div>
+  </section>
+
+  <!-- D 圆点端帽 -->
+  <section class="panel">
+    <h2>D · 白柱 + 上下小圆点端帽<span class="tag" style="background:#2f81f7">备选</span></h2>
+    <p class="desc">柱保持 2px，上下各叠一枚 5px 白色圆点（细灰描边），像缝纫针脚；不加宽也不产生纵向色边。</p>
+    <div class="scene">常规场景</div>
+    <div class="stage">
+      <div class="caretrow"><span class="caret"></span></div>
+      <div class="track"><span class="seg s1"></span><span class="seg s2"></span><span class="seg s3"></span><span class="cur D"></span><span class="cap top"></span><span class="cap bot"></span></div>
+    </div>
+    <div class="scene">压力场景（游标紧贴时段边界）</div>
+    <div class="stage">
+      <div class="caretrow"><span class="caret"></span></div>
+      <div class="track"><span class="seg p1"></span><span class="seg p2"></span><span class="seg p3"></span><span class="cur D"></span><span class="cap top"></span><span class="cap bot"></span></div>
+    </div>
+    <div class="verdict">辨识度好且无纵向色边；但两枚端帽让元素变多，视觉略碎。</div>
+  </section>
+
+  <!-- E 三角游标 -->
+  <section class="panel">
+    <h2>E · 三角游标（替代柱）<span class="tag" style="background:#2f81f7">备选</span></h2>
+    <p class="desc">不要柱，一枚深色向下游标直接骑在条上（最显眼），上方倒三角改为装饰性小点或移除。</p>
+    <div class="scene">常规场景</div>
+    <div class="stage">
+      <div class="caretrow" style="height:2px"></div>
+      <div class="track"><span class="seg s1"></span><span class="seg s2"></span><span class="seg s3"></span><span class="cur E"></span></div>
+    </div>
+    <div class="scene">压力场景（游标紧贴时段边界）</div>
+    <div class="stage">
+      <div class="caretrow" style="height:2px"></div>
+      <div class="track"><span class="seg p1"></span><span class="seg p2"></span><span class="seg p3"></span><span class="cur E"></span></div>
+    </div>
+    <div class="verdict">最醒目，但深色体量大且遮条；与面板「极简灰字」气质不太搭。</div>
+  </section>
+
+  <!-- F 双层柱 -->
+  <section class="panel">
+    <h2>F · 双层柱（白柱 + 半透明白光晕）<span class="tag" style="background:#2f81f7">备选</span></h2>
+    <p class="desc">2px 白柱外套 6px 半透明白底衬：柱仍细，周围有柔和光晕托底；光晕是中性白、不偏向任何时段色。</p>
+    <div class="scene">常规场景</div>
+    <div class="stage">
+      <div class="caretrow"><span class="caret"></span></div>
+      <div class="track"><span class="seg s1"></span><span class="seg s2"></span><span class="seg s3"></span><span class="cur F-halo"></span><span class="cur F-core"></span></div>
+    </div>
+    <div class="scene">压力场景（游标紧贴时段边界）</div>
+    <div class="stage">
+      <div class="caretrow"><span class="caret"></span></div>
+      <div class="track"><span class="seg p1"></span><span class="seg p2"></span><span class="seg p3"></span><span class="cur F-halo"></span><span class="cur F-core"></span></div>
+    </div>
+    <div class="verdict good">光晕中性不偏色，辨识度提升明显；与 C 二选一。</div>
+  </section>
+
+  <footer>实装说明：选定后只改 client.js 的游标样式（约 10 行）；A+C 动画与校准逻辑完全不动。C/F 均通过压力场景检验——不会重蹈 B 的边界错觉。</footer>
+</div>
+</body>
+</html>

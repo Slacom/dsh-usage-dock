@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>峰谷时间条动画方案对比 — dsh-usage-dock 0.8.x</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 16px 64px; font: 14px/1.6 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: #f7f8fa; color: #1f2329;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 6px; }
+  .sub { color: #57606a; margin: 0 0 16px; font-size: 13px; }
+  .controls {
+    display: flex; flex-wrap: wrap; gap: 16px; align-items: center;
+    background: #fff; border: 1px solid #d7dce1; border-radius: 12px; padding: 12px 16px; margin-bottom: 8px;
+  }
+  .controls label { cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+  .vclock { font-variant-numeric: tabular-nums; color: #1f2329; font-weight: 600; }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: #57606a; margin: 0 0 20px; }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
+  .hint { font-size: 12px; color: #8a929c; margin: 0 0 24px; }
+  section.panel {
+    background: #fff; border: 1px solid #d7dce1; border-radius: 14px; padding: 16px 18px; margin-bottom: 18px;
+  }
+  section.panel h2 { font-size: 15px; margin: 0 0 4px; }
+  section.panel h2 .tag {
+    font-size: 11px; font-weight: 600; color: #fff; background: #2f81f7; border-radius: 999px; padding: 1px 8px; margin-left: 8px; vertical-align: 1px;
+  }
+  section.panel.reco h2 .tag { background: #1a7f37; }
+  .desc { color: #57606a; font-size: 12.5px; margin: 0 0 12px; }
+  .trackwrap { position: relative; width: 440px; max-width: 100%; }
+  .track {
+    position: relative; width: 100%; height: 18px; border-radius: 9px; overflow: hidden;
+    border: 1px solid #d0d5da; background: #eceef0;
+  }
+  .world { position: absolute; left: 0; top: 0; height: 100%; width: 864px; will-change: transform; }
+  .world .seg { position: absolute; top: 0; height: 100%; }
+  .bgcarrier {
+    position: absolute; inset: 0; width: 864px; height: 100%;
+    background-repeat: no-repeat; background-size: 864px 100%; will-change: background-position;
+  }
+  .belt { background-size: 108px 100%; background-repeat: repeat; }
+  .ticksrow { position: relative; width: 440px; max-width: 100%; height: 22px; overflow: hidden; margin-top: 2px; }
+  .ticksworld { position: absolute; left: 0; top: 0; height: 100%; width: 864px; will-change: transform; }
+  .tick { position: absolute; bottom: 0; width: 1px; height: 5px; background: #c3c9cf; }
+  .tick.major { height: 8px; background: #9aa1a9; }
+  .ticklabel { position: absolute; bottom: 8px; transform: translateX(-50%); font-size: 10px; color: #8a929c; font-variant-numeric: tabular-nums; }
+  .cursor { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 2px; background: #fff; box-shadow: 0 0 0 1px #6b7280; transform: translateX(-50%); z-index: 3; }
+  .cursorpoint { position: absolute; left: 50%; top: -8px; transform: translateX(-50%); width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid #6b7280; z-index: 3; }
+  .chip {
+    display: inline-block; margin-top: 10px; font-size: 11.5px; font-weight: 600; line-height: 1.4;
+    background: #f2f3f5; border: 1px solid #d7dce1; border-radius: 999px; padding: 2px 10px; color: #57606a;
+  }
+  .status { margin-top: 8px; font-size: 11.5px; color: #8a929c; font-variant-numeric: tabular-nums; }
+  .status b { color: #57606a; font-weight: 600; }
+  footer { color: #8a929c; font-size: 12px; margin-top: 28px; line-height: 1.8; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>峰谷时间条动画方案对比</h1>
+  <p class="sub">dsh-usage-dock 0.8.x · 五个方案共用同一个虚拟时钟，可切换倍速观察跨峰切换、周末变绿与校准行为。演示条高 18px（实装为 8px），比例 18px/小时（440px 视窗 ≈ ±12.2h）。</p>
+
+  <div class="controls">
+    <strong>倍速</strong>
+    <label><input type="radio" name="speed" value="1"> 1x（实装速率，0.3px/分钟，几乎静止）</label>
+    <label><input type="radio" name="speed" value="60" checked> 60x（1 分钟 = 1 小时）</label>
+    <label><input type="radio" name="speed" value="600"> 600x（1 分钟 = 10 小时，看周末/跨天）</label>
+    <span class="vclock" id="vclock">—</span>
+  </div>
+  <p class="legend">
+    <span><i style="background:#ff9800"></i>高峰时段（北京 09:00–12:00 / 14:00–18:00）</span>
+    <span><i style="background:#3d7ff5"></i>空闲时段</span>
+    <span><i style="background:#34a853"></i>周末 / 法定假日（全天空闲价）</span>
+  </p>
+  <p class="hint">提示：默认 60x 时游标约 0.3px/秒滑动，盯住色段边缘几秒即可看到移动；切 600x 几十秒内就能看到跨峰、入夜、周末全绿。游标固定正中，代表「现在」。</p>
+
+  <main id="panels"></main>
+
+  <footer>
+    实装参数（若选定方案）：条高 8px / 圆角 999px，轨道宽随面板（约 300–330px）；校准 = 每虚拟 60 秒一次，读回当前位移与理论位移比对，方案 A+C 仅在偏差 &gt; 1px 时重设（重设用负 delay 补偿，肉眼无感）；文字徽章沿用现有 30 秒刷新。本页纯前端演示，不依赖 DSH。
+  </footer>
+</div>
+
+<script>
+'use strict';
+/* ================= 共享：真实峰谷口径（与 plans/peak-phase.js 一致） ================= */
+var PEAK_WINDOWS = [{ s: 9, e: 12 }, { s: 14, e: 18 }]; // 北京时间小时
+var HOLIDAYS = new Set(['2026-09-25','2026-09-26','2026-09-27','2026-10-01','2026-10-02','2026-10-03','2026-10-04','2026-10-05','2026-10-06','2026-10-07']);
+var COLOR = { peak: '#ff9800', off: '#3d7ff5', weekend: '#34a853', holiday: '#34a853' };
+
+var SCALE = 18 / 3600e3;          // px / 虚拟毫秒
+var TRACK_W = 440;                 // 视窗宽（px）
+var WORLD_MS = 48 * 3600e3;        // 图案层覆盖 48h
+var WORLD_W = WORLD_MS * SCALE;    // 864px
+var START_X = TRACK_W / 2;         // 图案层起始位移（spanStart 对准视窗左缘时）
+var END_X = START_X - WORLD_W;     // -644px
+var REGEN_AFTER = WORLD_MS - (TRACK_W / 2) / SCALE - 30 * 60e3; // 右缘余量不足 30min 即重铺
+
+function dayStart(day) { return day * 86400e3 - 8 * 3600e3; }
+function phaseAt(ms) {
+  var day = Math.floor((ms + 8 * 3600e3) / 86400e3);
+  var weekday = (day + 4) % 7;                 // 0=周日 … 6=周六
+  var key = new Date(day * 86400e3).toISOString().slice(0, 10);
+  var holiday = HOLIDAYS.has(key);
+  var weekend = !holiday && (weekday === 0 || weekday === 6);
+  if (holiday || weekend) return { inPeak: false, weekend: weekend, holiday: holiday };
+  // [fix] 峰窗口是北京时间小时：先把时刻平移 +8h 再读 UTC 小时，
+  // 否则整体错位 8 小时（图案全蓝 / 徽章与图案自相矛盾的根因）。
+  var bj = new Date(ms + 8 * 3600e3);
+  var h = bj.getUTCHours() + bj.getUTCMinutes() / 60;
+  var inPeak = PEAK_WINDOWS.some(function (w) { return h >= w.s && h < w.e; });
+  return { inPeak: inPeak, weekend: false, holiday: false };
+}
+function genSegs(spanStart, spanEnd) {
+  var cand = {};
+  var d0 = Math.floor((spanStart + 8 * 3600e3) / 86400e3) - 1;
+  var d1 = Math.floor((spanEnd + 8 * 3600e3) / 86400e3) + 1;
+  for (var day = d0; day <= d1; day++) {
+    cand[dayStart(day)] = 1;
+    for (var wi = 0; wi < PEAK_WINDOWS.length; wi++) {
+      cand[dayStart(day) + PEAK_WINDOWS[wi].s * 3600e3] = 1;
+      cand[dayStart(day) + PEAK_WINDOWS[wi].e * 3600e3] = 1;
+    }
+  }
+  var pts = Object.keys(cand).map(Number).filter(function (t) { return t >= spanStart && t <= spanEnd; }).sort(function (a, b) { return a - b; });
+  pts.unshift(spanStart); pts.push(spanEnd);
+  var segs = [];
+  for (var i = 0; i < pts.length - 1; i++) {
+    var a = pts[i], b = pts[i + 1];
+    if (b <= a) continue;
+    var ph = phaseAt((a + b) / 2);
+    var type = ph.holiday ? 'holiday' : ph.weekend ? 'weekend' : ph.inPeak ? 'peak' : 'off';
+    if (segs.length > 0 && segs[segs.length - 1].type === type) segs[segs.length - 1].end = b;
+    else segs.push({ start: a, end: b, type: type });
+  }
+  return segs;
+}
+function fmtDur(ms) {
+  var total = Math.max(0, Math.round(ms / 60000));
+  if (total < 1) return '不足 1 分钟';
+  var h = Math.floor(total / 60), m = total % 60;
+  if (h <= 0) return m + ' 分钟';
+  return m > 0 ? h + ' 小时 ' + m + ' 分钟' : h + ' 小时';
+}
+function findNextFlip(now) {
+  var p0 = phaseAt(now);
+  for (var t = now + 60e3, i = 0; i < 60 * 24 * 9; i++, t += 60e3) {
+    var p = phaseAt(t);
+    if (p.inPeak !== p0.inPeak || p.weekend !== p0.weekend || p.holiday !== p0.holiday) return t;
+  }
+  return 0;
+}
+
+/* ================= 全局虚拟时钟 ================= */
+var speed = 60;
+var anchorReal = performance.now();
+var anchorVirt = Date.now();
+function nowV() { return anchorVirt + (performance.now() - anchorReal) * speed; }
+function setSpeed(s) {
+  anchorVirt = nowV(); anchorReal = performance.now(); speed = s;
+  engines.forEach(function (e) { e.sync(); });
+}
+
+/* ================= DOM 工具 ================= */
+function el(tag, cls, css, text) {
+  var n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (css) for (var k in css) n.style[k] = css[k];
+  if (text != null) n.textContent = text;
+  return n;
+}
+function segColor(type) { return COLOR[type]; }
+function worldHTML(spanStart, segs) {
+  var html = '';
+  for (var i = 0; i < segs.length; i++) {
+    var s = segs[i];
+    var left = (s.start - spanStart) * SCALE;
+    var w = Math.max(1, (s.end - s.start) * SCALE);
+    html += '<div class="seg" style="left:' + left.toFixed(2) + 'px;width:' + w.toFixed(2) + 'px;background:' + segColor(s.type) + '"></div>';
+  }
+  return html;
+}
+function ticksHTML(spanStart) {
+  var html = '';
+  var firstHour = Math.ceil((spanStart + 8 * 3600e3) / 3600e3); // 北京小时序列（近似对齐）
+  var t0 = firstHour * 3600e3 - 8 * 3600e3;
+  for (var t = t0; t <= spanStart + WORLD_MS; t += 3600e3) {
+    var x = (t - spanStart) * SCALE;
+    if (x < -20 || x > WORLD_W + 20) continue;
+    var bjH = new Date(t + 8 * 3600e3).getUTCHours();
+    var major = bjH % 2 === 0;
+    html += '<div class="tick' + (major ? ' major' : '') + '" style="left:' + x.toFixed(2) + 'px"></div>';
+    if (major) html += '<div class="ticklabel" style="left:' + x.toFixed(2) + 'px">' + (bjH < 10 ? '0' : '') + bjH + ':00</div>';
+  }
+  return html;
+}
+function gradientCSS(spanStart, segs) {
+  var stops = [];
+  for (var i = 0; i < segs.length; i++) {
+    var s = segs[i];
+    var a = Math.max(0, (s.start - spanStart) * SCALE);
+    var b = Math.min(WORLD_W, (s.end - spanStart) * SCALE);
+    stops.push(segColor(s.type) + ' ' + a.toFixed(2) + 'px, ' + segColor(s.type) + ' ' + b.toFixed(2) + 'px');
+  }
+  return 'linear-gradient(90deg,' + stops.join(',') + ')';
+}
+function applyAnim(node, name, durMs, delayMs) {
+  node.style.animation = 'none';
+  void node.offsetWidth; // 强制 reflow，确保重设生效
+  node.style.animation = name + ' ' + durMs + 'ms linear infinite';
+  node.style.animationDelay = delayMs + 'ms';
+}
+function readTranslateX(node) {
+  try {
+    var t = getComputedStyle(node).transform;
+    if (t && t !== 'none') return new DOMMatrixReadOnly(t).m41;
+  } catch (e) {}
+  return 0;
+}
+function readBgPosX(node) {
+  var v = parseFloat(getComputedStyle(node).backgroundPositionX);
+  return isNaN(v) ? 0 : v;
+}
+
+/* ================= 面板定义 ================= */
+var KEY_WORLD = 'kb-world', KEY_BG = 'kb-bg', KEY_BELT = 'kb-belt';
+var style = document.createElement('style');
+style.textContent =
+  '@keyframes ' + KEY_WORLD + '{from{transform:translateX(' + START_X + 'px)}to{transform:translateX(' + END_X + 'px)}}' +
+  '@keyframes ' + KEY_BG + '{from{background-position-x:' + START_X + 'px}to{background-position-x:' + END_X + 'px}}' +
+  '@keyframes ' + KEY_BELT + '{from{background-position-x:0px}to{background-position-x:-108px}}';
+document.head.appendChild(style);
+
+var VARIANTS = [
+  { id: 'A1', reco: false,
+    title: '方案 A — CSS 动画（background-position）· ±12h 真实日历',
+    desc: '峰谷图案画成一条 48h 渐变背景，animation 匀速左移；每虚拟分钟校准一次，无条件重设 delay。游标 = 现在，条上能直接看到「下一个峰段还有多久滑到中间」。',
+    belt: false, carrier: 'bg', resetAlways: true },
+  { id: 'A2', reco: false,
+    title: '方案 A2 — CSS 动画 · 简化传送带（颜色循环，无时刻语义）',
+    desc: '峰/谷等宽段无限循环右进左出，实现最简单；但条上没有任何真实时刻信息（注意：游标下的颜色不代表当前真实时段），“何时到峰”只能看徽章文字。',
+    belt: true, carrier: 'bg', resetAlways: true },
+  { id: 'B', reco: false,
+    title: '方案 B — requestAnimationFrame 逐帧驱动（JS 每帧写 transform）',
+    desc: '完全由 JS 控制：每帧按虚拟时刻算位移写 transform，天然精准、暂停/恢复自动对齐；代价是面板常驻时每帧都跑 JS（标签页失焦时 rAF 自动暂停）。',
+    belt: false, carrier: 'world', raf: true },
+  { id: 'C', reco: false,
+    title: '方案 C — transform 平移整个图案层（CSS 动画）',
+    desc: '与方案 A 同一套校准（无条件重设），载体改为 GPU 合成的 transform；校准时同样每分钟重设 delay。',
+    belt: false, carrier: 'world', resetAlways: true },
+  { id: 'AC', reco: true,
+    title: '方案 A+C（推荐）— C 载体 + 漂移阈值校准',
+    desc: '视觉与 C 完全相同；差别在校准策略：每分钟读回当前位移，与理论值比对，偏差 ≤1px 不动、>1px 才重设 —— 最大限度避免重设造成的微跳。',
+    belt: false, carrier: 'world', resetAlways: false, threshold: 1 },
+];
+
+function makePanel(v) {
+  var sec = el('section', 'panel' + (v.reco ? ' reco' : ''));
+  var h2 = el('h2', null, null, v.title);
+  if (v.reco) { var tag = el('span', 'tag', null, '推荐'); h2.appendChild(tag); }
+  sec.appendChild(h2);
+  sec.appendChild(el('p', 'desc', null, v.desc));
+
+  var trackwrap = el('div', 'trackwrap');
+  var track = el('div', 'track');
+  var pattern;
+  if (v.belt) {
+    pattern = el('div', 'bgcarrier belt');
+    pattern.style.backgroundImage = 'repeating-linear-gradient(90deg,' + COLOR.peak + ' 0 54px,' + COLOR.off + ' 54px 108px)';
+  } else if (v.carrier === 'bg') {
+    pattern = el('div', 'bgcarrier');
+  } else {
+    pattern = el('div', 'world');
+  }
+  track.appendChild(pattern);
+  track.appendChild(el('div', 'cursor'));
+  var point = el('div', 'cursorpoint');
+  trackwrap.appendChild(track);
+  trackwrap.appendChild(point);
+  var ticksrow = null, ticksworld = null;
+  if (!v.belt) {
+    ticksrow = el('div', 'ticksrow');
+    ticksworld = el('div', 'ticksworld');
+    ticksrow.appendChild(ticksworld);
+    trackwrap.appendChild(ticksrow);
+  }
+  sec.appendChild(trackwrap);
+  var chip = el('span', 'chip', null, '…');
+  sec.appendChild(el('div', null, null, null)); chipWrap(sec, chip);
+  var status = el('div', 'status');
+  sec.appendChild(status);
+  document.getElementById('panels').appendChild(sec);
+
+  var api = {
+    v: v, chip: chip, status: status, cursorPoint: point, cursor: track.querySelector('.cursor'),
+    pattern: pattern, ticksworld: ticksworld,
+    spanStart: 0, resets: 0, frames: 0, frameMs: 0, lastDrift: 0,
+    init: function () {
+      this.spanStart = nowV() - WORLD_MS / 2;
+      this.rebuild();
+      this.sync();
+    },
+    rebuild: function () {
+      var segs = genSegs(this.spanStart, this.spanStart + WORLD_MS);
+      if (v.carrier === 'world') this.pattern.innerHTML = worldHTML(this.spanStart, segs);
+      else if (!v.belt) this.pattern.style.backgroundImage = gradientCSS(this.spanStart, segs);
+      if (this.ticksworld) this.ticksworld.innerHTML = ticksHTML(this.spanStart);
+    },
+    sync: function () {
+      var vnow = nowV();
+      if (!v.belt && vnow - this.spanStart > REGEN_AFTER) { this.spanStart = vnow - WORLD_MS / 2; this.rebuild(); }
+      if (v.raf) return; // 方案 B 由 rAF 每帧写 transform，绝不挂 CSS 动画（否则动画会覆盖内联样式）
+      if (v.belt) {
+        var cycleMs = 21600e3; // 峰3h+谷3h = 6h 一个循环
+        var dur = cycleMs / speed, delay = -(((vnow % cycleMs) + cycleMs) % cycleMs) / speed;
+        applyAnim(this.pattern, KEY_BELT, dur, delay);
+        this.resets++;
+      } else {
+        var dur2 = WORLD_MS / speed, delay2 = -((vnow - this.spanStart) / speed);
+        var key = v.carrier === 'world' ? KEY_WORLD : KEY_BG;
+        applyAnim(this.pattern, key, dur2, delay2);
+        if (this.ticksworld) applyAnim(this.ticksworld, KEY_WORLD, dur2, delay2);
+      }
+    },
+    calibrate: function () {
+      if (v.raf) return;
+      var vnow = nowV();
+      if (!v.belt && vnow - this.spanStart > REGEN_AFTER) { this.spanStart = vnow - WORLD_MS / 2; this.rebuild(); this.sync(); this.resets++; }
+      var exp = v.belt
+        ? -((((vnow * SCALE) % 108) + 108) % 108)
+        : START_X - (vnow - this.spanStart) * SCALE;
+      var cur = v.belt || v.carrier === 'bg' ? readBgPosX(this.pattern) : readTranslateX(this.pattern);
+      var drift = Math.abs(cur - exp);
+      this.lastDrift = drift;
+      if (v.resetAlways || drift > (v.threshold || 1)) { this.sync(); this.resets++; }
+      this.render();
+    },
+    frame: function () {
+      // 方案 B：每帧驱动
+      var vnow = nowV();
+      if (vnow - this.spanStart > REGEN_AFTER) { this.spanStart = vnow - WORLD_MS / 2; this.rebuild(); }
+      var x = START_X - (vnow - this.spanStart) * SCALE;
+      var tf = 'translateX(' + x.toFixed(3) + 'px)';
+      this.pattern.style.transform = tf;
+      if (this.ticksworld) this.ticksworld.style.transform = tf;
+      this.frames++;
+    },
+    render: function () {
+      var bits = [];
+      if (v.id === 'B') {
+        bits.push('每帧驱动'); bits.push('帧数 ' + this.frames);
+        bits.push('平均 ' + (this.frameMs ? this.frameMs.toFixed(2) : '—') + ' ms/帧');
+        bits.push('标签页失焦时 rAF 自动暂停');
+      } else if (v.belt) {
+        bits.push('校准每虚拟 60s'); bits.push('重设 ' + this.resets + ' 次'); bits.push('（仅对齐漂移，无时刻语义）');
+      } else if (v.id === 'AC') {
+        bits.push('漂移 ' + this.lastDrift.toFixed(2) + ' px'); bits.push('阈值 1px'); bits.push('重设 ' + this.resets + ' 次');
+      } else {
+        bits.push('校准每虚拟 60s · 无条件重设'); bits.push('重设 ' + this.resets + ' 次'); bits.push('漂移 ' + this.lastDrift.toFixed(2) + ' px');
+      }
+      this.status.innerHTML = bits.map(function (b) { return '<b>' + b + '</b>'; }).join(' · ');
+    },
+  };
+  api.init();
+  api.render();
+  return api;
+}
+
+function chipWrap(sec, chip) {
+  var d = el('div');
+  d.appendChild(chip);
+  sec.appendChild(d);
+}
+
+/* ================= 启动 ================= */
+var engines = VARIANTS.map(makePanel);
+
+// 虚拟时钟 + 徽章/游标颜色（全局一份，所有面板共用）
+setInterval(function () {
+  var vnow = nowV();
+  var ph = phaseAt(vnow);
+  var next = findNextFlip(vnow);
+  var color = ph.holiday || ph.weekend ? COLOR.weekend : ph.inPeak ? COLOR.peak : COLOR.off;
+  var chipText = ph.holiday ? '假期 · 全天空闲价'
+    : ph.weekend ? '周末 · 全天空闲价'
+    : ph.inPeak ? '高峰时段 · 约 ' + fmtDur(next - vnow) + '后进入空闲'
+    : '空闲时段 · 约 ' + fmtDur(next - vnow) + '后进入高峰';
+  engines.forEach(function (e) {
+    e.chip.textContent = chipText;
+    e.chip.style.color = color;
+    e.cursorPoint.style.borderTopColor = color;
+    e.cursor.style.boxShadow = '0 0 0 1px ' + color;
+  });
+  var d = new Date(vnow + 8 * 3600e3);
+  document.getElementById('vclock').textContent =
+    '虚拟时刻（北京）' + d.toISOString().slice(0, 10) + ' ' + d.toISOString().slice(11, 19);
+}, 300);
+
+// 方案 B：rAF 循环（含每帧耗时统计）
+var lastT = performance.now();
+function rafLoop(t) {
+  var b = engines[2];
+  var dt = t - lastT; lastT = t;
+  b.frameMs = b.frameMs * 0.9 + dt * 0.1;
+  b.frame();
+  if ((b.frames & 15) === 0) b.render();
+  requestAnimationFrame(rafLoop);
+}
+requestAnimationFrame(rafLoop);
+
+// 校准循环：虚拟 60s 一次（按倍速换算为真实间隔，下限 500ms）
+var calibTimer = null;
+function startCalib() {
+  if (calibTimer) clearInterval(calibTimer);
+  var realEvery = Math.max(500, 60000 / speed);
+  calibTimer = setInterval(function () { engines.forEach(function (e) { e.calibrate(); e.render(); }); }, realEvery);
+}
+startCalib();
+
+// 倍速切换
+document.querySelectorAll('input[name=speed]').forEach(function (r) {
+  r.addEventListener('change', function () { if (r.checked) { setSpeed(Number(r.value)); startCalib(); } });
+});
+</script>
+</body>
+</html>

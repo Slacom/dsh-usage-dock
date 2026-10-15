@@ -36,8 +36,13 @@ const SHIM_PATH = fileURLToPath(new URL('./http-fetch.py', import.meta.url))
 /** [local patch] 取数后端顺序：原生 fetch 优先，Python shim / curl 依次兜底。 */
 const BACKENDS = ['fetch', 'python', 'curl']
 
-/** 单次请求超时（毫秒）：curl/python 走各自的超时参数，fetch 用 AbortController。 */
-const REQUEST_TIMEOUT_MS = 10000
+/**
+ * 单次请求超时（毫秒）：curl/python 走各自的超时参数，fetch 用 AbortController。
+ * [local patch 0.8.0] 10s → 20s：移动端没有 Python/curl 兜底后端，VPN + 高负载时
+ * 取数慢于硬超时会被误判死亡（roadmap 方向 3 的排查结论）；失败降级靠客户端
+ * 保留旧值兜住，单请求给足时间。三处（fetch / python / curl）必须同步改。
+ */
+const REQUEST_TIMEOUT_MS = 20000
 
 /** 首个成功的后端；后续请求直接复用它。 */
 let preferredBackend = null
@@ -97,10 +102,10 @@ function pythonSpec(shell, url, opts, reqHeaders) {
         method: opts.method === 'POST' ? 'POST' : 'GET',
         headers: reqHeaders,
         body: opts.body,
-        timeout: 10,
+        timeout: 20,
       }),
     },
-    timeoutMs: 15000,
+    timeoutMs: 25000,
     stdoutMaxBytes: 16384,
   })
 }
@@ -112,7 +117,7 @@ function quoteArg(value) {
 
 /** curl 的请求规格：Linux / macOS 或未受 schannel 限制的 Windows。 */
 function curlSpec(shell, url, opts, reqHeaders) {
-  const argv = ['-sS', '-m', '10', '-w', '"__DSH_HTTP__%{http_code}"']
+  const argv = ['-sS', '-m', '20', '-w', '"__DSH_HTTP__%{http_code}"']
   for (const name of Object.keys(reqHeaders)) {
     argv.push('-H', quoteArg(name + ': ' + reqHeaders[name]))
   }
@@ -125,7 +130,7 @@ function curlSpec(shell, url, opts, reqHeaders) {
   argv.push(quoteArg(url))
   return shell.resolve({
     command: 'curl ' + argv.join(' '),
-    timeoutMs: 15000,
+    timeoutMs: 25000,
     stdoutMaxBytes: 16384,
   })
 }
@@ -170,8 +175,20 @@ function parseResult(result, backend) {
   } catch (err) {
     return { err: { error: 'parse', message: 'invalid upstream response' } }
   }
+  // [local patch 0.8.0] 小米 MiMo 等控制台接口用 { code: 0, ... } 表示成功
+  // （非 0 才是错误）；业务信封错误体优先于 HTTP 状态判断。
+  if (data != null && typeof data === 'object'
+    && typeof data.code === 'number' && data.code !== 200 && data.code !== 0) {
+    return {
+      err: {
+        error: 'api',
+        message: typeof data.msg === 'string' && data.msg ? data.msg : 'API error (code ' + data.code + ')',
+      },
+    }
+  }
   // 上游错误体：OpenCode Go 用 `{type:'error', error:{...}}`，GLM monitor 用
-  // `{error:{code,message}}` 或 `{code:<非200>, msg}`，统一映射。
+  // `{error:{code,message}}` 或 `{code:<非200/非0>, msg}`，统一映射。
+  // （{code:0} 成功信封已在上方放行。）
   if (data != null && typeof data === 'object') {
     const e = data.type === 'error' || (data.error != null && typeof data.error === 'object')
       ? data.error
@@ -181,14 +198,6 @@ function parseResult(result, backend) {
         err: {
           error: e && e.type ? e.type : 'api',
           message: e && e.message ? e.message : 'API error',
-        },
-      }
-    }
-    if (typeof data.code === 'number' && data.code !== 200) {
-      return {
-        err: {
-          error: 'api',
-          message: typeof data.msg === 'string' && data.msg ? data.msg : 'API error (code ' + data.code + ')',
         },
       }
     }

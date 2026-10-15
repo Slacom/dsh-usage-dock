@@ -68,6 +68,13 @@ var PLANS = [
   { id: 'deepseek', name: 'DeepSeek', credentialHint: 'DEEPSEEK', balanceThreshold: 10, thresholdField: 'deepseekWarnThreshold', fields: { enabled: 'deepseekEnabled', apiKey: 'deepseekApiKey' } },
   // 复用 dsh-codex-connect 的 ChatGPT OAuth，无需另填 API Key。
   { id: 'codex', name: 'OpenAI Codex', noCredential: true, percentMode: 'remaining', credentialNote: '复用 Codex Connect 的 ChatGPT 登录；请先在 Codex Connect 配置中完成登录。', fields: { enabled: 'codexEnabled' } },
+  // [local patch 0.8.0] 小米 MiMo：控制台 Cookie 鉴权（非 API Key），只显示 API 余额。
+  // cookieHint 触发设置页的 Cookie 输入框（role secret，与 kimi-auth 同款先例）；
+  // balanceThreshold 标记「余额类渠道」，阈值取 host 返回的 warnThreshold（mimoWarnThreshold）。
+  { id: 'mimo', name: 'Xiaomi MiMo', credentialHint: 'MIMO', balanceThreshold: 10, thresholdField: 'mimoWarnThreshold', fields: { enabled: 'mimoEnabled', cookie: 'mimoCookie' } },
+  // [local patch 0.8.1] WorkBuddy 剩余积分：借用 dsh-workbuddy-connect 的登录态
+  //（与 Codex 渠道同款模式），本插件零凭据；未安装/未登录由 host 返回语义提示。
+  { id: 'workbuddy', name: 'WorkBuddy', noCredential: true, creditMode: true, credentialNote: '复用 dsh-workbuddy-connect 的登录态，无需在此认证；请先安装并登录 WorkBuddy / WorkBuddy AI 桌面应用。', fields: { enabled: 'workbuddyEnabled' } },
 ]
 
 function planMeta(id) {
@@ -115,6 +122,40 @@ function planNotes(plan, settingsSnap) {
   return fn ? fn(plan, settingsSnap) : []
 }
 
+/**
+ * [local patch 0.8.1] 渠道显示顺序：配置项 planOrder 是渠道 id 的 JSON 数组
+ * （设置页「上移/下移」维护）。解析失败/为空返回 null（调用方按默认顺序）。
+ */
+function parsePlanOrder(raw) {
+  if (typeof raw !== 'string' || raw.length === 0) return null
+  try {
+    var arr = JSON.parse(raw)
+    if (!Array.isArray(arr)) return null
+    var ids = []
+    for (var i = 0; i < arr.length; i++) {
+      if (typeof arr[i] === 'string' && ids.indexOf(arr[i]) === -1) ids.push(arr[i])
+    }
+    return ids.length > 0 ? ids : null
+  } catch (err) {
+    return null
+  }
+}
+
+/** 按 planOrder 排序一个渠道数组（未列出的渠道按默认顺序排在已列出的后面）。 */
+function sortPlansByOrder(list, orderRaw) {
+  var order = parsePlanOrder(orderRaw)
+  if (order === null) return list
+  var rank = {}
+  for (var i = 0; i < order.length; i++) rank[order[i]] = i
+  return list.slice().sort(function (a, b) {
+    var ra = rank[a.id] !== undefined ? rank[a.id] : order.length
+    var rb = rank[b.id] !== undefined ? rank[b.id] : order.length
+    if (ra !== rb) return ra - rb
+    // 未列出渠道之间保持默认相对顺序（稳定排序兜底，兼容旧引擎）。
+    return list.indexOf(a) - list.indexOf(b)
+  })
+}
+
 function fmtReset(sec) {
   if (sec == null || !(sec > 0)) return ''
   if (sec < 60) return Math.round(sec) + ' 秒'
@@ -141,6 +182,247 @@ function quotaToneColor(meta, p, limited) {
   if (limited) return 'var(--dsw-alias-state-error-primary)'
   return meta.percentMode === 'remaining' ? remainingToneColor(p) : toneColor(p)
 }
+
+// ===========================================================================
+// [local patch 0.8.0] 余额显示与失败降级
+// ===========================================================================
+
+/** 币种 → 显示符号（MiMo 官方返回 CNY/USD；未知币种按 ¥ 处理）。 */
+function balanceSymbol(currency) {
+  var cur = typeof currency === 'string' ? currency.trim().toUpperCase() : ''
+  if (cur === 'USD') return '$'
+  return '¥'
+}
+
+// [local patch 0.8.1] 详情面板积分渠道的大号数值行（与余额类渠道同款排版，
+// 但不写死颜色——由调用方传）。模块级常量，避免在 map 回调里重复构造。
+var balRowStyleStatic = {
+  display: 'flex', alignItems: 'center', gap: 8, margin: '4px 0',
+  fontSize: 18, fontWeight: 600,
+}
+
+/** 积分数值格式化：千分位、最多两位小数（与 workbuddy-connect 的显示一致）。 */
+function formatCredit(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '—'
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value)
+}
+
+// ===========================================================================
+// [0.8.1 定稿] WorkBuddy 积分明细的自适应列表
+// ===========================================================================
+// 高度基准 = DeepSeek 当前区块的视觉高度（大号余额行 27px + 状态脚注 ≈17px
+// + 上下 margin 8px ≈ 52px；再减去明细行的行高 17px，让列表整体不高于
+// DeepSeek 区块）。行数少时按普通文字铺开；超过阈值才收进列表滚动。
+// 列表右侧 paddingRight 预留滚动条（约 10px），避免与明细文字重合。
+var WB_DETAIL_MAX_ROWS = 3
+var wbDetailListStyle = {
+  maxHeight: 72,           // [0.8.1 定稿] 首版 36px 太局促，扩大一倍（约 4 行）
+  overflowY: 'auto',
+  boxSizing: 'border-box',
+  paddingRight: 10,        // 滚动条避让：明细文字不与滚动条重合
+  overscrollBehavior: 'contain',
+}
+
+/**
+ * 余额**向下取整到分**：与 DSH 设置页的截断语义一致。
+ * [local patch 0.8.0] 0.7.x 用 toFixed(2)（四舍五入），真实余额 34.31662152 会
+ * 显示成 34.32，而设置页截断成 34.31——用户看到的「胶囊总比实际多一分」即此。
+ */
+function floorToCent(value) {
+  var n = typeof value === 'number' && Number.isFinite(value) ? value : 0
+  return (Math.floor(Math.round(n * 1e6) / 1e4) / 100).toFixed(2)
+}
+
+/** 连续失败达到该轮数后才显示「获取失败」（更早的失败保留旧值 + 灰字）。 */
+var FAIL_THRESHOLD = 2
+
+/** 失败期间旧值的显示色：弱化灰（不加「更新于」标注，见 roadmap 方向 3 定稿）。 */
+var staleValueStyle = { color: 'var(--dsw-alias-label-tertiary)' }
+
+/** 判断一个 wire 条目是否为「余额类渠道」（deepseek / mimo）。 */
+function isBalancePlan(plan) {
+  var meta = planMeta(plan.id)
+  return meta.balanceThreshold !== undefined
+}
+
+// ===========================================================================
+// [local patch 0.8.1] 峰谷时间条 A+C 方案（transform 图案层 + WAAPI 合成器动画
+// + 每分钟漂移阈值校准）。游标固定正中 = 「现在」；峰谷图案层从右向左匀速滑动，
+// 速率与真实时间轴一致（可视窗口 = 24h，即游标左右各 12 小时）。
+// 文案与样式按用户定稿：无刻度、灰色小字（与面板脚注同款）、「峰价/平价」措辞。
+// ===========================================================================
+
+var peakWrapStyle = { display: 'flex', flexDirection: 'column', marginTop: 6, minWidth: 0 }
+// 单一无边框坐标面：图案、动画测量与标记共用同一宽度；不再混用轨道 border-box / 内容宽。
+var peakStageStyle = { position: 'relative', height: 8, marginTop: 5, minWidth: 0 }
+var peakTrackStyle = { position: 'relative', width: '100%', height: '100%', borderRadius: 999, overflow: 'hidden', background: 'var(--dsw-alias-bg-layer-3)' }
+var peakPatternStyle = { position: 'absolute', left: 0, top: 0, height: '100%', willChange: 'transform' }
+// 两个图形只共享一个 50% 锚点，子项只相对于 x=0 定位；不以负 margin / 独立行补偿。
+var peakMarkerStyle = { position: 'absolute', left: '50%', top: 0, bottom: 0, width: 0, pointerEvents: 'none', zIndex: 2 }
+// 替代样式待用户选定；此次仅修正几何，保留原来的 2px 柱。
+var peakCursorStyle = { position: 'absolute', left: 0, top: 0, bottom: 0, width: 2, background: 'var(--dsw-alias-bg-base)', transform: 'translateX(-50%)' }
+// 明确的 8×5 图形盒，避免零宽 border 三角受宿主通用 box-sizing / border 样式影响。
+var peakCaretStyle = { position: 'absolute', left: 0, top: -5, width: 8, height: 5, background: 'var(--dsw-alias-label-tertiary)', clipPath: 'polygon(0 0, 100% 0, 50% 100%)', transform: 'translateX(-50%)' }
+// 与面板脚注同款灰字（sectionNoteStyle 的字号/行高），无背景无边框。
+var peakNoteStyle = { color: 'var(--dsw-alias-label-tertiary)', fontSize: 11, lineHeight: 1.5, margin: '3px 0 2px' }
+
+/** 峰/谷/周末/假日的段底色（与 cost-meter 一致）。 */
+var PEAK_SEG_COLORS = {
+  peak: '#ff9800',
+  off: 'var(--dsw-alias-state-business-primary)',
+  weekend: '#34a853',
+  holiday: '#34a853',
+}
+
+/** 可视窗口 = 24 小时（游标居中，左右各 12h）；轨道宽度运行时测量。 */
+var PEAK_VISIBLE_MS = 24 * 3600e3
+
+/** 分钟数 → 「N 小时 M 分钟」/「M 分钟」短文案（不足 1 分钟按 <1 分钟）。 */
+function fmtDuration(ms) {
+  var total = Math.max(0, Math.round(ms / 60000))
+  if (total < 1) return '不足 1 分钟'
+  var hours = Math.floor(total / 60)
+  var minutes = total % 60
+  if (hours <= 0) return minutes + ' 分钟'
+  return minutes > 0 ? hours + ' 小时 ' + minutes + ' 分钟' : hours + ' 小时'
+}
+
+/** 峰谷相位的灰字描述（0.8.1 定稿措辞：高峰时段/空闲时段）。 */
+function peakNoteText(phase) {
+  var countdown = '约 ' + fmtDuration((phase.nextAtMs || 0) - Date.now())
+  if (phase.weekend === true) return '空闲时段（周末）· ' + countdown + '后进入高峰时段'
+  if (phase.holiday === true) return '空闲时段（假期）· ' + countdown + '后进入高峰时段'
+  if (phase.inPeak === true) return '高峰时段 · ' + countdown + '后进入空闲时段'
+  return '空闲时段 · ' + countdown + '后进入高峰时段'
+}
+
+/**
+ * 峰谷时间条（A+C）：
+ *   - host 在 wire 上附带 peakSegs（[{s,e,t}] 连续峰谷段，30h 窗口）与
+ *     peakPhase（相位/切换点，供文案）。二者缺一即不渲染。
+ *   - 动画走 WAAPI（element.animate，transform 合成器路径）；无 WAAPI 的环境
+ *     （测试 mock）退化为静态 translateX。
+ *   - 校准：每 60s 读 anim.currentTime 与理论值比对，偏差折算 >1px 才拉回
+ *     （currentTime 是时间基拉齐，肉眼无感）。
+ */
+function PeakBar(props) {
+  var segs = Array.isArray(props.segs) ? props.segs : null
+  var phase = props.phase
+  var hasPhase = phase && typeof phase === 'object'
+  var hasSegs = segs !== null && segs.length > 0
+  var spanStart = hasSegs ? segs[0].s : 0
+  var spanEnd = hasSegs ? segs[segs.length - 1].e : 0
+  var spanMs = spanEnd - spanStart
+  var hasTrack = !!hasPhase && hasSegs && Number.isFinite(spanMs) && spanMs > 0
+  // hooks 始终按同一顺序调用；缺段/恢复时不能改变 React hooks 数量。
+
+  // 轨道宽：挂载后量一次（面板宽度可变），量不到按 320 兜底。
+  var trackRef = React.useRef(null)
+  var widthHook = React.useState(0)
+  var trackW = widthHook[0]
+  var setTrackW = widthHook[1]
+  React.useEffect(function () {
+    var el = trackRef.current
+    if (!hasTrack || !el || typeof el.getBoundingClientRect !== 'function') return
+    var measure = function () {
+      var w = el.getBoundingClientRect().width
+      if (Number.isFinite(w) && w > 40) setTrackW(w)
+    }
+    measure()
+    // 侧栏拖宽也会改变轨道尺寸，但不一定触发 window.resize。
+    var observer = typeof window.ResizeObserver === 'function' ? new window.ResizeObserver(measure) : null
+    if (observer) observer.observe(el)
+    // 老 WebView 无 RO 时，仅在已挂载的详情条内轻量校准宽度。
+    var measureTimer = observer ? null : setInterval(measure, 1000)
+    window.addEventListener('resize', measure)
+    return function () {
+      if (observer) observer.disconnect()
+      if (measureTimer !== null) clearInterval(measureTimer)
+      window.removeEventListener('resize', measure)
+    }
+  }, [hasTrack])
+
+  var scale = trackW > 40 ? trackW / PEAK_VISIBLE_MS : (320 / PEAK_VISIBLE_MS) // px / ms
+
+  // 动画：transform 从「spanStart 对准游标」匀速滑到「spanEnd 对准游标」。
+  var animRef = React.useRef(null)
+  React.useEffect(function () {
+    var track = trackRef.current
+    var pattern = track && track.firstChild
+    if (!hasTrack || !pattern || trackW <= 40) return
+    var startTX = trackW / 2
+    var endTX = trackW / 2 - spanMs * scale
+    if (typeof pattern.animate !== 'function') {
+      // 兜底（无 WAAPI）：静态摆到当前相位。
+      pattern.style.transform = 'translateX(' + (startTX - (Date.now() - spanStart) * scale) + 'px)'
+      return
+    }
+    if (animRef.current !== null) { animRef.current.cancel(); animRef.current = null }
+    var anim = pattern.animate(
+      [{ transform: 'translateX(' + startTX + 'px)' }, { transform: 'translateX(' + endTX + 'px)' }],
+      { duration: spanMs, fill: 'both', easing: 'linear' })
+    anim.currentTime = Math.max(0, Date.now() - spanStart)
+    animRef.current = anim
+    return function () {
+      if (animRef.current !== null) { animRef.current.cancel(); animRef.current = null }
+    }
+  }, [hasTrack, trackW, spanStart, spanMs])
+
+  // 每分钟校准：漂移 > 1px 才拉回（A+C 的核心——动画自身漂移几乎为零，
+  // 这里主要兜底标签页休眠恢复 / 系统挂起等时间基跳变）。
+  React.useEffect(function () {
+    var timer = setInterval(function () {
+      var anim = animRef.current
+      if (anim === null || typeof anim.currentTime !== 'number') return
+      var expected = Math.max(0, Date.now() - spanStart)
+      if (Math.abs(anim.currentTime - expected) * scale > 1) anim.currentTime = expected
+    }, 60000)
+    return function () { clearInterval(timer) }
+  }, [spanStart, scale])
+
+  if (!hasPhase) return null
+  // 旧 host 缺段时只显示文案；有效轨道恢复时 hooks 与 effect 仍保持稳定。
+  if (!hasSegs) return h('div', { style: peakWrapStyle },
+    h('div', { style: peakNoteStyle }, peakNoteText(phase)))
+  if (!hasTrack) return null
+
+  var children = []
+  for (var i = 0; i < segs.length; i++) {
+    var seg = segs[i]
+    children.push(h('span', {
+      key: i,
+      style: {
+        position: 'absolute', top: 0, height: '100%',
+        left: ((seg.s - spanStart) * scale) + 'px',
+        width: Math.max(1, (seg.e - seg.s) * scale) + 'px',
+        background: PEAK_SEG_COLORS[seg.t] || PEAK_SEG_COLORS.off,
+      },
+    }))
+  }
+  return h('div', { style: peakWrapStyle },
+    h('div', { style: peakStageStyle, 'aria-hidden': 'true', 'data-peak-stage': '' },
+      h('div', { style: peakTrackStyle, ref: trackRef, 'data-peak-track': '' },
+        h('div', { style: Object.assign({}, peakPatternStyle, { width: (spanMs * scale) + 'px' }) }, children),
+      ),
+      // marker 是轨道的兄弟，不被圆角裁切；三角尖端 y=0，恰好接触轨道上缘。
+      h('div', { style: peakMarkerStyle, 'data-peak-marker': '' },
+        h('span', { style: peakCursorStyle, 'data-peak-cursor': '' }),
+        h('span', { style: peakCaretStyle, 'data-peak-caret': '' }),
+      ),
+    ),
+    h('div', { style: peakNoteStyle }, peakNoteText(phase)),
+  )
+}
+
+// ===========================================================================
+// [0.8.1 回退记录] 内嵌充值入口（TopUpOverlay）已整体移除
+// ===========================================================================
+// 背景：原生 Platform 视图（WebContentsView）的 bounds 由主进程管理，窗口状态
+// 变化（最大化/还原）时按 open 时的值重放，与网页层渲染的返回栏反复互相遮挡
+// （返回栏消失/与图标重合/加载完成后又被盖住），真机多轮修正（open 时传栏下
+// bounds、统一公式、加载态提示）仍无法在所有窗口状态下稳定。2026-10-15 用户
+// 拍板：放弃该入口，充值走官方「设置 → 账号与余额」。相关状态与函数一并移除；
+// focus/visibilitychange 的余额强刷（roadmap 方向 2）与充值无耦合，保留。
 
 // [local patch] 零补丁版：胶囊注册进 DSH 官方公共席位 sidebar.footer.action
 // （list 类型，与「更新 / 远程控制」等按钮同行），不再依赖任何 DSH 核心包补丁，
@@ -285,6 +567,13 @@ function PlanUsageBadge(props) {
   var config = useConfigSnapshot(form)
   var enabled = settingBool(config, "enabled", true)
 
+  // [0.8.1 回退记录] 内嵌充值入口已按用户要求**整体移除**：原生 Platform 视图
+  // 的 bounds 在窗口状态变化时会被主进程按 open 时的值重放，与网页层返回栏
+  // 反复互相遮挡（返回栏消失/重合/加载后又被盖），真机多轮修正仍无法稳定，
+  // 2026-10-15 用户拍板放弃该入口。官方路径仍是「设置 → 账号与余额 → 充值」，
+  // 详情面板余额行的提示文案会引导过去。focus/visibilitychange 的余额强刷
+  // （roadmap 方向 2）与充值无耦合，保留。
+
   var stateHook = React.useState({ loading: true })
   var state = stateHook[0]
   var setState = stateHook[1]
@@ -308,25 +597,181 @@ function PlanUsageBadge(props) {
     if (props.wide === false) setOpen(false)
   }, [props.wide])
 
+  // [local patch 0.8.0] 轮询数据层重写：
+  //   1. **失败降级**（roadmap 方向 3 定稿）：单渠道失败先保留上次成功值、数值
+  //      用灰色弱化（不加「更新于」标注）；连续 FAIL_THRESHOLD 轮失败才显示
+  //      「获取失败」。整体请求失败按「所有渠道 +1 轮」同样处理。
+  //   2. **轮询防卡死**：fetch 加 AbortController 20s 超时；请求 settle（成功/
+  //      失败/超时）后 in-flight 标记必然复位——旧版请求挂起即轮询永久停摆。
+  //   3. **手动强刷**：load(true) 作废旧请求立即重拉（点开面板 / 窗口 focus /
+  //      visibilitychange 触发，见下方 effect）。
+  var loadRef = React.useRef(null)
+
   React.useEffect(function () {
     if (enabled === false) return
     var alive = true
-    var inFlight = false
-    function load() {
-      if (inFlight) return
-      inFlight = true
-      fetch('/api/plan-usage')
-        .then(function (r) { return r.json() })
-        .then(function (result) {
-          if (alive) setState(result && typeof result === 'object' ? result : { ok: false, error: 'empty' })
-        })
-        .catch(function () { if (alive) setState({ ok: false, error: 'rpc' }) })
-        .finally(function () { inFlight = false })
+    var controller = null // 当前 in-flight 请求的 AbortController（null = 空闲）
+    var lastList = null   // 上一轮渲染用的渠道列表（含 error 条目），降级时沿用
+    var failStreaks = {}  // 渠道 id → 连续失败轮数
+    var timer = null
+
+    function findPlan(list, id) {
+      if (!Array.isArray(list)) return null
+      for (var i = 0; i < list.length; i++) {
+        if (list[i] && list[i].id === id) return list[i]
+      }
+      return null
     }
+
+    /**
+     * 把本轮取数结果合并进展示列表：失败渠道沿用旧值（标 stale）直到连续
+     * FAIL_THRESHOLD 轮失败；成功渠道替换新值并清零计数。next=null 表示整体
+     * 失败，对所有渠道做同样的「沿用 + 计数」。
+     */
+    function settle(next) {
+      var merged = []
+      var seen = {}
+      var source = Array.isArray(next) ? next : []
+      for (var i = 0; i < source.length; i++) {
+        var plan = source[i]
+        if (!plan || typeof plan.id !== 'string') continue
+        seen[plan.id] = true
+        if (plan.error) {
+          // 缺凭据、登录失效等语义错误立即透传；仅暂时的网络/执行错误允许保留旧值。
+          var transient = plan.error === 'curl' || plan.error === 'exec' || plan.error === 'rpc'
+            || (plan.error === 'http' && /HTTP (429|5\d\d)/.test(plan.message || ''))
+          if (!transient) {
+            delete failStreaks[plan.id]
+            merged.push(plan)
+            continue
+          }
+          var streak = (failStreaks[plan.id] || 0) + 1
+          failStreaks[plan.id] = streak
+          var prev = findPlan(lastList, plan.id)
+          if (prev && !prev.error && streak < FAIL_THRESHOLD) {
+            merged.push(Object.assign({}, prev, { stale: true, staleMessage: plan.message || '' }))
+          } else {
+            // 连续失败达到阈值：host 的错误条目本来就不带数据，直接展示。
+            merged.push(plan)
+          }
+        } else {
+          delete failStreaks[plan.id]
+          merged.push(plan)
+        }
+      }
+      // 整体失败（next=null）或本轮缺某渠道：沿用旧条目。
+      var carry = Array.isArray(lastList) ? lastList : []
+      for (var j = 0; j < carry.length; j++) {
+        var old = carry[j]
+        if (!old || typeof old.id !== 'string' || seen[old.id]) continue
+        if (old.error) {
+          merged.push(old) // 静态错误行（如 no-key）原样保留，不计入失败轮数
+          continue
+        }
+        var streak2 = (failStreaks[old.id] || 0) + 1
+        failStreaks[old.id] = streak2
+        if (streak2 < FAIL_THRESHOLD) {
+          merged.push(Object.assign({}, old, { stale: true, staleMessage: '获取失败' }))
+        } else {
+          // [local patch 0.8.0] 连续失败达到阈值：转为**纯错误条目**——必须剥掉
+          // 旧的 balance / 窗口数据，否则胶囊的余额分支会拿着旧值当正常数据渲染
+          // （红灯 + 旧数字），用户看不到「获取失败」。
+          merged.push({ id: old.id, name: old.name, error: 'rpc', message: '获取失败' })
+        }
+      }
+      lastList = merged
+      return merged
+    }
+
+    function applyResult(result) {
+      if (!alive) return
+      if (result && typeof result === 'object' && result.error === 'disabled') {
+        setState({ ok: false, error: 'disabled' })
+        return
+      }
+      if (result && typeof result === 'object' && result.ok && result.data
+        && Array.isArray(result.data.plans)) {
+        setState({ ok: true, data: { plans: settle(result.data.plans) } })
+        return
+      }
+      // 请求失败：有旧数据就降级展示，否则按整体失败提示。
+      if (Array.isArray(lastList) && lastList.length > 0) {
+        setState({ ok: true, data: { plans: settle(null) } })
+      } else {
+        setState({
+          ok: false,
+          error: 'rpc',
+          message: result && typeof result.message === 'string' ? result.message : null,
+        })
+      }
+    }
+
+    function load(force) {
+      if (controller) {
+        if (force !== true) return // 已有请求在飞：常规轮询直接跳过（防重入）
+        // 手动强刷：作废旧请求并立即重拉。旧请求标记 superseded——它的
+        // 失败回调不计入失败轮数、清理回调不碰新一轮的计时器。
+        controller.superseded = true
+        controller.abort()
+      }
+      if (timer) { clearTimeout(timer); timer = null }
+      var aborter = typeof AbortController === 'function' ? new AbortController() : null
+      // 请求身份与 AbortController 解耦：裁剪版 WebView 无 AbortController 仍防重入。
+      controller = { abort: function () { if (aborter) aborter.abort() }, superseded: false }
+      var current = controller
+      var timeout = new Promise(function (_resolve, reject) {
+        timer = setTimeout(function () { current.abort(); reject(new Error('usage timeout')) }, 20000)
+      })
+      // 包含 json 解析的超时；即使底层不能取消，也会释放请求锁并忽略迟到结果。
+      var pending = Promise.resolve().then(function () {
+        return fetch('/api/plan-usage', aborter ? { signal: aborter.signal } : undefined)
+      }).then(function (r) { return r.json() })
+      Promise.race([pending, timeout])
+        .then(function (result) {
+          if (alive && current === controller && !current.superseded) applyResult(result)
+        })
+        .catch(function () {
+          if (alive && current === controller && !current.superseded) applyResult(null)
+        })
+        .finally(function () {
+          if (current === controller && timer) { clearTimeout(timer); timer = null }
+          if (current === controller) controller = null
+        })
+    }
+
+    // 强刷入口暴露给组件（面板展开 / focus / visibilitychange 用）。
+    loadRef.current = load
     load()
     // [local patch] 用量刷新间隔 30 秒（原 60 秒）。
-    var timer = setInterval(load, 30000)
-    return function () { alive = false; clearInterval(timer) }
+    var interval = setInterval(function () { load(false) }, 30000)
+    return function () {
+      alive = false
+      clearInterval(interval)
+      if (timer) clearTimeout(timer)
+      if (controller) {
+        controller.superseded = true
+        controller.abort()
+      }
+      controller = null
+      loadRef.current = null
+    }
+  }, [enabled])
+
+  // [local patch 0.8.0] 立即刷新触发点（roadmap 方向 2 保底方案）：
+  // 窗口 focus / 标签页重新可见时强拉一次——充值页是覆盖窗口的原生视图，
+  // 支付完成返回时窗口重新聚焦，正好接住「充值后余额同步」。
+  React.useEffect(function () {
+    if (enabled === false) return
+    var refresh = function () {
+      if (typeof document === 'undefined' || document.visibilityState !== 'visible') return
+      if (loadRef.current) loadRef.current(true)
+    }
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', refresh)
+    return function () {
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', refresh)
+    }
   }, [enabled])
 
   if (enabled === false || (state && state.error === 'disabled')) return null
@@ -341,25 +786,44 @@ function PlanUsageBadge(props) {
     var key = meta.fields && meta.fields.enabled
     return key === undefined || settingBool(config, key, true)
   })
+  // [local patch 0.8.1] 按 planOrder 配置排序（设置页「上移/下移」维护），
+  // 胶囊行与详情面板分区共用同一顺序。
+  plans = sortPlansByOrder(plans, config.planOrder)
 
   // 胶囊：多行，每个套餐一行。用量类套餐展示 5小时/周限/月限 三个窗口的
-  // 百分比；余额类套餐（deepseek，带 balanceThreshold）只显示剩余余额（元），
-  // 余额低于阈值时状态灯红灯。无数据的套餐标注状态（请设置 Key / 获取失败）。
+  // 百分比；余额类套餐（deepseek / mimo，带 balanceThreshold）只显示剩余余额
+  // （带币种符号，向下取整到分），余额低于阈值时状态灯红灯。
+  // [local patch 0.8.0] 失败降级：plan.stale=true 表示该渠道本轮取数失败、正在
+  // 保留旧值——数值用灰色弱化（不加「更新于」标注），状态灯转灰。
   var capsuleRows = []
   var pillTitle = PLAN_NAME
   for (var i = 0; i < plans.length; i++) {
     var plan = plans[i]
     var meta = planMeta(plan.id)
+    // [local patch 0.8.1] WorkBuddy 积分渠道：右侧显示剩余积分（千分位）+
+    //「（积分）」后缀与各家余额区分；不限额 ∞（积分）。
+    if (meta.creditMode === true && (typeof plan.creditsTotal === 'number' || plan.creditsUnlimited === true)) {
+      var wbText = (plan.creditsUnlimited === true ? '∞' : formatCredit(plan.creditsTotal)) + '（积分）'
+      capsuleRows.push({
+        dot: plan.stale === true ? 'var(--dsw-alias-label-tertiary)' : 'var(--dsw-alias-state-success-primary)',
+        label: meta.name,
+        values: [wbText],
+        stale: plan.stale === true,
+      })
+      continue
+    }
     // [local patch] 余额类套餐：右侧只显示剩余余额，低于阈值红灯。
     if (meta.balanceThreshold !== undefined && typeof plan.balance === 'number') {
       // 阈值优先取 host 下发的配置值；0 表示不警告。
       var threshold = typeof plan.warnThreshold === 'number' ? plan.warnThreshold : meta.balanceThreshold
       var low = threshold > 0 && plan.balance < threshold
       // 注意：不能用 toneColor(90)——它按「用量百分比」语义返回红色；
-      // 余额充足用 success 绿，低于阈值用 error 红。
-      var dot = low ? 'var(--dsw-alias-state-error-primary)' : 'var(--dsw-alias-state-success-primary)'
-      var balText = '¥' + plan.balance.toFixed(2)
-      capsuleRows.push({ dot: dot, label: meta.name, values: [balText] })
+      // 余额充足用 success 绿，低于阈值用 error 红，降级保留旧值用灰色。
+      var dot = plan.stale
+        ? 'var(--dsw-alias-label-tertiary)'
+        : (low ? 'var(--dsw-alias-state-error-primary)' : 'var(--dsw-alias-state-success-primary)')
+      var balText = balanceSymbol(plan.currency) + floorToCent(plan.balance)
+      capsuleRows.push({ dot: dot, label: meta.name, values: [balText], stale: plan.stale === true })
       continue
     }
     var worst = worstPercent(plan, meta)
@@ -371,11 +835,12 @@ function PlanUsageBadge(props) {
           var v = plan[w.key]
           return (v && typeof v.percent === 'number' ? v.percent : 0) + '%'
         })
-      capsuleRows.push({ dot: quotaToneColor(meta, worst, false), label: meta.name, values: values })
+      capsuleRows.push({ dot: quotaToneColor(meta, worst, false), label: meta.name, values: values, stale: plan.stale === true })
     } else if (plan.error === 'no-key') {
-      capsuleRows.push({ dot: null, label: meta.name, values: ['请设置 Key'] })
+      // [local patch 0.8.1] MiMo 的凭据是控制台 Cookie，提示语区分开（no-key 泛指缺凭据）。
+      capsuleRows.push({ dot: null, label: meta.name, values: [meta.id === 'mimo' ? '请设置 Cookie' : '请设置 Key'], stale: false })
     } else {
-      capsuleRows.push({ dot: null, label: meta.name, values: ['获取失败'] })
+      capsuleRows.push({ dot: null, label: meta.name, values: ['获取失败'], stale: false })
     }
   }
   var dotColor = 'var(--dsw-alias-label-secondary)'
@@ -426,7 +891,13 @@ function PlanUsageBadge(props) {
   }
   if (interactive) {
     pillProps.type = 'button'
-    pillProps.onClick = function () { setOpen(!open) }
+    // [local patch 0.8.0] 点开详情面板时立即强刷一次（绕过 in-flight 守卫）：
+    // 对齐 dsh-cost-meter「点击即刷新」的交互，也覆盖 30 秒轮询之外的最新需求。
+    pillProps.onClick = function () {
+      var next = !open
+      setOpen(next)
+      if (next && loadRef.current) loadRef.current(true)
+    }
     pillProps.onMouseEnter = function () { setHot(true) }
     pillProps.onMouseLeave = function () { setHot(false) }
     pillProps.onFocus = function () { setHot(true) }
@@ -437,10 +908,12 @@ function PlanUsageBadge(props) {
   var pill = h(interactive ? 'button' : 'div', pillProps,
     capsuleRows.length > 0
       ? capsuleRows.map(function (r, idx) {
+        // [local patch 0.8.0] 降级保留旧值时：数值灰字（staleValueStyle），
+        // 状态灯灰色——「数据还在，但可能已过期」的弱化表达。
         return h('span', { style: pillRowStyle, key: idx },
           h('span', { style: Object.assign({}, dotStyle, { background: r.dot || dotColor }) }),
           wide && h('span', { style: capNameStyle }, r.label),
-          wide && h('span', { style: capValueStyle }, r.values.join(' ')),
+          wide && h('span', { style: r.stale ? Object.assign({}, capValueStyle, staleValueStyle) : capValueStyle }, r.values.join(' ')),
         )
       })
       : h('span', { style: pillSegStyle },
@@ -455,10 +928,55 @@ function PlanUsageBadge(props) {
   if (open && wide) {
     var sections = plans.map(function (plan) {
       var meta = planMeta(plan.id)
-      var title = meta.name + (meta.balanceThreshold !== undefined ? ' 余额' : (meta.percentMode === 'remaining' ? ' 剩余额度' : ' 用量')) + (plan.level ? ' · ' + plan.level : '')
+      var title = meta.name + (meta.creditMode === true ? ' 积分'
+        : meta.balanceThreshold !== undefined ? ' 余额'
+        : (meta.percentMode === 'remaining' ? ' 剩余额度' : ' 用量')) + (plan.level ? ' · ' + plan.level : '')
       var inner
       if (plan.error) {
         inner = h('div', { style: sectionNoteStyle }, plan.message || '无法获取用量')
+      } else if (meta.creditMode === true) {
+        // [local patch 0.8.1] WorkBuddy 积分渠道：合计 + 各版本/各套餐明细。
+        if (plan.creditsUnlimited === true) {
+          inner = h('div', {},
+            h('div', { style: Object.assign({}, balRowStyleStatic, { color: 'var(--dsw-alias-label-primary)' }) },
+              h('span', { style: Object.assign({}, dotStyle, { width: 9, height: 9, background: 'var(--dsw-alias-state-success-primary)' }) }),
+              h('span', {}, '∞（不限额）'),
+            ),
+          )
+        } else if (typeof plan.creditsTotal === 'number') {
+          // [0.8.1 定稿] 明细行组装（版本小计 + 各套餐）。展示形态按高度自适应：
+          //   - 行数少（≤ 深度上限，见 WB_DETAIL_MAX_ROWS）：正常灰字文字铺开；
+          //   - 超过则收进固定高度列表滚动查看；paddingRight 预留滚动条宽度。
+          // 「WorkBuddy：合计」版本小计行**不再显示**——与上方大号合计重复
+          //（用户定稿）；多版本并存时在套餐名前带 variant 前缀区分。
+          var wbRows = []
+          // 各套餐明细（remain>0 或企业套餐；与 workbuddy-connect 卡片口径一致）。
+          if (Array.isArray(plan.creditsAccounts) && plan.creditsAccounts.length > 0) {
+            for (var ai = 0; ai < plan.creditsAccounts.length; ai++) {
+              var account = plan.creditsAccounts[ai]
+              if (account.remain === null || (account.remain === 0 && account.packageName !== 'enterprise')) continue
+              wbRows.push(h('div', { key: 'a' + ai, style: sectionNoteStyle },
+                (account.variant ? account.variant + ' · ' : '') + (account.packageName || '套餐')
+                + '：' + formatCredit(account.remain)
+                + (typeof account.size === 'number' && account.size > 0 ? ' / ' + formatCredit(account.size) : '')))
+            }
+          }
+          var listStyle = wbRows.length > WB_DETAIL_MAX_ROWS
+            ? Object.assign({}, wbDetailListStyle)
+            : null
+          var detailBlock = listStyle !== null
+            ? h('div', { style: listStyle, key: 'wbdetail' }, wbRows)
+            : wbRows
+          inner = h('div', {},
+            h('div', { style: Object.assign({}, balRowStyleStatic, { color: 'var(--dsw-alias-label-primary)' }) },
+              h('span', { style: Object.assign({}, dotStyle, { width: 9, height: 9, background: 'var(--dsw-alias-state-success-primary)' }) }),
+              h('span', {}, formatCredit(plan.creditsTotal)),
+            ),
+            detailBlock,
+          )
+        } else {
+          inner = h('div', { style: sectionNoteStyle }, '积分获取失败')
+        }
       } else if (meta.balanceThreshold !== undefined) {
         // [local patch] 余额类套餐：显示剩余余额与可用状态；低于阈值红灯提示。
         if (typeof plan.balance !== 'number') {
@@ -469,21 +987,48 @@ function PlanUsageBadge(props) {
           var balRow = {
             display: 'flex', alignItems: 'center', gap: 8, margin: '4px 0',
             fontSize: 18, fontWeight: 600,
-            color: low ? 'var(--dsw-alias-state-error-primary)' : 'var(--dsw-alias-label-primary)',
+            color: plan.stale
+              ? 'var(--dsw-alias-label-tertiary)'
+              : (low ? 'var(--dsw-alias-state-error-primary)' : 'var(--dsw-alias-label-primary)'),
           }
           var balDot = Object.assign({}, dotStyle, {
             width: 9, height: 9,
-            background: low ? 'var(--dsw-alias-state-error-primary)' : 'var(--dsw-alias-state-success-primary)',
+            background: plan.stale
+              ? 'var(--dsw-alias-label-tertiary)'
+              : (low ? 'var(--dsw-alias-state-error-primary)' : 'var(--dsw-alias-state-success-primary)'),
           })
+          // [local patch 0.8.0/0.8.1] Xiaomi MiMo 的现金/赠送明细：同一行，现金
+          // 左对齐、赠送右对齐（用户定稿，比两行更紧凑美观）。
+          var detailChildren = []
+          if (typeof plan.cashBalance === 'number' || typeof plan.giftBalance === 'number') {
+            var sym = balanceSymbol(plan.currency)
+            detailChildren.push(h('div', {
+              key: 'cashgift',
+              style: { display: 'flex', alignItems: 'baseline', color: 'var(--dsw-alias-label-tertiary)', fontSize: 11, lineHeight: 1.5, margin: '2px 0' },
+            },
+              h('span', {}, '现金余额：' + sym + floorToCent(plan.cashBalance)),
+              h('span', { style: { marginLeft: 'auto' } }, '赠送余额：' + sym + floorToCent(plan.giftBalance)),
+            ))
+          }
+          // [0.8.1 回退] 充值按钮已整体移除（原生视图 bounds 与网页返回栏互相
+          // 遮挡无法稳定，用户拍板放弃）。低余额提示文案保留引导语义。
           inner = h('div', {},
             h('div', { style: balRow },
               h('span', { style: balDot }),
-              h('span', {}, '¥' + plan.balance.toFixed(2)),
+              h('span', {}, balanceSymbol(plan.currency) + floorToCent(plan.balance)),
             ),
+            detailChildren,
             h('div', { style: sectionNoteStyle },
-              low
-                ? '余额低于 ' + panelThreshold + ' 元，请及时充值'
-                : (plan.isAvailable === false ? '账户当前不可用' : '余额充足')),
+              plan.stale
+                ? '余额更新失败，显示的是上次成功值'
+                : (low
+                  ? '余额低于 ' + panelThreshold + ' 元，' + (plan.id === 'mimo'
+                    ? '请到小米 MiMo 开放平台控制台充值'
+                    : (plan.via === 'api' ? '请到 DeepSeek 开放平台充值' : '请到「设置 → 账号与余额」充值'))
+                  : (plan.isAvailable === false ? '账户当前不可用' : '余额充足'))),
+            // [local patch 0.8.0/0.8.1] DeepSeek 账号登录时显示峰谷时间条
+            // （host 附 peakSegs + peakPhase；API Key 模式没有）。
+            plan.id === 'deepseek' ? h(PeakBar, { segs: plan.peakSegs, phase: plan.peakPhase, key: 'peak' }) : null,
           )
         }
       } else {
@@ -903,7 +1448,7 @@ function PlanUsageConfigCard(props) {
     },
       h('span', { style: headTextStyle },
         h('span', { style: nameStyle }, PLAN_NAME),
-        h('span', { style: descriptionStyle }, '在左侧状态栏显示套餐用量（OpenCode Go / GLM / Kimi / DeepSeek / OpenAI Codex）。'),
+        h('span', { style: descriptionStyle }, '在左侧状态栏显示套餐用量与余额（OpenCode Go / GLM / Kimi / DeepSeek / OpenAI Codex / Xiaomi MiMo）。'),
       ),
       dirty ? h('span', { style: pendingStyle }, '未保存') : null,
       h('span', { style: open ? chevronOpenStyle : chevronStyle, 'aria-hidden': 'true' }, '⌄'),
@@ -1043,9 +1588,40 @@ function PlanUsageSettingsPage(props) {
   function change(field, val) { setDraft(withField(current, field, val)) }
   function discard() { setDraft(null) }
 
+  // [local patch 0.8.1] 渠道顺序维护：基于当前（草稿优先）planOrder 计算新数组。
+  // 未列渠道按注册表默认顺序补在队尾；上/下移一格后全量落盘。
+  function orderedIds() {
+    var order = parsePlanOrder(current.planOrder) || []
+    for (var i = 0; i < PLANS.length; i++) {
+      if (order.indexOf(PLANS[i].id) === -1) order.push(PLANS[i].id)
+    }
+    return order
+  }
+  function movePlan(id, delta) {
+    var order = orderedIds()
+    var idx = order.indexOf(id)
+    if (idx < 0) return
+    var to = idx + delta
+    if (to < 0 || to >= order.length) return
+    order.splice(idx, 1)
+    order.splice(to, 0, id)
+    change("planOrder", JSON.stringify(order))
+  }
+  // 设置页卡片按「当前顺序」（草稿优先）排列，与胶囊/详情面板一致。
+  function orderedPlanMetas() {
+    var order = orderedIds()
+    var byId = {}
+    for (var i = 0; i < PLANS.length; i++) byId[PLANS[i].id] = PLANS[i]
+    var list = []
+    for (var j = 0; j < order.length; j++) {
+      if (byId[order[j]] !== undefined) list.push(byId[order[j]])
+    }
+    return list
+  }
+
   /** 把草稿里与已保存值不同的字段逐个写回（DSH 负责修订号校验与持久化）。 */
   function save() {
-    if (draft === null) return
+    if (draft === null || saving || !writable) return
     var jobs = []
     for (var k in draft) {
       if (!Object.prototype.hasOwnProperty.call(draft, k)) continue
@@ -1068,27 +1644,66 @@ function PlanUsageSettingsPage(props) {
     h("input", {
       type: "checkbox",
       checked: settingBool(current, "enabled", true),
-      disabled: !writable,
+      disabled: !writable || saving,
       onChange: function (e) { change("enabled", e.target.checked) },
     }),
     h("span", {}, "启用套餐用量角标"),
   ))
 
-  for (var i = 0; i < PLANS.length; i++) {
-    var meta = PLANS[i]
+  // [0.8.1 定稿] 卡片按当前顺序排列；名称行与右缘的 ▲/▼ 箭头列**严格横向
+  // 对位**——箭头列不在卡片上 absolute 浮动，而是挂在名称行内部（flex 两端），
+  // 与「厂商名称」同一行同一中线；卡片其余内容（Key/Cookie/阈值/提示）照常
+  // 在下方铺开，不受箭头列影响。
+  var planMetas = orderedPlanMetas()
+  for (var pi = 0; pi < planMetas.length; pi++) {
+    var meta = planMetas[pi]
     var fields = meta.fields || {}
     var enabledKey = fields.enabled
     if (enabledKey === undefined) continue
     var enabled = settingBool(current, enabledKey, true)
+    var arrowBtnStyle = Object.assign({}, settingsButtonStyle, {
+      padding: 0, fontSize: 9, lineHeight: '12px', height: 14, width: 22, margin: 0,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+    })
+    // 箭头列垂直中点 = 名称行中线：gap:0（两按钮紧贴，中缝即组的中线），
+    // 列本身作为名称行 flex 的子项由 alignItems:center 以**自身几何中心**对齐。
+    // ▲14px + ▼14px = 28px 高的列，中心点恰好在两按钮的贴合缝上。
+    var arrows = h("div", {
+      key: "arrows",
+      style: { display: 'flex', flexDirection: 'column', gap: 0, flex: 'none', marginLeft: 'auto' },
+    },
+      h("button", {
+        type: "button",
+        'aria-label': meta.name + ' 上移',
+        title: '上移',
+        style: Object.assign({}, arrowBtnStyle, !writable ? settingsButtonDisabledStyle : {}),
+        disabled: !writable || saving,
+        onClick: (function (id) { return function () { movePlan(id, -1) } })(meta.id),
+      }, '▲'),
+      h("button", {
+        type: "button",
+        'aria-label': meta.name + ' 下移',
+        title: '下移',
+        style: Object.assign({}, arrowBtnStyle, !writable ? settingsButtonDisabledStyle : {}),
+        disabled: !writable || saving,
+        onClick: (function (id) { return function () { movePlan(id, +1) } })(meta.id),
+      }, '▼'),
+    )
     var children = [
-      h("label", { key: "row", style: settingsRowStyle },
-        h("input", {
-          type: "checkbox",
-          checked: enabled,
-          disabled: !writable,
-          onChange: (function (key) { return function (e) { change(key, e.target.checked) } })(enabledKey),
-        }),
-        h("span", {}, meta.name),
+      // 名称行 = flex 容器：左「勾选 + 厂商名称」，右箭头列。alignItems:center
+      // 让箭头列以**自身垂直中点**对齐名称行中线——gap:0 时中点即 ▲/▼ 贴合缝，
+      // 视觉上就是「两枚按钮的中横线与渠道名称同一水平位」。
+      h("div", { key: "row", style: Object.assign({}, settingsRowStyle, { alignItems: 'center' }) },
+        h("label", { style: Object.assign({}, settingsRowStyle, { flex: '1 1 auto', minWidth: 0 }) },
+          h("input", {
+            type: "checkbox",
+            checked: enabled,
+            disabled: !writable || saving,
+            onChange: (function (key) { return function (e) { change(key, e.target.checked) } })(enabledKey),
+          }),
+          h("span", {}, meta.name),
+        ),
+        arrows,
       ),
     ]
     if (enabled && fields.apiKey !== undefined) {
@@ -1099,8 +1714,22 @@ function PlanUsageSettingsPage(props) {
         style: settingsInputStyle,
         placeholder: meta.name + " API Key（留空则回退到「设置 → 模型」中的凭据）",
         value: settingText(current, fields.apiKey),
-        disabled: !writable,
+        disabled: !writable || saving,
         onChange: (function (key) { return function (e) { change(key, e.target.value) } })(fields.apiKey),
+      }))
+    }
+    // [0.8.1 定稿] Xiaomi MiMo：布局对齐 DeepSeek——凭据框在上（紧跟名称行）、
+    // 余额警告额度在下、操作提示最后；不再套 settingsGroupStyle（去掉多余横线）。
+    if (enabled && fields.cookie !== undefined && fields.apiKey === undefined && meta.id === 'mimo') {
+      children.push(h("input", {
+        key: "mimo-cookie",
+        type: "password",
+        autoComplete: "off",
+        style: settingsInputStyle,
+        placeholder: "小米开放平台控制台 Cookie（必填）",
+        value: settingText(current, fields.cookie),
+        disabled: !writable || saving,
+        onChange: (function (key) { return function (e) { change(key, e.target.value) } })(fields.cookie),
       }))
     }
     // 余额类渠道的警告阈值（留空/0 表示不警告；host 侧默认 10 元）。
@@ -1115,7 +1744,7 @@ function PlanUsageSettingsPage(props) {
           style: settingsThresholdInputStyle,
           placeholder: "默认 10",
           value: typeof thresholdRaw === "number" ? String(thresholdRaw) : "",
-          disabled: !writable,
+          disabled: !writable || saving,
           onChange: (function (key) {
             return function (e) {
               var raw = e.target.value
@@ -1126,9 +1755,14 @@ function PlanUsageSettingsPage(props) {
         h("span", { style: settingsHintStyle }, "低于该值时状态灯转为警告色；填 0 表示不警告"),
       ))
     }
+    // Xiaomi MiMo 的操作提示：放卡片最底（与凭据框分离，不再夹在中间）。
+    if (enabled && fields.cookie !== undefined && fields.apiKey === undefined && meta.id === 'mimo') {
+      children.push(h("p", { key: "mimo-hint", style: settingsHintStyle },
+        "登录 platform.xiaomimimo.com 后，按 F12 打开开发者工具 → 网络 → 任一请求 → 复制请求头中完整的 Cookie 值粘贴到这里（需包含 userId 与 serviceToken 字段）。安卓设备可在电脑上获取后安全粘贴到此处。过期后需重新复制；tp-*/ttp-* 专用 Key 不支持余额查询。"))
+    }
     if (enabled && meta.noCredential) {
       children.push(h("p", { key: "note", style: settingsHintStyle },
-        "复用 Codex Connect 的 ChatGPT 登录，无需 API Key；请先在 Codex Connect 中完成登录。"))
+        meta.credentialNote || "请先在对应的登录插件中完成登录。"))
     }
     rows.push(h("div", { key: meta.id, style: settingsGroupStyle }, children))
   }
@@ -1136,7 +1770,7 @@ function PlanUsageSettingsPage(props) {
   return h("div", { style: settingsPageStyle },
     h("p", { style: settingsIntroStyle },
       writable
-        ? "选择要显示的渠道并填入各自的 API Key；改动在点击「保存更改」后生效。"
+        ? "选择要显示的渠道并填入各自的凭据（Xiaomi MiMo 填控制台 Cookie）；卡片右侧 ▲/▼ 调整显示顺序（胶囊与详情面板共用）。改动在点击「保存更改」后生效。"
         : "当前部署的设置为只读，无法在此修改。"),
     rows,
     writable

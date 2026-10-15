@@ -102,6 +102,22 @@ export function createRuntime() {
       instance = { hooks: [], cursor: 0 }
       return pass(props)
     },
+    /** 在同一个 React 实现内隔离渲染子组件，避免在 hooks 上下文外直接调用。 */
+    renderIsolated(Comp, props) {
+      const saved = { Component, instance, current, dirty, pending }
+      try {
+        Component = Comp
+        instance = { hooks: [], cursor: 0 }
+        pending = []
+        return pass(props)
+      } finally {
+        Component = saved.Component
+        instance = saved.instance
+        current = saved.current
+        dirty = saved.dirty
+        pending = saved.pending
+      }
+    },
     /** 单帧渲染：用于捕捉「折叠当帧是否闪出面板」。 */
     renderOnce(props) { return pass(props) },
     /** 反复渲染直到没有 setState，并让 fetch 的 promise 链落定。 */
@@ -141,7 +157,29 @@ export function loadClient(runtime, options) {
   const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   let exportedModule = null
 
-  globalThis.window = {
+  // [local patch 0.8.0] 极简事件目标：0.8.0 起 client.js 会在 window/document 上
+  // 挂 focus / visibilitychange 监听（充值后余额同步的刷新触发点），mock 需要
+  // 承接这两个 API，并保留监听表供测试触发/断言。
+  function makeEventTarget() {
+    const listeners = {}
+    return {
+      listeners,
+      addEventListener(type, fn) { (listeners[type] = listeners[type] || []).push(fn) },
+      removeEventListener(type, fn) {
+        const arr = listeners[type] || []
+        const i = arr.indexOf(fn)
+        if (i >= 0) arr.splice(i, 1)
+      },
+      dispatch(type) {
+        const arr = (listeners[type] || []).slice()
+        for (const fn of arr) fn({ type })
+      },
+    }
+  }
+  const fakeWindowEvents = makeEventTarget()
+  const fakeDocEvents = makeEventTarget()
+
+  globalThis.window = Object.assign(fakeWindowEvents, {
     __ModuleLoader__: {
       load({ factory }) {
         exportedModule = factory((name) => {
@@ -154,16 +192,20 @@ export function loadClient(runtime, options) {
     getComputedStyle(node) {
       return Object.assign({ display: 'block', flexDirection: 'row', flexWrap: 'nowrap' }, node.computed, node.style)
     },
-  }
+    innerWidth: 1200,
+    innerHeight: 800,
+  })
 
   // 极简 document：只覆盖插件用到的 createElement / head.appendChild / querySelector，
   // 用来断言「注入的样式表」内容（:hover 这类伪类规则无法内联表达）。
+  // visibilityState / 事件监听为 0.8.0 的 focus 刷新路径服务。
   const styleTags = []
-  globalThis.document = {
+  globalThis.document = Object.assign(fakeDocEvents, {
+    visibilityState: 'visible',
     createElement(tagName) { return { tagName, dataset: {}, textContent: '' } },
     head: { appendChild(node) { styleTags.push(node) } },
     querySelector() { return styleTags.length > 0 ? styleTags[0] : null },
-  }
+  })
 
   const realSetInterval = globalThis.setInterval
   globalThis.setInterval = () => 0
@@ -175,12 +217,17 @@ export function loadClient(runtime, options) {
 
   // 通过 apply(ctx) 取到胶囊组件与席位注册规格（两者都只经 ctx 暴露，不直接导出）。
   let Badge = null
+  let SettingsPage = null
   let registration = null
   exportedModule.apply({
-    configForms: { get: () => null, whileServed: () => () => {} },
+    configForms: { get: () => opts.form || null, whileServed: (_names, fn) => opts.form ? fn() : () => {} },
     slots: {
       inject: (_name, cb) => cb(),
-      register: (spec, Comp) => { registration = spec; Badge = Comp; return () => {} },
+      register: (spec, Comp) => {
+        if (spec.name === 'sidebar.footer.action') { registration = spec; Badge = Comp }
+        if (spec.name === 'settings.plugins.tab') SettingsPage = Comp
+        return () => {}
+      },
     },
     effect: (fn) => fn(),
   })
@@ -188,11 +235,16 @@ export function loadClient(runtime, options) {
   return {
     module: exportedModule,
     Badge,
+    SettingsPage,
     registration,
     styleTags,
+    windowEvents: fakeWindowEvents,
+    documentEvents: fakeDocEvents,
     restore() {
       globalThis.setInterval = realSetInterval
       delete globalThis.document
+      delete globalThis.window
+      delete globalThis.fetch
     },
   }
 }

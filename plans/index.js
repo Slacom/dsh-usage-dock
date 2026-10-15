@@ -10,9 +10,11 @@ import glmZhipu from './glm-zhipu.js'
 import kimiCode from './kimi-code.js'
 import deepseek from './deepseek.js'
 import codex from './codex.js'
+import mimo from './mimo.js'
+import workbuddy from './workbuddy.js'
 
 /** 已接入的套餐（渠道）：id 同时用作配置键名与 wire 标识。 */
-export const PLANS = [opencodeGo, glmZai, glmZhipu, kimiCode, deepseek, codex]
+export const PLANS = [opencodeGo, glmZai, glmZhipu, kimiCode, deepseek, codex, mimo, workbuddy]
 
 /** id → plan 的索引（配置读写路由校验未知套餐用）。 */
 export const PLAN_BY_ID = Object.fromEntries(PLANS.map((plan) => [plan.id, plan]))

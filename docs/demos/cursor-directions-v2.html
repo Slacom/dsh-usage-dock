@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>峰谷条 · 新游标方向</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#eef0f3;font:13px/1.65 system-ui,"Microsoft YaHei",sans-serif;color:#242a32;padding:22px 18px}input{accent-color:#52627a}label{cursor:pointer}.wrap{--card:#fff;--ink:#626b79;--line:#343e4e;--text:#242a32;--muted:#76808e;--edge:#dce1e7;max-width:960px;margin:12px auto;color:var(--text)}#dark:checked~.wrap{--card:#23272f;--ink:#b5becc;--line:#f3f5f8;--text:#e8edf5;--muted:#a2acba;--edge:#3e4652}h1{font-size:22px;letter-spacing:-.5px;margin:0}header p{color:var(--muted);margin:4px 0 18px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr));gap:14px}article{background:var(--card);border:1px solid var(--edge);border-radius:14px;padding:18px}h2{font-size:15px;margin:0 0 4px}h2 b{font-size:11px;font-weight:500;padding:2px 6px;background:#e8eef7;color:#49658a;border-radius:4px;margin-left:8px}.desc{color:var(--muted);font-size:12px;min-height:40px;margin:0 0 14px}.scene{font-size:11px;color:var(--muted);margin-top:12px}.stage{height:8px;position:relative;margin:8px 0 5px}.track{position:absolute;inset:0;border-radius:9px;overflow:hidden;background:linear-gradient(to right,#3d7ff5 0 42%,#ff9800 42% 58%,#3d7ff5 58%)}.off .track{background:linear-gradient(to right,#ff9800 0 42%,#3d7ff5 42% 68%,#ff9800 68%)}.near .track{background:linear-gradient(to right,#ff9800 0 calc(50% + 1px),#3d7ff5 calc(50% + 1px) 74%,#ff9800 74%)}.exact .track{background:linear-gradient(to right,#ff9800 0 50%,#3d7ff5 50%)}.mark{position:absolute;left:50%;top:0;bottom:0;width:0;pointer-events:none}.tip{position:absolute;left:0;top:-5px;width:8px;height:5px;background:var(--ink);clip-path:polygon(0 0,100% 0,50% 100%);transform:translateX(-50%)}.stem{position:absolute;left:0;top:0;bottom:0;transform:translateX(-50%)}
+/* G：连续高斯式亮度，不是「白矩形 + 外套矩形」。 */
+.G .stem{width:10px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.12) 20%,rgba(255,255,255,.72) 43%,#fff 50%,rgba(255,255,255,.72) 57%,rgba(255,255,255,.12) 80%,transparent);border-radius:50%;filter:drop-shadow(0 0 2px #ffffff80)}
+/* H：三角与向下延伸的线是一根中性指针。 */
+.H .stem{width:1px;top:-1px;bottom:-3px;background:var(--line)}.H .tip{background:var(--line)}
+/* I：不切断任何色段，轨道上方的三角 + 轨道下方短刻线。 */
+.I .stem{width:1px;top:10px;bottom:-6px;background:var(--line)}
+/* J：针尖由三角宽度连续收束，非「粗柱」。 */
+.J .tip{display:none}.J .stem{top:-5px;bottom:-2px;width:8px;background:var(--line);clip-path:polygon(0 0,100% 0,57% 36%,53% 100%,47% 100%,43% 36%)}
+/* K：定位发生在轨道外。 */
+.K .stem{display:none}.K .tip{top:-6px}.K .foot{position:absolute;left:0;top:10px;width:6px;height:4px;background:var(--ink);clip-path:polygon(50% 0,100% 100%,0 100%);transform:translateX(-50%)}
+/* L：沿三角中心线的断续定位，更不像颜色分界线。 */
+.L .stem{width:1px;top:0;bottom:-4px;background:repeating-linear-gradient(to bottom,var(--line) 0 2px,transparent 2px 4px)}.L .tip{background:var(--line)}
+.note{border-top:1px solid var(--edge);padding-top:10px;margin:18px 0 0;color:var(--muted);font-size:12px}footer{color:var(--muted);font-size:12px;margin:18px 0}strong{font-weight:600}.baseline{max-width:298px}.baseline .stem{width:2px;background:#fff}.legend{display:flex;gap:12px;font-size:11px;color:var(--muted)}.legend span:before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:4px;background:#ff9800}.legend span+span:before{background:#3d7ff5}
+</style>
+<input id="dark" type="checkbox"><label for="dark"> 深色卡片对照（浏览器中可切换）</label>
+<div class="wrap"><header><h1>不只换一根柱：6 个新方向</h1><p>固定中点 = 现在。沿用橙 / 蓝色段，不改时间轴逻辑。纯 HTML + CSS，无脚本，内嵌预览可看。</p><div class="legend"><span>高峰时段</span><span>空闲时段</span></div></header>
+<div class="grid">
+<article class="G"><h2>G · 柔焦光束<b>光柱方向</b></h2><p class="desc">亮度由中心向两侧连续消散，没有硬矩形边缘；上方小三角负责准确定位。静态、不闪烁。</p>
+<div class="scene">橙段中心</div><div class="stage"><div class="track"></div><div class="mark"><i class="tip"></i><i class="stem"></i></div></div>
+<div class="scene">蓝段中心</div><div class="stage off"><div class="track"></div><div class="mark"><i class="tip"></i><i class="stem"></i></div></div>
+<div class="scene">边界尚在右侧 1px（仍在橙段）</div><div class="stage near"><div class="track"></div><div class="mark"><i class="tip"></i><i class="stem"></i></div></div>
+<p class="note">更柔和，但发光会遮淡边界附近颜色；不适合要求每一像素都清楚的情况。</p></article>
+<article class="H"><h2>H · 三角引线<b>延伸线方向</b></h2><p class="desc">三角尖端直接延伸一根中性细线，贯穿色条并露出下沿 3px。靠几何连贯性辨识，不再靠白柱。</p>
+<div class="scene">橙段中心</div><div class="stage"><div class="track"></div><div class="mark"><i class="tip"></i><i class="stem"></i></div></div>
+<div class="scene">蓝段中心</div><div class="stage off"><div class="track"></div><div class="mark"><i class="tip"></i><i class="stem"></i></div></div>
+<div class="scene">边界尚在右侧 1px（仍在橙段）</div><div class="stage near"><div class="track"></div><div class="mark"><i class="tip"></i><i class="stem"></i></div></div>
+<p class="note">比白柱更像「时间指针」。仍有竖线，但它延伸到色条外，降低被当作分界线的可能。</p></article>
+<article class="I"><h2>I · 悬针留白<b>不覆盖色条</b></h2><p class="desc">只保留上方三角，下沿再给一根独立短刻线。中间 8px 的色条完全通透，让颜色自己说话。</p>
+<div class="scene">橙段中心</div><div class="stage"><div class="track"></div><div class="mark"><i class="tip"></i><i class="stem"></i></div></div>
+<div class="scene">蓝段中心</div><div class="stage off"><div class="track"></div><div class="mark"><i class="tip"></i><i class="stem"></i></div></div>
+<div class="scene">边界尚在右侧 1px（仍在橙段）</div><div class="stage near"><div class="track"></div><div class="mark"><i class="tip"></i><i class="stem"></i></div></div>
+<p class="note">最少干扰分段信息；代价是上下两个符号分离，视线要主动连成一线。</p></article>
+<article class="J"><h2>J · 一体锥针<b>单个轮廓</b></h2><p class="desc">三角从肩部直接收束成长针，越往下越细。不再是「三角 + 柱」两个图形，视觉像一枚完整指针。</p>
+<div class="scene">橙段中心</div><div class="stage"><div class="track"></div><div class="mark"><i class="tip"></i><i class="stem"></i></div></div>
+<div class="scene">蓝段中心</div><div class="stage off"><div class="track"></div><div class="mark"><i class="tip"></i><i class="stem"></i></div></div>
+<div class="scene">边界尚在右侧 1px（仍在橙段）</div><div class="stage near"><div class="track"></div><div class="mark"><i class="tip"></i><i class="stem"></i></div></div>
+<p class="note">整体感强；细尖会随缩放出现抗锯齿，且顶部比普通延伸线稍有存在感。</p></article>
+<article class="K"><h2>K · 上下对尖<b>完全移出轨道</b></h2><p class="desc">上方倒三角与下方小正三角夹住「现在」。色条内部没有任何覆盖物，也没有类似边界的竖线。</p>
+<div class="scene">橙段中心</div><div class="stage"><div class="track"></div><div class="mark"><i class="tip"></i><i class="stem"></i><i class="foot"></i></div></div>
+<div class="scene">蓝段中心</div><div class="stage off"><div class="track"></div><div class="mark"><i class="tip"></i><i class="stem"></i><i class="foot"></i></div></div>
+<div class="scene">边界尚在右侧 1px（仍在橙段）</div><div class="stage near"><div class="track"></div><div class="mark"><i class="tip"></i><i class="stem"></i><i class="foot"></i></div></div>
+<p class="note">更像一对读取夹口；要接受两个小三角，且略增加纵向空间。</p></article>
+<article class="L"><h2>L · 断续准线<b>轻量定位</b></h2><p class="desc">从倒三角下引一根 2px 实 / 2px 空的细虚线。以不连续的纹理区别于连续色段边界。</p>
+<div class="scene">橙段中心</div><div class="stage"><div class="track"></div><div class="mark"><i class="tip"></i><i class="stem"></i></div></div>
+<div class="scene">蓝段中心</div><div class="stage off"><div class="track"></div><div class="mark"><i class="tip"></i><i class="stem"></i></div></div>
+<div class="scene">边界尚在右侧 1px（仍在橙段）</div><div class="stage near"><div class="track"></div><div class="mark"><i class="tip"></i><i class="stem"></i></div></div>
+<p class="note">比实线轻，也较不容易读成颜色边界；但仅 8px 高，虚线节奏会显得零碎。</p></article>
+</div><footer>选择建议：想保留光感看 G；想让三角自然向下延伸看 H / J；不想再遮挡色条看 I / K。所有例子使用一个共享中点锚点，不给三角和线分别算 50%。以上仅为候选，尚未装入插件。</footer></div></html>

@@ -3,137 +3,102 @@
 [![npm version](https://img.shields.io/npm/v/dsh-usage-dock.svg)](https://www.npmjs.com/package/dsh-usage-dock)
 [![license](https://img.shields.io/npm/l/dsh-usage-dock.svg)](https://github.com/Slacom/dsh-usage-dock/blob/main/LICENSE)
 
-DeepSeek Harness（DSH）的**套餐用量角标**插件：在 Web 界面**左侧状态栏底部**显示各
-AI 套餐的用量与余额，点击可展开详情面板。
+DeepSeek Harness（DSH）的侧栏套餐用量插件：在左侧栏底部显示余额、积分和剩余额度，点击展开详情。
 
-> **本插件 fork 自 [`chendefine/dsh-plugins-plan-usage`](https://github.com/chendefine/dsh-plugins-plan-usage)
-> （上游包名即 `dsh-plan-usage`）**
+> 当前版本 **0.8.1**：[发布说明](https://github.com/Slacom/dsh-usage-dock/releases/tag/v0.8.1)。
 
-![效果预览：左侧状态栏底部显示 DeepSeek 官网余额与 OpenAI Codex 额度](https://raw.githubusercontent.com/Slacom/dsh-usage-dock/main/preview.png)
+![侧栏余额与额度预览](https://raw.githubusercontent.com/Slacom/dsh-usage-dock/main/preview.png)
 
-## 支持的渠道
+## 支持渠道
 
-| 渠道 | 数据源 | 显示内容 |
+| 渠道 | 数据来源 | 显示内容 |
 | --- | --- | --- |
-| OpenCode Go | `opencode.ai/zen/go/v1/usage` | 5小时 / 周限 / 月限 |
-| GLM Z.AI（国际版） | Z.AI monitor 接口 | 5小时 / 周限 / 月限 + 套餐等级 |
-| GLM 智谱 | 智谱 monitor 接口 | 同上 |
-| Kimi Code | `api.kimi.com`（可选 Cookie 增强月限） | 5小时 / 周限（+ 月度会员额度）|
-| DeepSeek 官网 | `api.deepseek.com/user/balance` | ¥余额，低于 ¥30 红灯 |
-| OpenAI Codex | 复用 `dsh-codex-connect` 的 ChatGPT OAuth | 剩余额度（5小时 / 周限）|
+| OpenCode Go | OpenCode usage API | 5小时 / 周限 / 月限 |
+| GLM Z.AI / GLM 智谱 | 对应 monitor API | 用量窗口、套餐等级 |
+| Kimi Code | Kimi API；可选 Cookie | 5小时 / 周限 |
+| DeepSeek | DSH 账号余额优先，开放平台 API Key 回退 | 余额；账号模式附峰谷时间条 |
+| OpenAI Codex | 已安装的 dsh-codex-connect | 5小时 / 周限剩余额度 |
+| Xiaomi MiMo | 开放平台控制台 Cookie | 总余额、现金及赠送余额 |
+| WorkBuddy / WorkBuddy AI | 已安装的 dsh-workbuddy-connect 状态接口 | 合计剩余积分、套餐明细 |
 
-用量每 **30 秒**自动刷新；侧栏折叠（rail）时只显示状态圆点，**此时不可点击**——
-详情面板只在侧栏展开状态下点击打开（0.6.3 起）。
+- 每 **30 秒**刷新；展开面板、窗口聚焦、页面重新可见时立即刷新。
+- 短暂网络失败保留旧值，连续两轮失败显示错误；未登录、缺凭据等错误立即显示。
+- 胶囊独占侧栏底部一行，位于其他底部插件上方；侧栏折叠时只显示圆点，不可点击。
+- 设置页可开关渠道、配置凭据及余额警告阈值，通过 ▲ / ▼ 调整显示顺序。
+- 余额向下取整到分。DeepSeek / MiMo 警告阈值默认 10 元，填 0 不警告。
 
-胶囊在侧栏底部**独占一行、且排在最上面**：装了其他同样占用底部席位的插件（如 Remote）时各自成行、
-上下排列，详情面板向上展开时不会盖住其他按钮。外观与侧栏其他条目一致——默认完全透明、无边框无阴影，
-鼠标悬停时才浮出同款灰色底（0.7.0 起；详情面板本身未改）。
+## 安装 / 更新
 
-## 安装
+目标环境是提供官方 Web 插件席位、Config schema 与 configForms 的 DSH 0.2.0 系列；
+安卓端包括基于 `0.2.0-rc.2` 的 DSHA / DeepCode 移植环境。不同移植版本仍需核对宿主 API。
 
-### 前提条件
-
-- DSH `0.1.5` 或更高
-- **无需 Python、无需 curl**：插件在 Host 进程内直接用 Node 原生 fetch 取数（0.6.2 起）。
-  随附的 `plans/http-fetch.py` 与系统 curl 仅作为兜底后端，只在原生 fetch 传输失败
-  （例如必须经系统代理出网的环境）时才会被用到。
-
-### 方式一：从 npm 安装（推荐）
-
-```powershell
-dsh plugin --profile web add dsh-usage-dock
+```sh
+dsh plugin --profile web add dsh-usage-dock@0.8.1
 ```
 
-也可以在 DSH 的「**设置 → 插件 → 添加插件**」中直接填入包名 `dsh-usage-dock`。
+桌面端按实际 profile 使用 `--profile desktop`；也可在「设置 → 插件」添加包名。
+安装后重启 DSH / 安卓引擎，再刷新网页或重新打开 WebView。
 
-### 方式二：从 GitHub 安装
+## 安卓 / DSHA 兼容性
 
-```powershell
-dsh plugin --profile web add github:Slacom/dsh-usage-dock
+- 取数在 **Host 的 Node 原生 fetch** 中执行，不需要手机安装 Python、curl 或桌面应用。
+  随附 Python 脚本和系统 curl 仅为有 shell 环境的备用后端。
+- 没有 `deepseekAccount` 服务时使用 DeepSeek API Key；账号模式的峰谷条不出现在 API Key 模式中。
+- 不依赖桌面充值桥；本版不提供内嵌充值按钮。充值在相应平台或官方账号设置中操作。
+- WebView 缺 WAAPI 时退化为静态相位定位；缺 ResizeObserver 时定时校准轨道宽度。
+- 已通过无 shell / 无账号服务 / 无配置编辑服务模拟、窄侧栏折叠守卫、请求竞态回归。
+  **代码及接口契约检查不代表所有 Android 机型均已真机测试。**
+
+### 安卓 WorkBuddy 积分
+
+Usage Dock 复用同一 Host 内的这两个接口，不直接读取、复制或解密 WorkBuddy 认证文件：
+
+```text
+/plugins/dsh-workbuddy-connect/status
+/plugins/dsh-workbuddy-connect/ai/status
 ```
 
-安装后**重启 `dsh web` 进程**，浏览器硬刷新（Ctrl+Shift+R）。
+已核对 DSHA 移植使用的 `dsh-workbuddy-connect@0.7.4` 真实安装包接口，并以真实 status handler
+加模拟登录/计费数据完成对接验证。手机上需要：
 
+1. Usage Dock 和 WorkBuddy Connect 安装在同一个 `web` profile，均已启用。
+2. WorkBuddy Connect 已能从手机私有目录读取有效的插件自有登录副本。
+3. 手机可以访问对应 WorkBuddy 计费上游；仅模型可用不保证计费接口一定可达。
+4. Usage Dock 设置页开启 WorkBuddy 渠道。
 
-## 兼容性
+国内版登录、国际版未登录可以正常显示国内版积分；无需两版同时登录。
+认证/计费失败会显示错误，暂时网络失败按失败降级规则处理；不会把部分成功静默当作完整合计。
+WorkBuddy Connect 自带的移动 UI 不出现，不等于它的 Host 状态接口不可用。
+不要公开上传认证文件、Cookie 或刷新令牌。
 
-- **DSH 0.1.5+** 均可用，含**移动端 DSH（Android APK）**——0.6.2 起取数不再依赖
-  设备上是否装有 python/curl。
-- **DSH 0.2.0 起**：DSH 移除了 `ctx.settings.register(namespace, Schema)` 这套旧 API；
-  本插件因此把配置改为**插件自有的 JSON 文件**（`$DSH_HOME/plan-usage.json`），
-  不再依赖 DSH 的 settings 服务，可跨 DSH 版本稳定工作。
-- 从 0.1.x 升级过来时，请在「设置 → 插件 → 套餐用量」里**重新填写各渠道的 API Key**
-  （旧版把这些存在 DSH 的 `settings.yaml` 中，新版本不再读取该文件）。
+## 设置
 
-## 设置页（0.5.0 起）
+进入「设置 → 内置插件 → Usage Dock」，更改后点击「保存更改」。配置通过 DSH 的
+`Config` / `configForms` 托管到 profile Cordis patch，**不是独立 JSON 配置文件**。
+Host 存在 `configEditor` 时读取最新配置（2 秒内复用）；缺少该服务的旧/移植宿主需重启引擎
+才能让凭据和 Host 渠道开关生效。客户端显示过滤仍订阅表单实时变化。
 
-插件在「**设置 → 内置插件**」里拥有独立标签页（与 Codex Connect 并列），可直接勾选要显示的渠道、
-填写各渠道 API Key。实现方式：客户端注册 DSH 的 `settings.plugins.tab` 席位，配置读写走
-`configForms` 服务（命名空间即 profile 条目 id `plan-usage`），由 DSH 负责修订号校验与持久化。
-
-### 可配置项
-
-| 项 | 说明 |
+| 渠道 | 配置字段 / 登录方式 |
 | --- | --- |
-| 启用套餐用量角标 | 全局开关 |
-| 各渠道开关 | OpenCode Go / GLM Z.AI / GLM 智谱 / Kimi Code / DeepSeek / OpenAI Codex |
-| 各渠道 API Key | 留空则回退到「设置 → 模型」凭据库中的同名凭据 |
-| **DeepSeek 余额警告额度** | `deepseekWarnThreshold`，低于该值时状态灯转警告色；**默认 10 元**，填 0 表示不警告 |
+| OpenCode Go | `apiKey`，留空回退模型凭据库 `OPENCODE_GO_API_KEY` |
+| GLM Z.AI | `glmApiKey`，回退 `ZAI` |
+| GLM 智谱 | `glmZhipuApiKey`，回退 `ZHIPU` / `GLM` |
+| Kimi Code | `kimiCodeApiKey`；`kimiCodeCookie` 为可选增强字段 |
+| DeepSeek | `deepseekApiKey`；账号服务可用时无需 Key；`deepseekWarnThreshold` |
+| OpenAI Codex | 在 Codex Connect 中登录，无需在本插件填 Key |
+| Xiaomi MiMo | `mimoCookie`（含 userId / serviceToken）、`mimoWarnThreshold` |
+| WorkBuddy | 在 WorkBuddy Connect 中提供登录态，无需在本插件填凭据 |
 
-设置页底部提供「放弃更改 / 保存更改」按钮，改动在保存后生效。
+MiMo Cookie 可在电脑浏览器登录控制台后，从开发者工具的请求头获取，再安全粘贴到安卓设置中。
+Cookie 过期需要重新获取；`tp-*` / `ttp-*` 专用 Key 不支持此余额查询。
 
-## 配置方式（0.4.0 起）
-
-插件导出 `Config` schema，**DSH 会自动在「设置 → 插件」里生成本插件的设置页**，
-改动由 DSH 持久化到当前 profile 的 Cordis patch。可配置项包括全局开关、各渠道开关，
-以及 OpenCode Go / GLM / Kimi / DeepSeek 的 API Key（密钥字段在界面上按密码处理）。
-
-### DeepSeek 余额的数据来源
-
-插件按以下顺序取数，**账号优先**：
-
-1. **DSH 账号余额**：桌面端登录 DSH 账号后，Host 的 `deepseekAccount` 服务读取 Platform 余额
-   （正常余额 + 赠金一并计入）。**不需要 API Key，也不涉及 token**——账号控制器只暴露安全的余额投影。
-2. **DeepSeek 开放平台 API Key**（回退）：账号未登录或该服务不存在的部署（如普通 Web）会走这条，
-   请求 `api.deepseek.com/user/balance`。
-
-胶囊里两者都显示为同一行「DeepSeek」，取数结果带 `via` 字段标明本次来源（`account` / `api`）。
-
-## 配置
-
-打开「**设置 → 插件 → 套餐用量**」，可分别开关各渠道并填写 API Key：
-
-| 渠道 | 配置项 | 说明 |
-| --- | --- | --- |
-| OpenCode Go | `apiKey` | 留空则回退到「设置 → 模型」中的 `OPENCODE_GO_API_KEY` |
-| GLM Z.AI | `glmApiKey` | 回退 `ZAI` |
-| GLM 智谱 | `glmZhipuApiKey` | 回退 `ZHIPU` / `GLM` |
-| Kimi Code | `kimiCodeApiKey` + `kimiCodeCookie` | Cookie 可选，用于月度会员额度 |
-| DeepSeek 官网 | `deepseekApiKey` | 回退 `DEEPSEEK_API_KEY` |
-| OpenAI Codex | 无需填写 | 针对 [`dsh-codex-connect`](https://github.com/franksong2702/dsh-codex-connect) 社区插件进行适配|
-
-
-## 更新
-
-```powershell
-dsh plugin --profile web remove dsh-usage-dock
-dsh plugin --profile web add dsh-usage-dock          # npm 源
-# 或
-dsh plugin --profile web add github:Slacom/dsh-usage-dock   # GitHub 源
-```
+峰谷条按北京时间工作日 09:00–12:00、14:00–18:00 计算，周末及内置假日表为空闲时段。
+假日表需随年份更新。本版保留 2px 柱与修正后的倒三角，光柱等候选仅在开发演示页保留，未实装。
 
 ## 卸载
 
-```powershell
+```sh
 dsh plugin --profile web remove dsh-usage-dock
 ```
 
-## 与上游的关系
-
-本插件是 [`chendefine/dsh-plugins-plan-usage`](https://github.com/chendefine/dsh-plugins-plan-usage)
-的 fork。
-
-
-## 许可
-
-MIT（沿用上游许可证，见 `LICENSE`）。上游作者：chendefine。
+MIT；沿用上游许可证。

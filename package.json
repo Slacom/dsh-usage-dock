@@ -1,7 +1,7 @@
 {
   "name": "dsh-usage-dock",
-  "version": "0.7.2",
-  "description": "套餐用量角标（Slacom 定制版）：在左侧状态栏显示 OpenCode Go / GLM Z.AI / GLM 智谱 / Kimi Code / DeepSeek 官网余额 / OpenAI Codex 订阅额度，支持 5小时 / 周限 / 月限窗口与「设置 → 插件」配置卡片。",
+  "version": "0.8.1",
+  "description": "套餐用量角标（Slacom 定制版）：在左侧状态栏显示 OpenCode Go / GLM Z.AI / GLM 智谱 / Kimi Code / DeepSeek 官网余额 / OpenAI Codex 订阅额度 / 小米 MiMo API 余额 / WorkBuddy 积分，支持 5小时 / 周限 / 月限窗口、DeepSeek 峰谷时段条与「设置 → 插件」配置卡片。",
   "type": "module",
   "main": "index.js",
   "exports": {
