@@ -123,14 +123,19 @@ export function apply(ctx, config) {
       const plans = await Promise.all(enabledPlans.map((plan) => Promise.resolve()
         .then(() => plan.fetch(ctx, shell, cfgNow))
         .catch(() => execError(plan))))
-      // [local patch 0.8.0/0.8.1] DeepSeek 账号登录时附上峰谷计价相位与段序列
-      //（时间条渲染用）。纯本地计算（plans/peak-phase.js），不请求网络、不抛错
-      //——算不出来就不附，客户端按「无时间条」处理。API Key 模式没有账号充值/
-      // 峰谷语义，不附。客户端可视窗 = 24h（游标居中，左右各 12h），因此段窗口
+      // [local patch 0.8.0/0.8.1] DeepSeek 峰谷计价相位与段序列（时间条渲染用）。
+      // 纯本地计算（plans/peak-phase.js），不请求网络、不抛错——算不出来就不附，
+      // 客户端按「无时间条」处理。
+      // [0.8.3] 不再限定 via==='account'：峰谷计价是 **DeepSeek 平台侧的计费规则**
+      //（北京时间 09:00–12:00 / 14:00–18:00 峰价，周末与假日谷价），与「用账号余额
+      // 还是 API Key 查询」无关——API Key 计费的模型同样按该规则计价。因此只要
+      // DeepSeek 条目取数成功（无 error）就附相位/段序列，所有设备与两种鉴权方式
+      // 统一显示峰谷条（用户 2026-10-16 明确要求）。
+      // 客户端可视窗 = 24h（游标居中，左右各 12h），因此段窗口
       // 取 now-12h-2min .. now+24h：左侧必须给满 12h（0.8.1 只给 6h 导致条左
       // 半出现空白），右侧留 12h 余量，30s 轮询与短暂取数失败都不会露边。
       for (const plan of plans) {
-        if (plan != null && plan.id === 'deepseek' && plan.via === 'account' && plan.error === undefined) {
+        if (plan != null && plan.id === 'deepseek' && plan.error === undefined) {
           const now = Date.now()
           const phase = peakPhaseAt(now)
           const segs = peakSegments(now - 12 * 3600e3 - 120e3, now + 24 * 3600e3)

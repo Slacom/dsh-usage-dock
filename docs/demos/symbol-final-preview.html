@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8">
+<title>0.8.3 最终效果 · 胶囊与面板</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#eef0f3;font:13px/1.6 "Segoe UI","Microsoft YaHei",system-ui,sans-serif;color:#242a32;padding:20px}
+h1{font-size:20px;margin:0 0 4px}
+p.note{color:#76808e;font-size:12px;margin:0 0 16px}
+.rail{width:330px;background:#fff;border-radius:14px;padding:12px 10px;box-shadow:0 1px 4px rgba(0,0,0,.06);display:inline-block;vertical-align:top;margin-right:18px}
+.panel{width:330px;background:#fff;border-radius:14px;padding:14px;box-shadow:0 1px 4px rgba(0,0,0,.06);display:inline-block;vertical-align:top}
+.row{display:flex;align-items:center;gap:6px;line-height:1.4;margin:2px 0}
+.dot{width:7px;height:7px;border-radius:50%;flex:none;background:#22a06b}
+.name{flex:none;font-weight:500;color:#626b79}
+.val{flex:none;margin-left:auto;color:#242a32;font-variant-numeric:tabular-nums;white-space:nowrap}
+.ptitle{font-weight:600;margin:0 0 10px;font-size:13px}
+.big{display:flex;align-items:center;gap:8px;margin:4px 0;font-size:18px;font-weight:600}
+.big .bdot{width:9px;height:9px;border-radius:50%;background:#22a06b;flex:none}
+.note2{color:#626b79;font-size:11px;margin:2px 0 6px}
+.sep{border-top:1px solid #eceef0;margin:10px 0}
+h2{font-size:14px;margin:22px 0 8px}
+</style>
+<body>
+<h1>0.8.3 最终效果（符号统一 + 薄空格间距）</h1>
+<p class="note">引号内为 U+2009 实际渲染。胶囊：WorkBuddy「✦1,748」与 ¥ 渠道同构同距；面板：WorkBuddy 大号行同步加 ✦。</p>
+
+<h2>胶囊（330px 侧栏模拟）</h2>
+<div class="rail">
+  <div class="row"><span class="dot"></span><span class="name">DeepSeek</span><span class="val">¥&thinsp;39.85</span></div>
+  <div class="row"><span class="dot"></span><span class="name">Xiaomi MiMo</span><span class="val">¥&thinsp;15.41</span></div>
+  <div class="row"><span class="dot"></span><span class="name">WorkBuddy</span><span class="val">✦&thinsp;1,748</span></div>
+  <div class="row"><span class="dot"></span><span class="name">OpenAI Codex</span><span class="val">100% 69%</span></div>
+</div>
+
+<h2>详情面板（WorkBuddy / DeepSeek 分区）</h2>
+<div class="panel">
+  <div class="ptitle">套餐用量</div>
+  <div style="font-weight:600;font-size:12px;margin:2px 0">DeepSeek 余额</div>
+  <div class="big"><span class="bdot"></span>¥&thinsp;39.85</div>
+  <div class="note2">余额充足</div>
+  <div class="sep"></div>
+  <div style="font-weight:600;font-size:12px;margin:2px 0">WorkBuddy 积分</div>
+  <div class="big"><span class="bdot"></span>✦&thinsp;1,748</div>
+  <div class="note2">WorkBuddy · CodeBuddy个人体验版：500 / 500</div>
+  <div class="note2">WorkBuddy · CodeBuddy个人版拉新权益包：1,000 / 1,000</div>
+</div>
+</body></html>

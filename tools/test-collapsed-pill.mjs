@@ -37,7 +37,8 @@ assert.ok(Badge, '未能从 apply(ctx) 取到胶囊组件')
     assert.equal(pill.props.style.cursor, 'pointer')
     assert.equal(panel, null, '未点击时不应有详情面板')
     assert.match(textOf(pill), /DeepSeek/, '展开状态胶囊应显示渠道名')
-    assert.match(textOf(pill), /¥7\.38/, '展开状态胶囊应显示余额')
+    // [0.8.3] ¥ 与数字间是统一薄空格 U+2009（SYMBOL_GAP，与 ✦ 前缀共用间距基准）。
+    assert.match(textOf(pill), /¥\u20097\.38/, '展开状态胶囊应显示余额')
 
     pill.props.onClick()
     const opened = await runtime.settle({ wide: true, configForm: null })
@@ -45,7 +46,7 @@ assert.ok(Badge, '未能从 apply(ctx) 取到胶囊组件')
     assert.ok(panelOpen, '点击后应渲染详情面板')
     const panelText = textOf(panelOpen)
     assert.match(panelText, /余额/, '面板应含余额分区')
-    assert.match(panelText, /¥7\.38/)
+    assert.match(panelText, /¥\u20097\.38/)
     assert.match(panelText, /5小时/)
     record('T1 展开状态：可点击、点击后显示完整详情面板', 'PASS')
   } catch (err) {

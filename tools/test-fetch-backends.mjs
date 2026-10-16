@@ -11,7 +11,7 @@
  */
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
-import { curlJson } from '../plans/util.js'
+import { curlJson, isSentinelApiKey, resolveApiKey } from '../plans/util.js'
 
 /** 模拟平板：shell 服务在，但 python / curl 都不可执行（Android 上没有这两个命令）。 */
 function tabletShell() {
@@ -35,6 +35,45 @@ const results = []
 function record(name, status, note) {
   results.push({ name, status, note })
   console.log('[' + status + '] ' + name + (note ? ' — ' + note : ''))
+}
+
+// T0 [0.8.3] 哨兵/占位 Key 判定（纯函数，离线）。规则只拦「一眼不可能」的值，
+// 不得误伤真实 Key 形态与既有测试假 Key。
+{
+  try {
+    const sentinels = ['1', 'x', '12', '123', '12345', '0000', '------', 'a1']
+    const realKeys = ['test-key', 'sk-tablet-test', 'sk-0123456789abcdef0123456789abcdef', 'sk-abc', '']
+    for (const v of sentinels) {
+      assert.equal(isSentinelApiKey(v), true, '应判为哨兵: ' + JSON.stringify(v))
+    }
+    for (const v of realKeys) {
+      assert.equal(isSentinelApiKey(v), false, '不得判为哨兵: ' + JSON.stringify(v))
+    }
+    // 空串/非字符串不是哨兵（空串走「未配置」分支，语义不同）
+    assert.equal(isSentinelApiKey(undefined), false)
+    assert.equal(isSentinelApiKey(null), false)
+    assert.equal(isSentinelApiKey(12345), false)
+    // resolveApiKey：哨兵值一律视为「无可用 Key」（含凭据库来源）。
+    const ctxWithSentinel = {
+      get: (name) => (name === 'credentials'
+        ? { resolve: async () => ({ value: '1' }) }
+        : undefined),
+    }
+    assert.equal(await resolveApiKey(ctxWithSentinel, {}, 'deepseekApiKey', ['DEEPSEEK_API_KEY']), undefined,
+      '凭据库里的哨兵值应被剔除')
+    const ctxWithReal = {
+      get: (name) => (name === 'credentials'
+        ? { resolve: async () => ({ value: 'sk-real-key-from-store' }) }
+        : undefined),
+    }
+    assert.equal(await resolveApiKey(ctxWithReal, {}, 'deepseekApiKey', ['DEEPSEEK_API_KEY']),
+      'sk-real-key-from-store', '真实凭据应正常返回')
+    assert.equal(await resolveApiKey(ctxWithReal, { deepseekApiKey: 'sk-plugin-key' }, 'deepseekApiKey', ['DEEPSEEK_API_KEY']),
+      'sk-plugin-key', '插件配置优先于凭据库')
+    record('T0 哨兵 Key 判定与解析链（不误伤 test-key / sk- 形态）', 'PASS')
+  } catch (err) {
+    record('T0 哨兵 Key 判定', 'FAIL', err.message)
+  }
 }
 
 // T1：本地 HTTP 服务，校验头/方法/body 透传，且完全不动用 shell。
@@ -276,6 +315,38 @@ function record(name, status, note) {
     assert.equal(accountOut.balance, 25.5, '应把赠金一并计入')
     assert.equal(intercepted, before, '账号可用时不应发起 API 请求')
     record('T7 桌面端账号余额优先（20.50 + 赠金 5.00 = 25.50）且不发请求', 'PASS')
+
+    // T6b [0.8.3] 哨兵 Key（用户为屏蔽 API 版模型而设的 `1`）+ 账号侧失败：
+    // 不得再向上游发注定 401 的请求；错误以账号侧原因为主。
+    {
+      const beforeSentinel = intercepted
+      const sentinelOut = await deepseek.fetch(
+        { get: (name) => (name === 'deepseekAccount'
+          ? { getBalance: async () => ({ status: 'failed' }) }
+          : undefined) },
+        tabletShell(),
+        { deepseekApiKey: '1' },
+      )
+      assert.equal(sentinelOut.error, 'no-key', '哨兵 Key 应归为「未配置 Key」')
+      assert.equal(intercepted, beforeSentinel, '哨兵 Key 不得发起上游请求（省掉注定 401 的调用）')
+      assert.match(sentinelOut.message, /Platform 返回 failed/, '错误应以账号侧原因为主因')
+      assert.match(sentinelOut.message, /未配置 DeepSeek API Key/)
+      record('T6b 哨兵 Key（值 `1`）：不发上游请求，错误以账号侧主因呈现', 'PASS')
+    }
+
+    // T6c [0.8.3] 纯数字 Key（如 `12345`）同样按哨兵处理；但既有假 Key
+    // `sk-tablet-test`（含字母、13 字符）必须**不受影响**——由上面的 T6 守住。
+    {
+      const beforeNumeric = intercepted
+      const numericOut = await deepseek.fetch(
+        { get: () => undefined },
+        tabletShell(),
+        { deepseekApiKey: '12345' },
+      )
+      assert.equal(numericOut.error, 'no-key')
+      assert.equal(intercepted, beforeNumeric, '纯数字 Key 不得发起上游请求')
+      record('T6c 纯数字 Key 按哨兵处理（不误伤含字母的短 Key）', 'PASS')
+    }
     }
   } catch (err) {
     record('T6/T7 plans/deepseek.js 端到端', 'FAIL', err.message)

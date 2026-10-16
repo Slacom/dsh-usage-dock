@@ -25,6 +25,27 @@ try {
   check('真实 Host 路由无 shell/账号/configEditor 仍取 API 余额',()=>{
     assert.equal(response.status,200);assert.equal(response.body.data.plans[0].balance,11.38);assert.equal(response.body.data.plans[0].via,'api')
   })
+  // [0.8.3] 峰谷条不再限定账号模式：API Key 计费同样按平台峰谷规则计价，
+  // 因此 Host 必须给 API Key 的 DeepSeek 条目也附 peakPhase + peakSegs。
+  check('API Key 模式也附峰谷相位与段序列（0.8.3 放宽）',()=>{
+    const p = response.body.data.plans[0]
+    assert.equal(typeof p.peakPhase,'object')
+    // 不断言当前是峰还是谷——那取决于运行时刻（峰窗口为北京时间 09:00–12:00 /
+    // 14:00–18:00，周末与假日全谷价）。只校验相位结构完整。
+    assert.equal(typeof p.peakPhase.inPeak,'boolean')
+    assert.equal(typeof p.peakPhase.weekend,'boolean')
+    assert.equal(typeof p.peakPhase.nextAtMs,'number')
+    assert.ok(Array.isArray(p.peakSegs)&&p.peakSegs.length>0,'peakSegs 应非空')
+    // 段窗口必须覆盖「游标左 12h」——客户端可视窗 = 24h（游标居中）。
+    const now=Date.now()
+    assert.ok(p.peakSegs[0].s<=now-12*3600e3,'段起点应不晚于 now-12h')
+    assert.ok(p.peakSegs[p.peakSegs.length-1].e>=now+12*3600e3,'段终点应不早于 now+12h')
+    // 每段都必须是合法类型（客户端按这些值取色）。
+    for (const seg of p.peakSegs) {
+      assert.ok(['peak','off','weekend','holiday'].includes(seg.t),'未知段类型 '+seg.t)
+      assert.ok(seg.e>seg.s,'段区间应递增')
+    }
+  })
   const nullAccount=handlerFor({...disabled,deepseekEnabled:true,deepseekApiKey:'test-key'},()=>null)
   const nullResult=await request(nullAccount)
   check('null 服务不阻断真实路由',()=>assert.equal(nullResult.body.data.plans[0].balance,11.38))

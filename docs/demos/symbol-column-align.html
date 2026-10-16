@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8">
+<title>符号列对齐方案 · 实测</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#eef0f3;font:13px/1.6 "Segoe UI","Microsoft YaHei",system-ui,sans-serif;color:#242a32;padding:18px}
+h2{font-size:14px;margin:16px 0 6px}
+p.note{color:#76808e;font-size:12px;margin:0 0 10px;max-width:820px}
+.rail{width:330px;background:#fff;border-radius:14px;padding:10px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.panel{width:330px;background:#fff;border-radius:14px;padding:14px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.row{display:flex;align-items:center;gap:6px;line-height:1.4;margin:2px 0}
+.dot{width:7px;height:7px;border-radius:50%;flex:none;background:#22a06b}
+.name{flex:none;font-weight:500;color:#626b79}
+.val{flex:none;width:80px;margin-left:auto;text-align:right;color:#242a32;font-variant-numeric:tabular-nums;white-space:nowrap}
+.big{display:flex;align-items:center;gap:8px;margin:4px 0;font-size:18px;font-weight:600}
+.bdot{width:9px;height:9px;border-radius:50%;background:#22a06b;flex:none}
+/* 方案 C：符号格（右对齐、固定进宽） */
+.cell{display:inline-block;text-align:right}
+.c12{width:8px}
+.c18{width:12px}
+/* ✦ 视觉等大：面板 13px / 胶囊 9px；baseline 微调用 transform */
+.star{display:inline-block;line-height:1}
+.s13{font-size:13px}
+.s9{font-size:9px}
+.t-2{transform:translateY(-2px)}
+.t-1{transform:translateY(-1px)}
+.t0{transform:translateY(0)}
+.t05{transform:translateY(0.5px)}
+.zoom3{zoom:3;width:640px}
+.zoom3 .rail,.zoom3 .panel{width:auto}
+</style>
+<body>
+<h1>符号列对齐 + ✦ 视觉等大 · 候选实测</h1>
+<p class="note">A 现状（✦ 直接进串）｜B 你的建议（¥ 后加英文空格）｜C 符号格（¥/✦ 共用同一进宽，符号右缘与数字起点对齐）。下方还有 ✦ 垂直微调的 4 个档位。</p>
+
+<h2>A 现状（错位 3.3px）</h2>
+<div class="rail">
+  <div class="row"><span class="dot"></span><span class="name">DeepSeek</span><span class="val">¥&thinsp;39.85</span></div>
+  <div class="row"><span class="dot"></span><span class="name">Xiaomi MiMo</span><span class="val">¥&thinsp;15.41</span></div>
+  <div class="row"><span class="dot"></span><span class="name">WorkBuddy</span><span class="val">✦&thinsp;1,686</span></div>
+</div>
+
+<h2>B 你的建议：¥ 后加英文空格（仍差 2.4px）</h2>
+<div class="rail">
+  <div class="row"><span class="dot"></span><span class="name">DeepSeek</span><span class="val">¥&nbsp;39.85</span></div>
+  <div class="row"><span class="dot"></span><span class="name">Xiaomi MiMo</span><span class="val">¥&nbsp;15.41</span></div>
+  <div class="row"><span class="dot"></span><span class="name">WorkBuddy</span><span class="val">✦&thinsp;1,686</span></div>
+</div>
+
+<h2>C 符号格方案（符号右缘 + 数字起点对齐）</h2>
+<div class="rail">
+  <div class="row"><span class="dot"></span><span class="name">DeepSeek</span><span class="val"><span class="cell c12">¥</span>&thinsp;39.85</span></div>
+  <div class="row"><span class="dot"></span><span class="name">Xiaomi MiMo</span><span class="val"><span class="cell c12">¥</span>&thinsp;15.41</span></div>
+  <div class="row"><span class="dot"></span><span class="name">WorkBuddy</span><span class="val"><span class="cell c12"><span class="star s9 t-1">✦</span></span>&thinsp;1,686</span></div>
+  <div class="row"><span class="dot"></span><span class="name">OpenAI Codex</span><span class="val">100% 69%</span></div>
+</div>
+
+<h2>C · 面板大号行（18px 语境，✦ 13px）</h2>
+<div class="panel">
+  <div class="big"><span class="bdot"></span><span><span class="cell c18">¥</span>&thinsp;39.85</span></div>
+  <div class="big"><span class="bdot"></span><span><span class="cell c18"><span class="star s13 t-1">✦</span></span>&thinsp;1,686</span></div>
+  <div class="big"><span class="bdot"></span><span><span class="cell c18"><span class="star s13 t-2">✦</span></span>&thinsp;1,686</span></div>
+</div>
+
+<h2>C 方案 3× 放大（看对齐与垂直位置）</h2>
+<div class="zoom3">
+  <div class="rail">
+    <div class="row"><span class="dot"></span><span class="name">DeepSeek</span><span class="val"><span class="cell c12">¥</span>&thinsp;39.85</span></div>
+    <div class="row"><span class="dot"></span><span class="name">WorkBuddy</span><span class="val"><span class="cell c12"><span class="star s9 t-1">✦</span></span>&thinsp;1,686</span></div>
+    <div class="row"><span class="dot"></span><span class="name">Codex</span><span class="val">100% 69%</span></div>
+  </div>
+  <div class="panel" style="margin-top:12px">
+    <div class="big"><span class="bdot"></span><span><span class="cell c18">¥</span>&thinsp;39.85</span></div>
+    <div class="big"><span class="bdot"></span><span><span class="cell c18"><span class="star s13 t-2">✦</span></span>&thinsp;1,686</span></div>
+  </div>
+</div>
+</body></html>

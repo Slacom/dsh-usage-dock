@@ -47,8 +47,10 @@ const plan = {
   },
 }
 
-/** 单次 status 读取的超时（毫秒）：status 内部会做真实计费查询，给足时间。 */
-const STATUS_TIMEOUT_MS = 15000
+/** 单次 status 读取的超时（毫秒）：status 内部会做真实计费查询，给足时间。
+ * [0.8.3] 15s → 30s：该端点每轮都打上游计费，慢响应曾导致偶发超时被记成失败
+ * （用户 2026-10-16 反馈胶囊偶现「获取失败」）；与 Host 单请求超时对齐。 */
+const STATUS_TIMEOUT_MS = 30000
 
 /** 读取一个 variant 的 status 端点；404 → { notFound }，网络失败 → { err }。 */
 async function fetchStatus(base, path) {

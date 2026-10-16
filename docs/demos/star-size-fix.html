@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8">
+<title>✦ 尺寸对齐方案 · 实测</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#eef0f3;font:13px/1.6 "Segoe UI","Microsoft YaHei",system-ui,sans-serif;color:#242a32;padding:20px}
+h2{font-size:14px;margin:20px 0 8px}
+.panel{width:330px;background:#fff;border-radius:14px;padding:14px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.big{display:flex;align-items:center;gap:8px;margin:4px 0;font-size:18px;font-weight:600}
+.bdot{width:9px;height:9px;border-radius:50%;background:#22a06b;flex:none}
+.note2{color:#626b79;font-size:11px;margin:2px 0 6px}
+.sep{border-top:1px solid #eceef0;margin:10px 0}
+/* 方案：✦ 用独立行内块，字号压到 13px（数字墨迹高 13px 的视觉等高），基线对齐 */
+.starfix{display:inline-block;font-size:13px;line-height:1;transform:translateY(0.5px)}
+pre{background:#fff;padding:10px;border-radius:8px;font-size:12px}
+</style>
+<body>
+<h1>✦「大一号」修正对照</h1>
+<p class="note">上：现状（✦ 直接 18px，字形 ascent 14/descent 2 撑高行）；下：✦ 独立 13px 行内块 + 基线微调。</p>
+
+<h2>现状</h2>
+<div class="panel">
+  <div class="big"><span class="bdot"></span>¥&thinsp;39.85</div>
+  <div class="note2">余额充足</div>
+  <div class="sep"></div>
+  <div class="big"><span class="bdot"></span>✦&thinsp;1,686</div>
+  <div class="note2">WorkBuddy · CodeBuddy个人体验版：486 / 500</div>
+</div>
+
+<h2>修正后（✦ 13px 行内块）</h2>
+<div class="panel">
+  <div class="big"><span class="bdot"></span>¥&thinsp;39.85</div>
+  <div class="note2">余额充足</div>
+  <div class="sep"></div>
+  <div class="big"><span class="bdot"></span><span class="starfix">✦</span>&thinsp;1,686</div>
+  <div class="note2">WorkBuddy · CodeBuddy个人体验版：486 / 500</div>
+</div>
+
+<h2>3× 放大对照（间隙与高度）</h2>
+<div style="zoom:3;width:640px">
+<div class="panel">
+  <div class="big"><span class="bdot"></span>¥&thinsp;39.85</div>
+  <div class="big"><span class="bdot"></span>✦&thinsp;1,686</div>
+  <div class="big"><span class="bdot"></span><span class="starfix">✦</span>&thinsp;1,686</div>
+</div>
+</div>
+</body></html>

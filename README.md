@@ -5,7 +5,7 @@
 
 DeepSeek Harness（DSH）的侧栏套餐用量插件：在左侧栏底部显示余额、积分和剩余额度，点击展开详情。
 
-> 当前版本 **0.8.2**：[发布说明](https://github.com/Slacom/dsh-usage-dock/releases/tag/v0.8.2)。
+> 当前版本 **0.8.3**（0.8.2 已发布：[v0.8.2 发布说明](https://github.com/Slacom/dsh-usage-dock/releases/tag/v0.8.2)；本版为 WorkBuddy 积分符号调整）。
 
 ![侧栏余额与额度预览](https://raw.githubusercontent.com/Slacom/dsh-usage-dock/main/preview.png)
 

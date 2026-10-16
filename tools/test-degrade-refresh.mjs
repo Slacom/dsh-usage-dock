@@ -84,7 +84,7 @@ async function refreshWith(fetchImpl) {
   }
   const tree = await refreshWith(async () => ({ json: async () => payload }))
   const text = textOf(tree)
-  check('T1 余额向下取整到分（34.31662152 → ¥34.31）', text.includes('¥34.31') && !text.includes('¥34.32'), text)
+  check('T1 余额向下取整到分（34.31662152 → ¥ 34.31）', text.includes('¥ 34.31') && !text.includes('¥ 34.32'), text)
 }
 
 // ---------------------------------------------------------------------------
@@ -96,33 +96,35 @@ async function refreshWith(fetchImpl) {
     if (failing) throw new Error('network down')
     return { json: async () => API_PAYLOAD }
   })
-  check('T2.pre 成功轮显示余额', textOf(tree1).includes('¥7.38'))
+  check('T2.pre 成功轮显示余额', textOf(tree1).includes('¥ 7.38'))
 
   failing = true
   const tree2 = await refreshWith(globalThis.fetch)
   const text2 = textOf(tree2)
-  check('T2 第 1 轮失败保留旧值 ¥7.38', text2.includes('¥7.38'), text2)
+  check('T2 第 1 轮失败保留旧值 ¥ 7.38', text2.includes('¥ 7.38'), text2)
   const valueRow = elementsOf(tree2).find((el) => el.props && el.props.style
     && el.props.style.color === 'var(--dsw-alias-label-tertiary)')
   check('T2 降级数值使用灰色弱化', valueRow !== undefined)
 }
 
 // ---------------------------------------------------------------------------
-// T3 连续 2 轮失败 → 显示「获取失败」（且不再拿旧余额顶替）
+// T3 连续 5 轮失败（0.8.3 阈值 2 → 5）→ 显示「获取失败」（且不再拿旧余额顶替）
 // ---------------------------------------------------------------------------
 {
-  const tree = await refreshWith(globalThis.fetch)
+  // 已经失败 1 轮（T2），再失败 4 轮凑满阈值 5。
+  let tree = await refreshWith(globalThis.fetch)
+  check('T3.pre 第 2 轮失败仍保留旧值（阈值 5，未到）', textOf(tree).includes('¥ 7.38'), textOf(tree))
+  for (let i = 0; i < 3; i++) tree = await refreshWith(globalThis.fetch)
   const text = textOf(tree)
-  check('T3 连续 2 轮失败显示「获取失败」', text.includes('获取失败'), text)
-  check('T3 失败后不再显示旧余额', !text.includes('¥7.38'), text)
+  check('T3 连续 5 轮失败显示「获取失败」', text.includes('获取失败'), text)
+  check('T3 失败后不再显示旧余额', !text.includes('¥ 7.38'), text)
 }
-
 // ---------------------------------------------------------------------------
 // T4 恢复：成功后旧值替换、降级样式消失
 // ---------------------------------------------------------------------------
 {
   const tree = await refreshWith(async () => ({ json: async () => API_PAYLOAD }))
-  check('T4 恢复后重新显示余额', textOf(tree).includes('¥7.38'))
+  check('T4 恢复后重新显示余额', textOf(tree).includes('¥ 7.38'))
   const grayRows = elementsOf(tree).filter((el) => el.props && el.props.style
     && el.props.style.color === 'var(--dsw-alias-label-tertiary)')
   check('T4 恢复后无灰色降级样式', grayRows.length === 0)
@@ -147,7 +149,7 @@ async function refreshWith(fetchImpl) {
   release()
   await new Promise((resolve) => setTimeout(resolve, 30))
   const finalTree = await runtime.settle(WIDE)
-  check('T5 挂起请求作废后轮询恢复、显示正常余额', textOf(finalTree).includes('¥7.38'))
+  check('T5 挂起请求作废后轮询恢复、显示正常余额', textOf(finalTree).includes('¥ 7.38'))
 }
 
 // ---------------------------------------------------------------------------
@@ -204,6 +206,25 @@ async function openPanel(payload) {
   // 0.8.1 定稿文案：灰字「高峰时段 · 约…后进入空闲时段」。
   check('T7 账号登录显示高峰时段文案', text.includes('高峰时段') && text.includes('后进入空闲时段'), text)
 
+  // [0.8.3] 峰谷条不再限定账号模式：API Key 计费同样按平台峰谷规则，
+  // 因此 Host 会给 API Key 条目也附 peakPhase/peakSegs（见 index.js）。
+  const payloadApiPhase = {
+    ok: true,
+    data: {
+      plans: [{
+        id: 'deepseek', name: 'DeepSeek', balance: 20.5, isAvailable: true, via: 'api', warnThreshold: 10,
+        peakPhase: {
+          inPeak: false, weekend: false,
+          prevAtMs: Date.now() - 600e3, nextAtMs: Date.now() + 3600e3, nextIntoPeak: true,
+        },
+      }],
+    },
+  }
+  const tree3 = await openPanel(payloadApiPhase)
+  const text3 = textAll(tree3)
+  check('T7 API Key 模式也显示峰谷条（0.8.3 放宽）', text3.includes('空闲时段'), text3)
+
+  // 完全没有 peakPhase 的条目（旧 Host / 未来结构变化）仍不渲染峰谷条。
   const payloadNoPhase = {
     ok: true,
     data: {
@@ -212,7 +233,7 @@ async function openPanel(payload) {
   }
   const tree2 = await openPanel(payloadNoPhase)
   const text2 = textAll(tree2)
-  check('T7 API Key 模式不显示峰谷条', !text2.includes('高峰时段') && !text2.includes('空闲时段'), text2)
+  check('T7 无 peakPhase 时不显示峰谷条（旧 Host 兼容）', !text2.includes('高峰时段') && !text2.includes('空闲时段'), text2)
 }
 
 // ---------------------------------------------------------------------------
@@ -268,7 +289,7 @@ async function openPanel(payload) {
   }
   await refreshWith(async () => ({ json: async () => payload }))
   let tree = await runtime.settle(WIDE)
-  check('T9 胶囊显示 MiMo 余额 ¥16.48', textOf(tree).includes('¥16.48'), textOf(tree))
+  check('T9 胶囊显示 MiMo 余额 ¥ 16.48', textOf(tree).includes('¥ 16.48'), textOf(tree))
   tree = await openPanel(payload)
   const text = textOf(tree)
   check('T9 面板显示现金余额明细', text.includes('现金余额'), text)
@@ -281,7 +302,7 @@ async function openPanel(payload) {
     },
   }
   const tree2 = await refreshWith(async () => ({ json: async () => payloadUsd }))
-  check('T9 USD 币种显示 $ 符号', textOf(tree2).includes('$25.51'), textOf(tree2))
+  check('T9 USD 币种显示 $ 符号', textOf(tree2).includes('$ 25.51'), textOf(tree2))
 }
 
 // ---------------------------------------------------------------------------
@@ -301,7 +322,7 @@ async function openPanel(payload) {
 }
 
 // ---------------------------------------------------------------------------
-// T11 WorkBuddy 积分渠道：胶囊「（积分）」后缀 + 明细自适应列表
+// T11 WorkBuddy 积分渠道：胶囊「✦ 」前缀（0.8.2，替代「（积分）」后缀）+ 明细自适应列表
 // ---------------------------------------------------------------------------
 {
   // 少量明细（≤3 行）：普通文字铺开，无滚动容器。
@@ -317,7 +338,10 @@ async function openPanel(payload) {
     },
   }
   let tree = await refreshWith(async () => ({ json: async () => few }))
-  check('T11a 胶囊显示「3,401.5（积分）」', textOf(tree).includes('3,401.5（积分）'), textOf(tree))
+  // [0.8.3] ✦ 与数字间是**英文空格**（STAR_GAP）——✦ 缩放后进宽变小，配普通空格
+  // 才与 ¥ 的 thin（SYMBOL_GAP）可见间隙打平（实测见 client.js 常量注释）。
+  check('T11a 胶囊显示「✦ 3,401.5」前缀形态（英文空格）', textOf(tree).includes('✦ 3,401.5')
+    && !textOf(tree).includes('（积分）'), textOf(tree))
   tree = await openPanel(few)
   let text = textAll(tree)
   check('T11b 少量明细以文字铺开（无滚动容器）', text.includes('企业额度') && !text.includes('积分来自'), text)
@@ -373,7 +397,7 @@ async function openPanel(payload) {
   release()
   await new Promise((resolve) => setTimeout(resolve, 10))
   const tree = await runtime.settle(WIDE)
-  check('T12 迟到旧响应不覆盖新余额', textOf(tree).includes('¥88.88') && !textOf(tree).includes('¥7.38'))
+  check('T12 迟到旧响应不覆盖新余额', textOf(tree).includes('¥ 88.88') && !textOf(tree).includes('¥ 7.38'))
 }
 // T13 登录/配置错误不参与传输失败降级，立即清除旧值。
 {
@@ -381,7 +405,7 @@ async function openPanel(payload) {
     await refreshWith(async () => ({ json: async () => API_PAYLOAD }))
     const payload = { ok: true, data: { plans: [{ id: 'deepseek', name: 'DeepSeek', error, message: '凭据失效' }] } }
     const tree = await refreshWith(async () => ({ json: async () => payload }))
-    check('T13 ' + error + ' 不沿用旧余额', !textOf(tree).includes('¥7.38'))
+    check('T13 ' + error + ' 不沿用旧余额', !textOf(tree).includes('¥ 7.38'))
   }
 }
 // T14 裁剪 WebView 没有 AbortController：请求身份仍然隔离。
@@ -398,7 +422,7 @@ async function openPanel(payload) {
     await refreshWith(async () => ({ json: async () => latest }))
     release()
     await new Promise((resolve) => setTimeout(resolve, 10))
-    check('T14 无 AbortController 时迟到响应仍被忽略', textOf(await runtime.settle(WIDE)).includes('¥66.66'))
+    check('T14 无 AbortController 时迟到响应仍被忽略', textOf(await runtime.settle(WIDE)).includes('¥ 66.66'))
   } finally { globalThis.AbortController = original }
 }
 

@@ -41,8 +41,10 @@ const BACKENDS = ['fetch', 'python', 'curl']
  * [local patch 0.8.0] 10s → 20s：移动端没有 Python/curl 兜底后端，VPN + 高负载时
  * 取数慢于硬超时会被误判死亡（roadmap 方向 3 的排查结论）；失败降级靠客户端
  * 保留旧值兜住，单请求给足时间。三处（fetch / python / curl）必须同步改。
+ * [0.8.3] 20s → 30s（用户决定）：与客户端请求超时、账号侧超时、WorkBuddy status
+ * 超时一并放宽，减少实时计费类上游的偶发超时被记为失败。
  */
-const REQUEST_TIMEOUT_MS = 20000
+const REQUEST_TIMEOUT_MS = 30000
 
 /** 首个成功的后端；后续请求直接复用它。 */
 let preferredBackend = null
@@ -105,7 +107,7 @@ function pythonSpec(shell, url, opts, reqHeaders) {
         timeout: 20,
       }),
     },
-    timeoutMs: 25000,
+    timeoutMs: 35000,
     stdoutMaxBytes: 16384,
   })
 }
@@ -117,7 +119,7 @@ function quoteArg(value) {
 
 /** curl 的请求规格：Linux / macOS 或未受 schannel 限制的 Windows。 */
 function curlSpec(shell, url, opts, reqHeaders) {
-  const argv = ['-sS', '-m', '20', '-w', '"__DSH_HTTP__%{http_code}"']
+  const argv = ['-sS', '-m', '30', '-w', '"__DSH_HTTP__%{http_code}"']
   for (const name of Object.keys(reqHeaders)) {
     argv.push('-H', quoteArg(name + ': ' + reqHeaders[name]))
   }
@@ -130,7 +132,7 @@ function curlSpec(shell, url, opts, reqHeaders) {
   argv.push(quoteArg(url))
   return shell.resolve({
     command: 'curl ' + argv.join(' '),
-    timeoutMs: 25000,
+    timeoutMs: 35000,
     stdoutMaxBytes: 16384,
   })
 }
@@ -293,6 +295,30 @@ export function toNum(v) {
   return null
 }
 
+/**
+ * [0.8.3] 判断一个 API Key 是否为「哨兵/占位值」——明显不可能作为真实凭据使用。
+ *
+ * 背景（用户 2026-10-16 实测场景）：用户为了不让「API Key 版 DeepSeek 模型」出现在
+ * 可用模型列表里，故意把凭据库里的 `DEEPSEEK_API_KEY` 设成 `1`（模型只走账号登录）。
+ * 该值仍会被本插件的凭据解析链读到，于是账号侧失败时回退到 API 分支，每 30 秒对
+ * 官方 API 发一次注定 401 的请求，而且报错文案把「Key 无效」放在最前，掩盖了真正
+ * 的账号侧主因（Platform 返回 failed）。
+ *
+ * 判定规则刻意保守，只拦「一眼不可能」的值，避免误伤真实 Key 与测试用假 Key：
+ *   - 长度 ≤ SENTINEL_MAX_LEN（2）——如 `1`、`x`
+ *   - 或不含任何 ASCII 字母——如 `123`、`-----`、`0000`
+ * 反例（**不得**判为哨兵）：`test-key`（8 字符、含字母）、`sk-tablet-test`（13 字符）
+ *   —— 这些是既有回归测试与部分用户的真实短 Key 形态。
+ */
+export const SENTINEL_MAX_LEN = 2
+
+/** 是否为哨兵/占位 Key（见上）。非字符串或空串不算（空串走「未配置」分支）。 */
+export function isSentinelApiKey(key) {
+  if (typeof key !== 'string' || key.length === 0) return false
+  if (key.length <= SENTINEL_MAX_LEN) return true
+  return !/[A-Za-z]/.test(key)
+}
+
 /** 依次尝试一组凭据名，命中第一个非空值（含环境变量与 .env 回退）。 */
 export async function resolveCredentialApiKey(ctx, refs) {
   const credentials = ctx.get('credentials')
@@ -308,13 +334,18 @@ export async function resolveCredentialApiKey(ctx, refs) {
   return undefined
 }
 
-/** 按「插件配置 > 模型配置（凭据库）」解析某套餐的 API Key。 */
+/**
+ * 按「插件配置 > 模型配置（凭据库）」解析某套餐的 API Key。
+ * [0.8.3] 哨兵值（如占位用的 `1`）一律视为「没有可用 Key」，返回 undefined——
+ * 调用方据此走「未配置 Key」分支，不再向上游发注定失败的请求。
+ */
 export async function resolveApiKey(ctx, cfg, apiKeyField, refs) {
-  const pluginKey = typeof cfg[apiKeyField] === 'string' && cfg[apiKeyField].length > 0
-    ? cfg[apiKeyField]
-    : undefined
+  const raw = typeof cfg[apiKeyField] === 'string' ? cfg[apiKeyField] : ''
+  const pluginKey = raw.length > 0 && !isSentinelApiKey(raw) ? raw : undefined
   if (pluginKey !== undefined) return pluginKey
-  return resolveCredentialApiKey(ctx, refs)
+  const fromCredentials = await resolveCredentialApiKey(ctx, refs)
+  if (isSentinelApiKey(fromCredentials)) return undefined
+  return fromCredentials
 }
 
 /** wire 对象的固定头：{ id, name }，所有套餐结果都以它开头。 */

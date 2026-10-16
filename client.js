@@ -187,11 +187,13 @@ function quotaToneColor(meta, p, limited) {
 // [local patch 0.8.0] 余额显示与失败降级
 // ===========================================================================
 
-/** 币种 → 显示符号（MiMo 官方返回 CNY/USD；未知币种按 ¥ 处理）。 */
+/** 币种 → 显示符号（MiMo 官方返回 CNY/USD；未知币种按 ¥ 处理）。
+ * [0.8.3] 符号后带统一薄空格（U+2009）：与 WorkBuddy「✦」前缀共用同一间距基准，
+ * 实测「符号→数字」可见间隙 ✦ 3.29 / ¥ 3.31（18px）像素级一致（见 SYMBOL_GAP 定义）。 */
 function balanceSymbol(currency) {
   var cur = typeof currency === 'string' ? currency.trim().toUpperCase() : ''
-  if (cur === 'USD') return '$'
-  return '¥'
+  if (cur === 'USD') return '$' + SYMBOL_GAP
+  return '¥' + SYMBOL_GAP
 }
 
 // [local patch 0.8.1] 详情面板积分渠道的大号数值行（与余额类渠道同款排版，
@@ -206,6 +208,47 @@ function formatCredit(value) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '—'
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value)
 }
+
+// [0.8.3] 符号与数字间的统一薄空格（U+2009）。
+// 背景：✦（U+2726）advance 9.79px vs ¥ 6.47px（12px），墨迹测量显示 ✦ 墨迹几乎
+// 顶满字宽、¥ 反而略溢出；「符号→数字」的可见间隙实测（canvas actualBoundingBox）：
+//   ✦+普通空格 = 2.08px(12px) / 4.62px(18px)——18px 下比 ¥ 几乎贴死的 -0.3px 大 5px，
+//   这正是用户指出的「星星和数字间隔比 ¥ 大」。
+// 两边统一加 thin space 后：✦ 1.19 / ¥ 1.87（12px，差 0.7px 不可辨）、
+// ✦ 3.29 / ¥ 3.31（18px，像素级一致）。选 U+2009 而非 U+200A（hair）：
+// hair 在 12px 下 0.29px 过紧，thin 在两种字号下都落在「贴合但透气」区间。
+var SYMBOL_GAP = /* U+2009 thin space（勿改成普通空格，间距实测见上） */' '
+
+// [0.8.3] ✦ 与数字之间的分隔（英文空格 U+0020，与 ¥ 的 thin 等效间隙）。
+// ✦ 缩放后进宽变小（8px 语境：6.53 vs ¥ 6.47），可见间隙随之变小；实测配**普通空格**
+// 才与 ¥ 的 thin 打平（canvas 墨迹级测量，两个语境）：
+//   胶囊 12px：✦@8px + space = 1.81px  vs  ¥@12 + thin = 1.87px（差 0.06）
+//   面板 18px：✦@12px + space = 3.74px vs  ¥@18 + thin = 3.60px（差 0.14）
+// 因此间距常量分开：¥/$ 用 SYMBOL_GAP，✦ 用 STAR_GAP。
+var STAR_GAP = ' '
+
+// [0.8.3] ✦ 的「与 ¥ 等大等宽」渲染参数（用户两轮实测后定稿）。
+//
+// 问题 1（视觉大一号）：✦ 字形在 18px 下墨迹 ascent14/descent2，比 ¥ 的
+//   ascent13/descent0 更大且基线不对称，直接同字号渲染会把 WorkBuddy 行撑高、
+//   看起来比余额行「大一号」（数字本身经墨迹测量完全等大）。
+// 问题 2（符号列错轴）：胶囊数值列**右对齐**，对齐的是「进宽右缘」。¥ 进宽
+//   6.47px、✦ 进宽 9.79px（12px 语境），右缘虽对齐但墨迹中心差 1.79px——
+//   用户看到的「¥ 和 ✦ 不在同一条垂直轴线」。
+//
+// 解法：✦ 取「基准字号 × 2/3」并包成 inline-block。实测（Chrome canvas）：
+//   12px 语境 ✦@8px  → 进宽 6.53 vs ¥ 6.47（差 0.06）、墨迹高 6 vs 9、中心偏移 0.00
+//   18px 语境 ✦@12px → 进宽 9.79 vs ¥ 9.99（差 0.20）、墨迹高 11 vs 13、中心偏移 0.00
+// 于是 $ / ¥ / ✦ 三种符号占位几乎相同，右对齐下中心与数字起点同时对齐。
+// 必须内嵌在数值 span 里使用（不要拆成 flex 子项——面板行 gap:8 会被吃两次，
+// 使 ✦ 后面多出 8px 空隙，0.8.3 中途出现过该回归）。
+function starFixStyle(fontSize) {
+  return {
+    display: 'inline-block',
+    fontSize: Math.round(fontSize * 2 / 3), // 与 ¥ 进宽/中心对齐的比例（实测见上）
+    lineHeight: 1,                          // 防止撑高行框
+  }
+}' '
 
 // ===========================================================================
 // [0.8.1 定稿] WorkBuddy 积分明细的自适应列表
@@ -233,8 +276,10 @@ function floorToCent(value) {
   return (Math.floor(Math.round(n * 1e6) / 1e4) / 100).toFixed(2)
 }
 
-/** 连续失败达到该轮数后才显示「获取失败」（更早的失败保留旧值 + 灰字）。 */
-var FAIL_THRESHOLD = 2
+/** 连续失败达到该轮数后才显示「获取失败」（更早的失败保留旧值 + 灰字）。
+ * [0.8.3] 2 → 5（用户 2026-10-16 决定）：30 秒轮询下约 2.5 分钟才转「获取失败」，
+ * 给 WorkBuddy 实时计费查询的偶发超时留出恢复窗口，避免数值灰一下就直接报错。 */
+var FAIL_THRESHOLD = 5
 
 /** 失败期间旧值的显示色：弱化灰（不加「更新于」标注，见 roadmap 方向 3 定稿）。 */
 var staleValueStyle = { color: 'var(--dsw-alias-label-tertiary)' }
@@ -778,7 +823,9 @@ function PlanUsageBadge(props) {
       controller = { abort: function () { if (aborter) aborter.abort() }, superseded: false }
       var current = controller
       var timeout = new Promise(function (_resolve, reject) {
-        timer = setTimeout(function () { current.abort(); reject(new Error('usage timeout')) }, 20000)
+        // [0.8.3] 20s → 30s（用户 2026-10-16 实测：WorkBuddy 实时计费查询偶发超时，
+        // 20s 偏紧；超时被归为 transient 失败，会推进「获取失败」轮数）。
+        timer = setTimeout(function () { current.abort(); reject(new Error('usage timeout')) }, 30000)
       })
       // 包含 json 解析的超时；即使底层不能取消，也会释放请求锁并忽略迟到结果。
       var pending = Promise.resolve().then(function () {
@@ -876,14 +923,19 @@ function PlanUsageBadge(props) {
   for (var i = 0; i < plans.length; i++) {
     var plan = plans[i]
     var meta = planMeta(plan.id)
-    // [local patch 0.8.1] WorkBuddy 积分渠道：右侧显示剩余积分（千分位）+
-    //「（积分）」后缀与各家余额区分；不限额 ∞（积分）。
+    // [local patch 0.8.1] WorkBuddy 积分渠道：右侧显示剩余积分（千分位）；
+    // [0.8.3] 「（积分）」全角后缀改为「✦」前缀（U+2726，单色、随主题深浅），
+    // 与余额渠道「¥39.85」的「前缀符号 + 数字」语法同构（用户 2026-10-16 选定）。
+    // ✦ 用 starFixStyle(12)=8px 缩放：进宽与 ¥ 几乎相同（6.53 vs 6.47），右对齐下
+    // 符号中心与数字起点同时对齐（用户实测「¥ 与 ✦ 不在同一垂直轴线」的修正）。
+    // 因此这一行给 valueNodes（节点数组）而不是 values（纯字符串）。
     if (meta.creditMode === true && (typeof plan.creditsTotal === 'number' || plan.creditsUnlimited === true)) {
-      var wbText = (plan.creditsUnlimited === true ? '∞' : formatCredit(plan.creditsTotal)) + '（积分）'
+      var wbNum = plan.creditsUnlimited === true ? '∞' : formatCredit(plan.creditsTotal)
       capsuleRows.push({
         dot: plan.stale === true ? 'var(--dsw-alias-label-tertiary)' : 'var(--dsw-alias-state-success-primary)',
         label: meta.name,
-        values: [wbText],
+        values: ['✦' + STAR_GAP + wbNum], // title / 无障碍文本用纯字符串
+        valueNodes: [h('span', { style: starFixStyle(12), key: 'star' }, '✦'), STAR_GAP + wbNum],
         stale: plan.stale === true,
       })
       continue
@@ -991,7 +1043,8 @@ function PlanUsageBadge(props) {
         return h('span', { style: pillRowStyle, key: idx },
           h('span', { style: Object.assign({}, dotStyle, { background: r.dot || dotColor }) }),
           wide && h('span', { style: capNameStyle }, r.label),
-          wide && h('span', { style: r.stale ? Object.assign({}, capValueStyle, staleValueStyle) : capValueStyle }, r.values.join(' ')),
+          wide && h('span', { style: r.stale ? Object.assign({}, capValueStyle, staleValueStyle) : capValueStyle },
+            r.valueNodes ? r.valueNodes : r.values.join(' ')),
         )
       })
       : h('span', { style: pillSegStyle },
@@ -1018,7 +1071,9 @@ function PlanUsageBadge(props) {
           inner = h('div', {},
             h('div', { style: Object.assign({}, balRowStyleStatic, { color: 'var(--dsw-alias-label-primary)' }) },
               h('span', { style: Object.assign({}, dotStyle, { width: 9, height: 9, background: 'var(--dsw-alias-state-success-primary)' }) }),
-              h('span', {}, '∞（不限额）'),
+              // [0.8.3] 面板大号行与胶囊同构：「✦∞」。✦ 必须**内嵌在这个数值 span 里**
+              // （不能拆成 flex 子项：本行 gap:8 会被吃两次，✦ 后面多出 8px 空隙）。
+              h('span', {}, h('span', { style: starFixStyle(18) }, '✦'), STAR_GAP + '∞'),
             ),
           )
         } else if (typeof plan.creditsTotal === 'number') {
@@ -1048,7 +1103,9 @@ function PlanUsageBadge(props) {
           inner = h('div', {},
             h('div', { style: Object.assign({}, balRowStyleStatic, { color: 'var(--dsw-alias-label-primary)' }) },
               h('span', { style: Object.assign({}, dotStyle, { width: 9, height: 9, background: 'var(--dsw-alias-state-success-primary)' }) }),
-              h('span', {}, formatCredit(plan.creditsTotal)),
+              // [0.8.3] 面板大号行与胶囊同构：「✦1,748」。✦ 内嵌在数值 span 内
+              // （拆成 flex 子项会多吃一次 gap:8，见 starFixStyle 注释）。
+              h('span', {}, h('span', { style: starFixStyle(18) }, '✦'), STAR_GAP + formatCredit(plan.creditsTotal)),
             ),
             detailBlock,
             // [0.8.2] 部分取数脚注：某个版本取不到数据时，合计只是已取到版本的
@@ -1110,8 +1167,9 @@ function PlanUsageBadge(props) {
                     ? '请到小米 MiMo 开放平台控制台充值'
                     : (plan.via === 'api' ? '请到 DeepSeek 开放平台充值' : '请到「设置 → 账号与余额」充值'))
                   : (plan.isAvailable === false ? '账户当前不可用' : '余额充足'))),
-            // [local patch 0.8.0/0.8.1] DeepSeek 账号登录时显示峰谷时间条
-            // （host 附 peakSegs + peakPhase；API Key 模式没有）。
+            // [local patch 0.8.0/0.8.1] DeepSeek 峰谷时间条（host 附 peakSegs +
+            // peakPhase 才渲染）。[0.8.3] Host 不再限定账号模式——API Key 计费同样
+            // 按平台峰谷规则计价，因此两种鉴权方式的所有设备都会显示（见 index.js）。
             plan.id === 'deepseek' ? h(PeakBar, { segs: plan.peakSegs, phase: plan.peakPhase, key: 'peak' }) : null,
           )
         }

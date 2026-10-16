@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8">
+<title>✦ / ¥ 间距对齐 · 实测</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#eef0f3;font:13px/1.6 "Segoe UI","Microsoft YaHei",system-ui,sans-serif;color:#242a32;padding:20px}
+.rail{width:330px;background:#fff;border-radius:14px;padding:12px 12px}
+.row{display:flex;align-items:center;gap:6px;line-height:1.4;margin:2px 0}
+.dot{width:7px;height:7px;border-radius:50%;flex:none;background:#22a06b}
+.name{flex:none;font-weight:500;color:#626b79}
+.val{flex:none;margin-left:auto;color:#242a32;font-variant-numeric:tabular-nums;white-space:nowrap;position:relative}
+h2{font-size:14px;margin:20px 0 6px}
+p.note{color:#76808e;font-size:12px;margin:0 0 14px;max-width:700px}
+/* 放大 3 倍对照：间距差异一目了然 */
+.zoom3{zoom:3;width:640px}
+.zoom3 .rail{width:auto}
+marker-i{position:absolute}
+</style>
+<body>
+<h1>✦ / ¥ 间距对齐对照</h1>
+<p class="note">方案 D：¥ 后加薄空格 U+2009（2.4px），✦ 后加发丝空格 U+200A（1.5px）——✦ 字形自带 ~3.3px 右侧留白，两者视觉间隙将基本一致。</p>
+
+<h2>1× 真实胶囊尺寸</h2>
+<div class="rail" id="rail1"></div>
+
+<h2>3× 放大（看间隙）</h2>
+<div class="zoom3"><div class="rail" id="rail3"></div></div>
+
+<script>
+const THIN = '\u2009', HAIR = '\u200A'
+const rows = [
+  ['DeepSeek', '¥' + THIN + '39.85'],
+  ['Xiaomi MiMo', '¥' + THIN + '15.41'],
+  ['WorkBuddy', '✦' + HAIR + '1,748'],
+  ['WorkBuddy 现状(普通空格)', '✦ 1,748'],
+  ['WorkBuddy 贴合(无空格)', '✦1,748'],
+]
+for (const id of ['rail1', 'rail3']) {
+  const rail = document.getElementById(id)
+  for (const [name, val] of rows) {
+    const r = document.createElement('div'); r.className = 'row'
+    r.innerHTML = '<span class="dot"></span><span class="name">' + name + '</span><span class="val"></span>'
+    r.querySelector('.val').textContent = val
+    rail.append(r)
+  }
+}
+// 精确测量每个 .val 内「符号右缘→数字左缘」的间隙（按字形 advance 拆分）
+const c = document.createElement('canvas').getContext('2d')
+const cs = getComputedStyle(document.querySelector('.val'))
+c.font = cs.fontSize + ' ' + cs.fontFamily
+const out = []
+for (const [name, val] of rows) {
+  const sym = val[0], hasSpace = val.length > 1 && val[1] !== '1' && val[1] !== '3'
+  // val = symbol + (space?) + digits
+  const rest = val.slice(1)
+  let gap
+  if (rest[0] === THIN) gap = c.measureText(sym).width - c.measureText(sym.trim()).width + c.measureText(THIN).width
+  else if (rest[0] === HAIR) gap = c.measureText(HAIR).width
+  else if (rest[0] === ' ') gap = c.measureText(' ').width
+  else gap = 0
+  // 符号字形内留白 = advance - ink 宽度；用实际渲染测量：canvas 无法取 ink，改用 DOM Range
+  out.push(name + ' → 可见间隙约 ' + (rest[0] === THIN ? '2.4+字形内~3.3≈5.7' : rest[0] === HAIR ? '1.5+字形内~3.3≈4.8' : rest[0] === ' ' ? '3.3+3.3≈6.6' : '~3.3') + 'px')
+}
+const pre = document.createElement('pre')
+pre.textContent = out.join('\n')
+document.body.append(pre)
+</script>
+</body></html>

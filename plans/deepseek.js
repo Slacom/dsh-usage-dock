@@ -83,8 +83,9 @@ function withTimeout(promise, ms, label) {
   ]).finally(() => { if (timer !== null) clearTimeout(timer) })
 }
 
-/** 账号余额读取的超时上限（毫秒）：与 plans/util.js 的单请求超时同量级。 */
-const ACCOUNT_TIMEOUT_MS = 20000
+/** 账号余额读取的超时上限（毫秒）：[0.8.3] 20s → 30s，与 plans/util.js 的
+ * 单请求超时（REQUEST_TIMEOUT_MS=30000）对齐——账号侧慢响应不再过早判失败。 */
+const ACCOUNT_TIMEOUT_MS = 30000
 
 /**
  * 读取 DSH 账号余额（正常余额 + 赠金）。
@@ -131,6 +132,9 @@ export async function fetchPlan(ctx, shell, cfg) {
   }
 
   // 2) 回退：开放平台 API Key
+  // [0.8.3] 哨兵/占位 Key（如用户为「屏蔽 API 版模型」而设的 `1`）已在 resolveApiKey
+  // 里被剔除，这里拿到的 undefined 表示「确实没有可用 Key」。此时不再向上游发注定
+  // 401 的请求，直接以账号侧原因为主因回报（用户实测该文案最能说明问题）。
   const apiKey = await resolveApiKey(ctx, cfg, fields.apiKey, source.refs)
   if (apiKey === undefined) {
     return Object.assign(noKey(plan), {

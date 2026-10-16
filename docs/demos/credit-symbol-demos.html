@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8">
+<title>WorkBuddy 积分符号候选 · 胶囊渲染实测</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#eef0f3;font:13px/1.6 "Segoe UI","Microsoft YaHei",system-ui,sans-serif;color:#242a32;padding:20px}
+h1{font-size:20px;margin:0 0 4px}
+p.note{color:#76808e;font-size:12px;margin:0 0 18px}
+.rail{width:330px;background:#fff;border-radius:14px;padding:12px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.row{display:flex;align-items:center;gap:6px;line-height:1.4;margin:2px 0}
+.dot{width:7px;height:7px;border-radius:50%;flex:none;background:#22a06b}
+.dot.err{background:#e5484d}
+.dot.quota{background:#f5a623}
+.name{flex:none;font-weight:500;color:#626b79;overflow:hidden;text-overflow:ellipsis}
+.val{flex:none;width:110px;margin-left:auto;text-align:right;color:#242a32;font-variant-numeric:tabular-nums;white-space:nowrap}
+h2{font-size:14px;margin:22px 0 6px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px;max-width:900px}
+.cell{background:#fff;border-radius:10px;padding:8px 12px;display:flex;align-items:center;gap:10px}
+.cell b{font-size:22px;font-weight:400;width:34px;text-align:center}
+.cell code{font-size:11px;color:#76808e;margin-left:auto}
+.cell .num{font-variant-numeric:tabular-nums}
+.cp{color:#76808e;font-size:12px}
+</style>
+<body>
+<h1>WorkBuddy 积分符号候选</h1>
+<p class="note">左侧 330px 栏模拟侧栏胶囊（真实字号 12px）；下方网格用 22px 大字检查字形本身（彩色 emoji vs 单色符号、是否豆腐块）。</p>
+
+<div class="rail">
+  <div class="row"><span class="dot"></span><span class="name">DeepSeek</span><span class="val">¥39.86</span></div>
+  <div class="row"><span class="dot"></span><span class="name">Xiaomi MiMo</span><span class="val">¥15.41</span></div>
+  <div class="row"><span class="dot quota"></span><span class="name">OpenAI Codex</span><span class="val">22% 88%</span></div>
+  <div class="row"><span class="dot"></span><span class="name">WorkBuddy（现状）</span><span class="val">1,824（积分）</span></div>
+  <div class="row"><span class="dot"></span><span class="name">WorkBuddy ✨</span><span class="val">1,824✨</span></div>
+  <div class="row"><span class="dot"></span><span class="name">WorkBuddy ⭐</span><span class="val">1,824⭐</span></div>
+  <div class="row"><span class="dot"></span><span class="name">WorkBuddy 💎</span><span class="val">1,824💎</span></div>
+  <div class="row"><span class="dot"></span><span class="name">WorkBuddy ☆</span><span class="val">1,824☆</span></div>
+  <div class="row"><span class="dot"></span><span class="name">WorkBuddy ★</span><span class="val">1,824★</span></div>
+  <div class="row"><span class="dot"></span><span class="name">WorkBuddy ✦</span><span class="val">1,824✦</span></div>
+  <div class="row"><span class="dot"></span><span class="name">WorkBuddy ✧</span><span class="val">1,824✧</span></div>
+  <div class="row"><span class="dot"></span><span class="name">WorkBuddy ❖</span><span class="val">1,824❖</span></div>
+  <div class="row"><span class="dot"></span><span class="name">WorkBuddy ◈</span><span class="val">1,824◈</span></div>
+  <div class="row"><span class="dot"></span><span class="name">WorkBuddy ❋</span><span class="val">1,824❋</span></div>
+  <div class="row"><span class="dot"></span><span class="name">WorkBuddy 🪙</span><span class="val">1,824🪙</span></div>
+</div>
+
+<h2>字形检查（22px，检查彩色/单色与回退）</h2>
+<div class="grid">
+  <div class="cell"><b>✨</b><span class="num">1,824✨</span><code>U+2728</code></div>
+  <div class="cell"><b>⭐</b><span class="num">1,824⭐</span><code>U+2B50</code></div>
+  <div class="cell"><b>💎</b><span class="num">1,824💎</span><code>U+1F48E</code></div>
+  <div class="cell"><b>🪙</b><span class="num">1,824🪙</span><code>U+1FA99</code></div>
+  <div class="cell"><b>☆</b><span class="num">1,824☆</span><code>U+2606</code></div>
+  <div class="cell"><b>★</b><span class="num">1,824★</span><code>U+2605</code></div>
+  <div class="cell"><b>✦</b><span class="num">1,824✦</span><code>U+2726</code></div>
+  <div class="cell"><b>✧</b><span class="num">1,824✧</span><code>U+2727</code></div>
+  <div class="cell"><b>❖</b><span class="num">1,824❖</span><code>U+2756</code></div>
+  <div class="cell"><b>◈</b><span class="num">1,824◈</span><code>U+25C8</code></div>
+  <div class="cell"><b>❋</b><span class="num">1,824❋</span><code>U+274B</code></div>
+</div>
+
+<h2>前缀形态对照（与余额渠道 ¥39.86 同构）</h2>
+<div class="rail">
+  <div class="row"><span class="dot"></span><span class="name">DeepSeek</span><span class="val">¥39.86</span></div>
+  <div class="row"><span class="dot"></span><span class="name">WorkBuddy</span><span class="val">✦ 1,824</span></div>
+  <div class="row"><span class="dot"></span><span class="name">WorkBuddy</span><span class="val">☆ 1,824</span></div>
+  <div class="row"><span class="dot"></span><span class="name">WorkBuddy</span><span class="val">✨ 1,824</span></div>
+  <div class="row"><span class="dot"></span><span class="name">WorkBuddy</span><span class="val">💎 1,824</span></div>
+</div>
+</body></html>

@@ -11,7 +11,7 @@ DeepSeek Harness（DSH）的**侧栏用量/余额插件**：在 Web/桌面端左
 用量与余额，点击可展开详情面板。fork 自 `chendefine/dsh-plugins-plan-usage`，改名 `dsh-usage-dock`
 以避免与上游混淆，并做了一系列定制（见第 6 节）。
 
-**当前版本**：0.8.2（本地构建，待用户测试；推送闸门见第 8 节）　|　**上一公开版**：0.8.1（GitHub 主干 / v0.8.1 标签 / Release 已发布，npm publish 已接受 2026-10-15）　|　**更早**：0.7.2（0.8.0 未单独发布）
+**当前版本**：0.8.3（WorkBuddy 积分「✦ 」前缀符号化，本地构建待测试；0.8.2 已于 2026-10-16 完整发布：GitHub 主干 / v0.8.2 标签 / Release / npm 均上线，移动端初步实测通过）　|　**上一公开版**：0.8.2　|　**更早**：0.8.1、0.7.2（0.8.0 未单独发布）
 
 > **2026-10-15 0.8.2 说明**：主方向为 DSHA WorkBuddy「fetch failed」修复（宿主
 > dsh-web-mobile compress.js × gzip 中间件踩踏，消费侧两处绕过：status 请求声明
@@ -22,6 +22,9 @@ DeepSeek Harness（DSH）的**侧栏用量/余额插件**：在 Web/桌面端左
 > 0.8.0 的 classic/充值记录是历史阶段，最终实现以 [v0.8.2 发布说明](docs/release-notes-v0.8.2.md) 与 [v0.8.1 发布说明](docs/release-notes-v0.8.1.md) 为准。
 > DSHA/安卓检查包括无 shell、无账号/configEditor 服务、无 WAAPI/ResizeObserver 的降级与 hooks 稳定性；真实 WorkBuddy Connect 0.7.4 状态处理器对接通过，但并非 Android 真机联网实测。
 > 测试：`test-android-compat.mjs`（13）、`test-settings.mjs`（6）、`test-workbuddy.mjs`（22）、`test-workbuddy-contract.mjs <上游lib/index.js>`（5）、`test-panel-interactions.mjs`（8，0.8.2 新增）、`test-peak-marker.mjs`（144 几何断言，0.8.2 改方案 K）。
+> **2026-10-16 0.8.3**：胶囊 WorkBuddy 积分改「✦ 」前缀（U+2726 单色符号，随主题深浅），
+> 替换「（积分）」全角后缀，与「¥39.86」前缀语法同构（用户选定；候选符号与真实渲染
+> 截图留档 `docs/demos/credit-symbol-demos.html` 与 `legacy/symbol-check/`）。无其他变更。
 
 ## 2. 关键路径
 

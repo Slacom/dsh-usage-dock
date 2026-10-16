@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8">
+<title>0.8.3 最终效果（第二版）</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#fff;font:13px/1.6 "Segoe UI","Microsoft YaHei",system-ui,sans-serif;color:#242a32;padding:16px}
+h1{font-size:19px;margin:0 0 4px}
+p.note{color:#76808e;font-size:12px;margin:0 0 14px}
+.rail{width:330px;backgroun:#fff;display:inline-block;vertical-align:top;margin-right:20px}
+.panel{width:330px;display:inline-block;vertical-align:top}
+.row{display:flex;align-items:center;gap:6px;line-height:1.4;margin:2px 0}
+.dot{width:7px;height:7px;border-radius:50%;flex:none;background:#22a06b}
+.name{flex:none;font-weight:500;color:#626b79}
+.val{flex:none;width:80px;margin-left:auto;text-align:right;color:#242a32;font-variant-numeric:tabular-nums;white-space:nowrap}
+.ptitle{font-weight:600;margin:0 0 10px;font-size:13px}
+.stitle{font-weight:600;margin:10px 0 4px;font-size:12px}
+.big{display:flex;align-items:center;gap:8px;margin:4px 0;font-size:18px;font-weight:600}
+.bdot{width:9px;height:9px;border-radius:50%;background:#22a06b;flex:none}
+.n2{color:#626b79;font-size:11px;margin:2px 0 6px}
+.star{display:inline-block;line-height:1}
+</style>
+<body>
+<h1>0.8.3 最终效果（修正版）</h1>
+<p class="note">✦ 缩放到与 ¥ 等宽同轴：胶囊右对齐下符号中心与 ¥ 重合；面板回到单 span，不再多吃一次 gap:8。✦ 后用英文空格、¥/$ 后用薄空格，可见间隙实测互差 ≤0.14px。</p>
+
+<div class="rail">
+  <div class="row"><span class="dot"></span><span class="name">DeepSeek</span><span class="val">¥&thinsp;39.85</span></div>
+  <div class="row"><span class="dot"></span><span class="name">Xiaomi MiMo</span><span class="val">¥&thinsp;15.41</span></div>
+  <div class="row"><span class="dot"></span><span class="name">WorkBuddy</span><span class="val"><span class="star" style="font-size:8px">✦</span> 1,686</span></div>
+  <div class="row"><span class="dot"></span><span class="name">OpenAI Codex</span><span class="val">91% 68%</span></div>
+</div>
+
+<div class="panel">
+  <div class="ptitle">套餐用量</div>
+  <div class="stitle">DeepSeek 余额</div>
+  <div class="big"><span class="bdot"></span><span>¥&thinsp;39.85</span></div>
+  <div class="n2">余额充足</div>
+  <div class="stitle">Xiaomi MiMo 余额</div>
+  <div class="big"><span class="bdot"></span><span>¥&thinsp;15.41</span></div>
+  <div class="n2">现金余额：¥&thinsp;15.41　　赠送余额：¥&thinsp;0.00</div>
+  <div class="stitle">WorkBuddy 积分</div>
+  <div class="big"><span class="bdot"></span><span><span class="star" style="font-size:12px">✦</span> 1,686</span></div>
+  <div class="n2">WorkBuddy · CodeBuddy个人体验版：450 / 500</div>
+  <div class="n2">WorkBuddy · CodeBuddy个人版拉新权益包：1,000 / 1,000</div>
+</div>
+</body></html>
