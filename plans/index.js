@@ -11,10 +11,14 @@ import kimiCode from './kimi-code.js'
 import deepseek from './deepseek.js'
 import codex from './codex.js'
 import mimo from './mimo.js'
-import workbuddy from './workbuddy.js'
+import workbuddy, { workbuddyAi } from './workbuddy.js'
 
-/** 已接入的套餐（渠道）：id 同时用作配置键名与 wire 标识。 */
-export const PLANS = [opencodeGo, glmZai, glmZhipu, kimiCode, deepseek, codex, mimo, workbuddy]
+/**
+ * 已接入的套餐（渠道）：id 同时用作配置键名与 wire 标识。
+ * [0.8.3] WorkBuddy 拆成两个独立渠道：国内版（workbuddy）与国际版（workbuddy-ai）
+ * ——两者积分不通用，且需要各自开关与排序（用户 2026-10-17 要求）。
+ */
+export const PLANS = [opencodeGo, glmZai, glmZhipu, kimiCode, deepseek, codex, mimo, workbuddy, workbuddyAi]
 
 /** id → plan 的索引（配置读写路由校验未知套餐用）。 */
 export const PLAN_BY_ID = Object.fromEntries(PLANS.map((plan) => [plan.id, plan]))

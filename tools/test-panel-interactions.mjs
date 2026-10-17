@@ -42,7 +42,7 @@ const runtime = createRuntime()
 const client = loadClient(runtime, { payload: API_PAYLOAD })
 
 // ---------------------------------------------------------------------------
-// T12 — 打开时挂 window pointerdown 捕获 + document keydown，收起即拆除
+// T12 — 打开时挂 window 按下类/click 捕获 + document keydown，收起即拆除
 // ---------------------------------------------------------------------------
 {
   try {
@@ -50,12 +50,23 @@ const client = loadClient(runtime, { payload: API_PAYLOAD })
     await openPanel(runtime, client, row)
     assert.ok(window.listeners.pointerdown && window.listeners.pointerdown.length === 1,
       '打开时应在 window 挂 pointerdown 监听')
+    // [0.8.3] 三种按下事件 + click 兜底：只挂 pointerdown 时，不投递 PointerEvent
+    // 的宿主与键盘激活都关不掉面板（用户反馈的「点空白偶尔不关」）。
+    assert.ok(window.listeners.mousedown && window.listeners.mousedown.length === 1,
+      '打开时应在 window 挂 mousedown 兜底监听')
+    assert.ok(window.listeners.touchstart && window.listeners.touchstart.length === 1,
+      '打开时应在 window 挂 touchstart 兜底监听')
+    assert.ok(window.listeners.click && window.listeners.click.length === 1,
+      '打开时应在 window 挂 click 兜底监听')
     assert.ok(document.listeners.keydown && document.listeners.keydown.length === 1,
       '打开时应在 document 挂 keydown 监听')
     runtime.setParent(row)
     runtime.mount(client.Badge, { wide: true, configForm: null }) // 重新挂载（含 cleanup）
     await runtime.settle({ wide: true, configForm: null })
     assert.equal(window.listeners.pointerdown.length, 0, '收起/重挂后应拆除 pointerdown 监听')
+    assert.equal(window.listeners.mousedown.length, 0, '收起/重挂后应拆除 mousedown 监听')
+    assert.equal(window.listeners.touchstart.length, 0, '收起/重挂后应拆除 touchstart 监听')
+    assert.equal(window.listeners.click.length, 0, '收起/重挂后应拆除 click 监听')
     assert.equal(document.listeners.keydown.length, 0, '收起/重挂后应拆除 keydown 监听')
     record('T12 打开挂外点/Esc 监听，收起即拆除', 'PASS')
   } catch (err) {
@@ -143,7 +154,59 @@ const client = loadClient(runtime, { payload: API_PAYLOAD })
 }
 
 // ---------------------------------------------------------------------------
-// T19 — 无 partial 标记的 WorkBuddy 条目不渲染脚注（默认 payload 是 DeepSeek/Codex，
+// T20 — 只有 mousedown（宿主不投递 PointerEvent）也要能关
+// ---------------------------------------------------------------------------
+{
+  try {
+    const row = fakeNode({ display: 'flex', flexDirection: 'row', flexWrap: 'nowrap' })
+    await openPanel(runtime, client, row)
+    window.dispatch('mousedown', { target: domNode('div') })
+    const tree = await runtime.settle({ wide: true, configForm: null })
+    assert.equal(tree.props.children[1], null, '没有 pointerdown 时 mousedown 必须兜底关闭')
+    record('T20 mousedown 兜底关闭（无 PointerEvent 宿主）', 'PASS')
+  } catch (err) {
+    record('T20 mousedown 兜底关闭', 'FAIL', err.message)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// T21 — 只有 click（键盘 Enter/Space 激活面板外按钮）也要能关
+// ---------------------------------------------------------------------------
+{
+  try {
+    const row = fakeNode({ display: 'flex', flexDirection: 'row', flexWrap: 'nowrap' })
+    await openPanel(runtime, client, row)
+    window.dispatch('click', { target: domNode('button') })
+    const tree = await runtime.settle({ wide: true, configForm: null })
+    assert.equal(tree.props.children[1], null, '没有按下事件时 click 必须兜底关闭')
+    record('T21 click 兜底关闭（键盘激活面板外控件）', 'PASS')
+  } catch (err) {
+    record('T21 click 兜底关闭', 'FAIL', err.message)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// T22 — 从面板内按下、松手落到面板外（拖选文字）不误关；下一次外点仍关
+// ---------------------------------------------------------------------------
+{
+  try {
+    const row = fakeNode({ display: 'flex', flexDirection: 'row', flexWrap: 'nowrap' })
+    const [tree0, , panel] = await openPanel(runtime, client, row)
+    assert.ok(panel, '前置条件：面板已打开')
+    window.dispatch('pointerdown', { target: domNode('span', tree0.props.children[1]) })
+    window.dispatch('click', { target: domNode('div') }) // 松手在面板外：click 的 target 不再是面板
+    let tree = await runtime.settle({ wide: true, configForm: null })
+    assert.ok(tree.props.children[1], '从卡片内开始的拖动松手在外不得关闭面板')
+    window.dispatch('click', { target: domNode('div') }) // 下一次独立的外点
+    tree = await runtime.settle({ wide: true, configForm: null })
+    assert.equal(tree.props.children[1], null, '拖选结束后再点外部仍应关闭')
+    record('T22 卡片内起手的拖动不误关（downInside 去重）', 'PASS')
+  } catch (err) {
+    record('T22 拖动不误关', 'FAIL', err.message)
+  }
+}
+
+
 //       这里直接验证它们的面板不含「未取到数据」脚注——字段不落地时零影响）
 // ---------------------------------------------------------------------------
 {

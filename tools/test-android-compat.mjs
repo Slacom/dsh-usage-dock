@@ -62,8 +62,15 @@ try {
   }
   // 这里改 mock：模拟安卓端未安装可选的 WorkBuddy 插件。
   globalThis.fetch=async()=>({status:404,json:async()=>({})})
-  const missing=await request(handlerFor({...disabled,workbuddyEnabled:true}))
-  check('未安装 WorkBuddy 仅返回本渠道 not-installed',()=>assert.equal(missing.body.data.plans[0].error,'not-installed'))
+  // [0.8.3] WorkBuddy 已拆成国内版/国际版两个独立渠道：未安装时各自 not-installed。
+  const missing=await request(handlerFor({...disabled,workbuddyEnabled:true,workbuddyAiEnabled:true}))
+  check('未安装 WorkBuddy 两个渠道各自 not-installed',()=>{
+    assert.equal(missing.body.data.plans.length,2)
+    assert.equal(missing.body.data.plans[0].id,'workbuddy')
+    assert.equal(missing.body.data.plans[0].error,'not-installed')
+    assert.equal(missing.body.data.plans[1].id,'workbuddy-ai')
+    assert.equal(missing.body.data.plans[1].error,'not-installed')
+  })
   const post=await request(handler,'POST')
   check('方法限制仍为405',()=>assert.equal(post.status,405))
 } finally {globalThis.fetch=originalFetch}

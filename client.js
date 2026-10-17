@@ -74,7 +74,10 @@ var PLANS = [
   { id: 'mimo', name: 'Xiaomi MiMo', credentialHint: 'MIMO', balanceThreshold: 10, thresholdField: 'mimoWarnThreshold', fields: { enabled: 'mimoEnabled', cookie: 'mimoCookie' } },
   // [local patch 0.8.1] WorkBuddy 剩余积分：借用 dsh-workbuddy-connect 的登录态
   //（与 Codex 渠道同款模式），本插件零凭据；未安装/未登录由 host 返回语义提示。
-  { id: 'workbuddy', name: 'WorkBuddy', noCredential: true, creditMode: true, credentialNote: '复用 dsh-workbuddy-connect 的登录态，无需在此认证；请先安装并登录 WorkBuddy / WorkBuddy AI 桌面应用。', fields: { enabled: 'workbuddyEnabled' } },
+  // [0.8.3] 拆成两个独立渠道：国内版与国际版积分不通用，各自开关/排序
+  //（用户 2026-10-17 要求，与 DeepSeek/MiMo 等渠道完全同权）。
+  { id: 'workbuddy', name: 'WorkBuddy', noCredential: true, creditMode: true, credentialNote: '复用 dsh-workbuddy-connect 的登录态，无需在此认证；请先安装并登录 WorkBuddy 桌面应用（国内版）。', fields: { enabled: 'workbuddyEnabled' } },
+  { id: 'workbuddy-ai', name: 'WorkBuddy AI', noCredential: true, creditMode: true, credentialNote: '复用 dsh-workbuddy-connect 的登录态，无需在此认证；请先安装并登录 WorkBuddy AI 桌面应用（国际版）。', fields: { enabled: 'workbuddyAiEnabled' } },
 ]
 
 function planMeta(id) {
@@ -252,14 +255,23 @@ function starFixStyle(fontSize) {
 }
 
 /**
- * [0.8.3 方案 B] 数值区容器：flex 横向 + 中心对齐。
+ * [0.8.3 方案 B] 数值区容器：flex 横向 + 垂直中心对齐。
  * 不依赖字体基线，因此在 Windows / Android 的字体回退差异下都能把 ✦ 与数字居中对齐。
- * 右对齐由外层容器的 marginLeft:auto 决定；宽度按内容自适应。
+ *
+ * ⚠️ 两个必须同时满足的条件（各自都踩过一次真实故障）：
+ *   1) **块级 flex**（不是 inline-flex）：胶囊数值列靠 `marginLeft:'auto'` 贴右，
+ *      而 auto 外边距在 inline-flex 元素上不推挤——用 inline-flex 会让数值区
+ *      脱离右缘（0.8.3 第一版方案 B 左移约 51px）。
+ *   2) **justifyContent:'flex-end'**：改成 flex 后，外层的 `textAlign:'right'`
+ *      对 **flex 子项不再生效**（textAlign 只影响行内内容），内容会默认靠左
+ *      （0.8.3 第二版方案 B 的胶囊仍左偏）。
+ * 面板语境外层本来就是 flex 行，这里再套一层只影响「✦ + 数字」这一组。
  */
 function valueFlexStyle(fontSize) {
   return {
-    display: 'inline-flex',
+    display: 'flex',
     alignItems: 'center',
+    justifyContent: 'flex-end',
     fontSize: fontSize,
     lineHeight: 1.2,
   }
@@ -667,12 +679,20 @@ function PlanUsageBadge(props) {
 
   // [0.8.2] 详情卡片打开时，点击卡片外的任意位置自动关闭；Esc 同样关闭。
   //   - 开/关仍由胶囊的 click 翻转（键盘 Enter 也能开）。这里只负责「外部按下」：
-  //     pointerdown 走 window 捕获，比 click 更早，也不受宿主 UI stopPropagation
-  //     影响；按在胶囊或面板内（root.contains / panel.contains / Shadow DOM
-  //     composedPath）不关，按在外部立即关——关闭发生在按下瞬间，观感接近原生浮层。
-  //     胶囊自身的按下会命中 root.contains，天然豁免，无需事件标记；
+  //     pointerdown 走 window 捕获，比 click 更早，也不受宿主 UI 冒泡阶段的
+  //     stopPropagation 影响；按在胶囊或面板内（parentElement 上溯 /
+  //     Shadow DOM composedPath）不关，按在外部立即关——关闭发生在按下瞬间，
+  //     观感接近原生浮层。胶囊自身的按下会命中「卡片内」判定，天然豁免；
   //   - 窗口失焦/切换应用不清面板：只响应「明确点在面板外」的动作。
   // 面板仅在展开态渲染，监听只在 open && wide 时存在，收起即随之拆除。
+  // [0.8.3] 用户反馈「点空白偶尔不关」：只挂 pointerdown 时有三类盲区——
+  //   ① 旧 Android WebView / 非 PointerEvent 宿主根本不投递 pointerdown；
+  //   ② 键盘 Enter/Space 激活面板外的按钮只有 click，没有按下事件；
+  //   ③ 某些宿主把 pointerdown 吞掉（自己 preventDefault/stopPropagation 的
+  //      手势层）。故按下类事件补 mousedown/touchstart，并额外挂 click 兜底。
+  //   去重靠 downInside：只有「这次交互没有从卡片内按下」时 click 才关，
+  //   这样面板里拖选文字、松手落到面板外（click 的 target 变成共同祖先）
+  //   不会被误判成外点。setOpen(false) 幂等，多个事件重复命中无副作用。
   var panelOpenNow = open && props.wide !== false
   React.useEffect(function () {
     if (!panelOpenNow) return
@@ -681,6 +701,9 @@ function PlanUsageBadge(props) {
     // 用上溯而不是 root.contains(node)：面板/胶囊的嵌套子节点在真实 DOM 里
     // 会逐层挂 parentElement，mock 测试的假节点也一样，两端语义一致。
     // ref 在事件发生时现读（不闭包捕获）：重渲染后 ref 总是指向当前元素。
+    // 最近一次按下是否落在卡片内（null = 本轮交互还没有按下事件）：
+    // click 兜底靠它区分「键盘/被吞掉的点击」与「从面板里拖选到外面」。
+    var downInside = null
     function inCard(node) {
       var root = rootRef.current
       var panel = panelRef.current
@@ -702,15 +725,31 @@ function PlanUsageBadge(props) {
       return false
     }
     function onOutside(event) {
-      if (!inCard(event.target)) setOpen(false)
+      var inside = inCard(event.target)
+      downInside = inside
+      if (!inside) setOpen(false)
+    }
+    function onClickOutside(event) {
+      var inside = inCard(event.target)
+      // 键盘激活（无按下事件）或按下事件被宿主吞掉时的兜底；从卡片内开始的交互不关。
+      if (downInside !== true && !inside) setOpen(false)
+      downInside = null
     }
     function onKey(event) {
       if (event && event.key === 'Escape') setOpen(false)
     }
+    // 按下类事件三种都挂：pointerdown 首选（覆盖鼠标/触摸/笔且最早），
+    // mousedown/touchstart 只在宿主不投递 PointerEvent 时才生效，重复触发无副作用。
     window.addEventListener('pointerdown', onOutside, true)
+    window.addEventListener('mousedown', onOutside, true)
+    window.addEventListener('touchstart', onOutside, { capture: true, passive: true })
+    window.addEventListener('click', onClickOutside, true)
     document.addEventListener('keydown', onKey, true)
     return function () {
       window.removeEventListener('pointerdown', onOutside, true)
+      window.removeEventListener('mousedown', onOutside, true)
+      window.removeEventListener('touchstart', onOutside, { capture: true, passive: true })
+      window.removeEventListener('click', onClickOutside, true)
       document.removeEventListener('keydown', onKey, true)
     }
   }, [panelOpenNow])
@@ -943,10 +982,40 @@ function PlanUsageBadge(props) {
     // ✦ 用 starFixStyle(12)=8px 缩放（进宽 ≈ ¥），并用 valueFlexStyle 做 flex
     // **中心对齐**——Android Noto 把 ✦ 画得偏下，基线对齐会低 2–3px（实测），
     // flex 的 align-items:center 不依赖字体基线，两端都居中。
+    //
+    // [0.8.3] 国内版 WorkBuddy 与国际版 WorkBuddy AI 的积分**不通用**
+    //（用户 2026-10-17 在第二台设备实测发现）：Host 的 variants 已给出各版本
+    // 独立小计，这里**按版本各占一行**分别显示，而不是把两版加成一个合计。
+    // 未登录/未配置的版本不会出现在 variants 里，因此不会产生空行。
     if (meta.creditMode === true && (typeof plan.creditsTotal === 'number' || plan.creditsUnlimited === true)) {
+      var wbVariants = Array.isArray(plan.variants) && plan.variants.length > 0 ? plan.variants : null
+      var wbDot = plan.stale === true
+        ? 'var(--dsw-alias-label-tertiary)'
+        : 'var(--dsw-alias-state-success-primary)'
+      if (wbVariants !== null) {
+        for (var vi = 0; vi < wbVariants.length; vi++) {
+          var variant = wbVariants[vi]
+          if (variant == null || typeof variant !== 'object') continue
+          var vNum = variant.unlimited === true ? '∞'
+            : (typeof variant.total === 'number' ? formatCredit(variant.total) : '—')
+          capsuleRows.push({
+            dot: wbDot,
+            label: typeof variant.label === 'string' && variant.label.length > 0 ? variant.label : meta.name,
+            values: ['✦' + STAR_GAP + vNum],
+            valueNodes: [
+              h('span', { style: starFixStyle(12), key: 'star' }, '✦'),
+              h('span', { style: { marginLeft: '0.34em' }, key: 'num' }, vNum),
+            ],
+            valueFlex: true,
+            stale: plan.stale === true,
+          })
+        }
+        continue
+      }
+      // 旧 Host（无 variants）：退回单行合计显示，保持向后兼容。
       var wbNum = plan.creditsUnlimited === true ? '∞' : formatCredit(plan.creditsTotal)
       capsuleRows.push({
-        dot: plan.stale === true ? 'var(--dsw-alias-label-tertiary)' : 'var(--dsw-alias-state-success-primary)',
+        dot: wbDot,
         label: meta.name,
         values: ['✦' + STAR_GAP + wbNum], // title / 无障碍文本用纯字符串
         valueNodes: [
@@ -1089,67 +1158,75 @@ function PlanUsageBadge(props) {
       if (plan.error) {
         inner = h('div', { style: sectionNoteStyle }, plan.message || '无法获取用量')
       } else if (meta.creditMode === true) {
-        // [local patch 0.8.1] WorkBuddy 积分渠道：合计 + 各版本/各套餐明细。
-        if (plan.creditsUnlimited === true) {
-          inner = h('div', {},
-            h('div', { style: Object.assign({}, balRowStyleStatic, { color: 'var(--dsw-alias-label-primary)' }) },
-              h('span', { style: Object.assign({}, dotStyle, { width: 9, height: 9, background: 'var(--dsw-alias-state-success-primary)' }) }),
-              // [0.8.3] 面板大号行与胶囊同构：「✦∞」。✦ 必须**内嵌在这个数值 span 里**
-              // （不能拆成 flex 子项：本行 gap:8 会被吃两次，✦ 后面多出 8px 空隙）。
-              // [0.8.3 方案 B] 大号行改 flex 中心对齐：✦ 与数字各成子项，
-              // align-items:center 不依赖字体基线（Android Noto 的 ✦ 偏下 2–3px）。
-              // 注意本行是 flex 容器（balRowStyleStatic），这里再套一层 inline-flex
-              // 只影响这组「✦ + 数字」，不会让 gap:8 被吃两次。
-              h('span', { style: valueFlexStyle(18) },
-                h('span', { style: starFixStyle(18) }, '✦'),
-                h('span', { style: { marginLeft: '0.34em' } }, '∞'),
-              ),
-            ),
-          )
-        } else if (typeof plan.creditsTotal === 'number') {
-          // [0.8.1 定稿] 明细行组装（版本小计 + 各套餐）。展示形态按高度自适应：
-          //   - 行数少（≤ 深度上限，见 WB_DETAIL_MAX_ROWS）：正常灰字文字铺开；
-          //   - 超过则收进固定高度列表滚动查看；paddingRight 预留滚动条宽度。
-          // 「WorkBuddy：合计」版本小计行**不再显示**——与上方大号合计重复
-          //（用户定稿）；多版本并存时在套餐名前带 variant 前缀区分。
-          var wbRows = []
-          // 各套餐明细（remain>0 或企业套餐；与 workbuddy-connect 卡片口径一致）。
-          if (Array.isArray(plan.creditsAccounts) && plan.creditsAccounts.length > 0) {
-            for (var ai = 0; ai < plan.creditsAccounts.length; ai++) {
-              var account = plan.creditsAccounts[ai]
-              if (account.remain === null || (account.remain === 0 && account.packageName !== 'enterprise')) continue
-              wbRows.push(h('div', { key: 'a' + ai, style: sectionNoteStyle },
-                (account.variant ? account.variant + ' · ' : '') + (account.packageName || '套餐')
-                + '：' + formatCredit(account.remain)
-                + (typeof account.size === 'number' && account.size > 0 ? ' / ' + formatCredit(account.size) : '')))
-            }
-          }
-          var listStyle = wbRows.length > WB_DETAIL_MAX_ROWS
-            ? Object.assign({}, wbDetailListStyle)
-            : null
-          var detailBlock = listStyle !== null
-            ? h('div', { style: listStyle, key: 'wbdetail' }, wbRows)
-            : wbRows
-          inner = h('div', {},
-            h('div', { style: Object.assign({}, balRowStyleStatic, { color: 'var(--dsw-alias-label-primary)' }) },
-              h('span', { style: Object.assign({}, dotStyle, { width: 9, height: 9, background: 'var(--dsw-alias-state-success-primary)' }) }),
-              // [0.8.3 方案 B] 与胶囊同构：flex 中心对齐的「✦ + 数字」。
-              h('span', { style: valueFlexStyle(18) },
-                h('span', { style: starFixStyle(18) }, '✦'),
-                h('span', { style: { marginLeft: '0.34em' } }, formatCredit(plan.creditsTotal)),
-              ),
-            ),
-            detailBlock,
-            // [0.8.2] 部分取数脚注：某个版本取不到数据时，合计只是已取到版本的
-            // 小计——用灰色说明行点出来，避免被误读为完整合计。
-            // 注意 creditMode 分支不走 planNotes()（后者只服务窗口型分支），必须内联。
-            plan.partial === true && plan.partialNote
-              ? h('div', { style: sectionNoteStyle, key: 'wbpartial' }, plan.partialNote)
-              : null,
-          )
-        } else {
-          inner = h('div', { style: sectionNoteStyle }, '积分获取失败')
+        // [local patch 0.8.1 / 0.8.3] WorkBuddy 积分渠道。
+        //
+        // [0.8.3] 国内版 WorkBuddy 与国际版 WorkBuddy AI 的积分**不通用**
+        //（用户 2026-10-17 在第二台设备实测发现）：因此大号数值行**按版本各显示
+        // 一行**，不再把两版合并成一个「合计」（合并会让人误以为积分可通用）。
+        // Host 的 variants 已给出各版本的独立小计与 unlimited 状态；
+        // 旧 Host（无 variants）退回单行合计，保持向后兼容。
+        var wbVariantRows = Array.isArray(plan.variants)
+          ? plan.variants.filter(function (v) { return v !== null && typeof v === 'object' })
+          : []
+        // 若 Host 只给了合计（旧版 / 结构变化），用合计造一行，保证始终有数值行。
+        if (wbVariantRows.length === 0) {
+          wbVariantRows = [{
+            label: meta.name,
+            total: typeof plan.creditsTotal === 'number' ? plan.creditsTotal : null,
+            unlimited: plan.creditsUnlimited === true,
+          }]
         }
+        /** 一个版本的大号数值行：dot + ✦ + 该版本剩余积分。 */
+        function wbVariantRow(variant, key) {
+          var vNum = variant.unlimited === true ? '∞'
+            : (typeof variant.total === 'number' ? formatCredit(variant.total) : '—')
+          return h('div', {
+            style: Object.assign({}, balRowStyleStatic, { color: 'var(--dsw-alias-label-primary)' }),
+            key: key,
+          },
+            h('span', { style: Object.assign({}, dotStyle, { width: 9, height: 9, background: 'var(--dsw-alias-state-success-primary)' }) }),
+            // 版本名（WorkBuddy / WorkBuddy AI）在有多个版本时标在数值前，
+            // 否则两行数字无法区分属于哪个版本。
+            wbVariantRows.length > 1 && typeof variant.label === 'string'
+              ? h('span', { style: { fontSize: 12, fontWeight: 400, color: 'var(--dsw-alias-label-secondary)' } }, variant.label)
+              : null,
+            // [0.8.3 方案 B] flex 中心对齐的「✦ + 数字」（Android Noto 的 ✦ 偏下）。
+            h('span', { style: valueFlexStyle(18) },
+              h('span', { style: starFixStyle(18) }, '✦'),
+              h('span', { style: { marginLeft: '0.34em' } }, vNum),
+            ),
+          )
+        }
+
+        // 套餐明细（remain>0 或企业套餐；与 workbuddy-connect 卡片口径一致）。
+        var wbRows = []
+        if (Array.isArray(plan.creditsAccounts) && plan.creditsAccounts.length > 0) {
+          for (var ai = 0; ai < plan.creditsAccounts.length; ai++) {
+            var account = plan.creditsAccounts[ai]
+            if (account.remain === null || (account.remain === 0 && account.packageName !== 'enterprise')) continue
+            wbRows.push(h('div', { key: 'a' + ai, style: sectionNoteStyle },
+              (account.variant ? account.variant + ' · ' : '') + (account.packageName || '套餐')
+              + '：' + formatCredit(account.remain)
+              + (typeof account.size === 'number' && account.size > 0 ? ' / ' + formatCredit(account.size) : '')))
+          }
+        }
+        var wbListStyle = wbRows.length > WB_DETAIL_MAX_ROWS
+          ? Object.assign({}, wbDetailListStyle)
+          : null
+        var wbDetailBlock = wbListStyle !== null
+          ? h('div', { style: wbListStyle, key: 'wbdetail' }, wbRows)
+          : wbRows
+        inner = h('div', {},
+          wbVariantRows.map(function (variant, vi) {
+            return wbVariantRow(variant, 'wbv' + vi)
+          }),
+          wbDetailBlock,
+          // [0.8.2] 部分取数脚注：某个版本取不到数据时，上方只是已取到版本的数据，
+          // 用灰色说明行点出来。creditMode 不走 planNotes()，必须内联。
+          plan.partial === true && plan.partialNote
+            ? h('div', { style: sectionNoteStyle, key: 'wbpartial' }, plan.partialNote)
+            : null,
+        )
       } else if (meta.balanceThreshold !== undefined) {
         // [local patch] 余额类套餐：显示剩余余额与可用状态；低于阈值红灯提示。
         if (typeof plan.balance !== 'number') {
@@ -1170,17 +1247,30 @@ function PlanUsageBadge(props) {
               ? 'var(--dsw-alias-label-tertiary)'
               : (low ? 'var(--dsw-alias-state-error-primary)' : 'var(--dsw-alias-state-success-primary)'),
           })
-          // [local patch 0.8.0/0.8.1] Xiaomi MiMo 的现金/赠送明细：同一行，现金
-          // 左对齐、赠送右对齐（用户定稿，比两行更紧凑美观）。
+          // [local patch 0.8.0/0.8.1] 余额明细：DeepSeek 与 MiMo 各自拆行显示。
+          //   - MiMo：cashBalance / giftBalance（控制台口径：现金 / 赠送）；
+          //   - DeepSeek [0.8.3]：cashBalance（充值余额）/ bonusBalance（赠金余额）——
+          //     用户 2026-10-17 要求「和 MiMo 一样分开描述」。
+          // 同一行布局（左充值/现金，右赠金/赠送），比两行更紧凑（用户 0.8.0 定稿）。
           var detailChildren = []
-          if (typeof plan.cashBalance === 'number' || typeof plan.giftBalance === 'number') {
+          var hasSplit = plan.id === 'deepseek'
+            ? (typeof plan.cashBalance === 'number' || typeof plan.bonusBalance === 'number')
+            : (typeof plan.cashBalance === 'number' || typeof plan.giftBalance === 'number')
+          if (hasSplit) {
             var sym = balanceSymbol(plan.currency)
+            var isDeepseek = plan.id === 'deepseek'
+            var leftLabel = isDeepseek ? '充值余额：' : '现金余额：'
+            var rightLabel = isDeepseek ? '赠金余额：' : '赠送余额：'
+            var leftVal = typeof plan.cashBalance === 'number' ? plan.cashBalance : 0
+            var rightVal = isDeepseek
+              ? (typeof plan.bonusBalance === 'number' ? plan.bonusBalance : 0)
+              : (typeof plan.giftBalance === 'number' ? plan.giftBalance : 0)
             detailChildren.push(h('div', {
               key: 'cashgift',
               style: { display: 'flex', alignItems: 'baseline', color: 'var(--dsw-alias-label-tertiary)', fontSize: 11, lineHeight: 1.5, margin: '2px 0' },
             },
-              h('span', {}, '现金余额：' + sym + floorToCent(plan.cashBalance)),
-              h('span', { style: { marginLeft: 'auto' } }, '赠送余额：' + sym + floorToCent(plan.giftBalance)),
+              h('span', {}, leftLabel + sym + floorToCent(leftVal)),
+              h('span', { style: { marginLeft: 'auto' } }, rightLabel + sym + floorToCent(rightVal)),
             ))
           }
           // [0.8.1 回退] 充值按钮已整体移除（原生视图 bounds 与网页返回栏互相

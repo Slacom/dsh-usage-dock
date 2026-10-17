@@ -347,7 +347,7 @@ async function openPanel(payload) {
     && pillText.indexOf('✦') < pillText.indexOf('3,401.5')
     && !pillText.includes('（积分）'), pillText)
   const starFlex = elementsOf(tree).find((el) => el.props && el.props.style
-    && el.props.style.display === 'inline-flex' && el.props.style.alignItems === 'center')
+    && el.props.style.display === 'flex' && el.props.style.alignItems === 'center')
   check('T11a2 WorkBuddy 数值区为 flex 中心对齐（方案 B）', starFlex !== undefined)
   tree = await openPanel(few)
   let text = textAll(tree)

@@ -11,7 +11,7 @@ DeepSeek Harness（DSH）的**侧栏用量/余额插件**：在 Web/桌面端左
 用量与余额，点击可展开详情面板。fork 自 `chendefine/dsh-plugins-plan-usage`，改名 `dsh-usage-dock`
 以避免与上游混淆，并做了一系列定制（见第 6 节）。
 
-**当前版本**：0.8.3（WorkBuddy 积分「✦ 」前缀符号化，本地构建待测试；0.8.2 已于 2026-10-16 完整发布：GitHub 主干 / v0.8.2 标签 / Release / npm 均上线，移动端初步实测通过）　|　**上一公开版**：0.8.2　|　**更早**：0.8.1、0.7.2（0.8.0 未单独发布）
+**当前版本**：0.8.3（GitHub 预发布 pre-release，待用户真机测试；0.8.2 已于 2026-10-16 完整发布：GitHub 主干 / v0.8.2 标签 / Release / npm 均上线，移动端初步实测通过）　|　**上一公开版**：0.8.2　|　**更早**：0.8.1、0.7.2（0.8.0 未单独发布）
 
 > **2026-10-15 0.8.2 说明**：主方向为 DSHA WorkBuddy「fetch failed」修复（宿主
 > dsh-web-mobile compress.js × gzip 中间件踩踏，消费侧两处绕过：status 请求声明
@@ -21,10 +21,18 @@ DeepSeek Harness（DSH）的**侧栏用量/余额插件**：在 Web/桌面端左
 > 0.8.1 时期：WorkBuddy 积分与渠道排序、充值入口整体移除、峰谷条固定中点 + 24h 平滑移动图案；
 > 0.8.0 的 classic/充值记录是历史阶段，最终实现以 [v0.8.2 发布说明](docs/release-notes-v0.8.2.md) 与 [v0.8.1 发布说明](docs/release-notes-v0.8.1.md) 为准。
 > DSHA/安卓检查包括无 shell、无账号/configEditor 服务、无 WAAPI/ResizeObserver 的降级与 hooks 稳定性；真实 WorkBuddy Connect 0.7.4 状态处理器对接通过，但并非 Android 真机联网实测。
-> 测试：`test-android-compat.mjs`（13）、`test-settings.mjs`（6）、`test-workbuddy.mjs`（22）、`test-workbuddy-contract.mjs <上游lib/index.js>`（5）、`test-panel-interactions.mjs`（8，0.8.2 新增）、`test-peak-marker.mjs`（144 几何断言，0.8.2 改方案 K）。
-> **2026-10-16 0.8.3**：胶囊 WorkBuddy 积分改「✦ 」前缀（U+2726 单色符号，随主题深浅），
+> 测试：`test-android-compat.mjs`（14）、`test-settings.mjs`（6）、`test-workbuddy.mjs`（26）、`test-workbuddy-contract.mjs <上游lib/index.js>`（5）、`test-panel-interactions.mjs`（11，0.8.2 新增 8 项 / 0.8.3 扩到 11）、`test-peak-marker.mjs`（144 几何断言，0.8.2 改方案 K）、`test-line-endings.mjs`（21，0.8.3 新增）。
+> **2026-10-16 / 17 0.8.3**：胶囊 WorkBuddy 积分改「✦ 」前缀（U+2726 单色符号，随主题深浅），
 > 替换「（积分）」全角后缀，与「¥39.86」前缀语法同构（用户选定；候选符号与真实渲染
-> 截图留档 `docs/demos/credit-symbol-demos.html` 与 `legacy/symbol-check/`）。无其他变更。
+> 截图留档 `docs/demos/credit-symbol-demos.html` 与 `legacy/symbol-check/`）。同版还包含
+> WorkBuddy / WorkBuddy AI 拆成两个独立渠道、DeepSeek 充值/赠金分行、胶囊数值右对齐、
+> 超时 30s / 失败阈值 5、API Key 模式也显示峰谷条、`tools/test-line-endings.mjs`（21）守卫，
+> 以及详情卡片「点空白偶尔不关」兜底——按下类事件从只挂 `pointerdown` 扩到
+> `pointerdown` + `mousedown` + `touchstart`，并补 `click` 兜底（键盘激活也能关），用
+> `downInside` 标记区分「从面板内起手拖选」与外点。详见
+> [v0.8.3 发布说明](docs/release-notes-v0.8.3.md)。注意：窗口顶部
+> `-webkit-app-region: drag` 拖拽条与原生滚动条**不产生任何 DOM 事件**，页面侧无法感知，
+> 属于 DSH/Chromium 的固有限制。
 
 ## 2. 关键路径
 
@@ -300,6 +308,13 @@ $token = (("protocol=https`nhost=github.com`n`n" | git credential fill) -replace
    降级）、峰谷条游标改方案 K「上下对尖」（上下三角夹住「现在」，白柱与轨道内覆盖物
    全部移除）。测试：workbuddy 22 项、panel-interactions 8 项（新增）、peak-marker
    144 几何断言（改方案 K）；mock-react 对齐 effect cleanup 与 mock DOM 父子链语义。
+12. 0.8.3（2026-10-16 / 17，GitHub 预发布 pre-release，待真机测试）：
+   WorkBuddy 积分改「✦ 」前缀、WorkBuddy 与 WorkBuddy AI 拆成两个独立渠道
+   （可分别开关与排序）、DeepSeek 充值/赠金分行、胶囊数值右对齐、超时 30s / 失败阈值 5、
+   API Key 模式也渲染峰谷条，并新增 `tools/test-line-endings.mjs`（21）守卫 LF/CRLF 混改；
+   另含详情卡片「点空白偶尔不关」兜底：按下类事件三路（pointerdown/mousedown/
+   touchstart）+ click 兜底，`downInside` 去重防拖选误关，panel-interactions 8 → 11。
+   已知无法修复的盲区：窗口顶部 `-webkit-app-region: drag` 拖拽条与原生滚动条不产生 DOM 事件。
 
 ## 11. 未来方向（roadmap）
 

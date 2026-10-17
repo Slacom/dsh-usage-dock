@@ -1,6 +1,7 @@
 # dsh-usage-dock v0.8.3 发布说明
 
-发布日期：2026-10-16
+发布日期：2026-10-16（外壳/符号部分）· 2026-10-17（追加「点空白不关闭」兜底，并以 GitHub
+**预发布 pre-release** 形式发布，供其它设备安装测试）
 
 ## 符号与间距统一（胶囊 + 详情面板）
 
@@ -97,19 +98,53 @@
 - 测试：`test-degrade-refresh.mjs` 的 T3 改为「连续 5 轮失败才显示获取失败」，并新增
   T3.pre「第 2 轮失败仍保留旧值（阈值 5，未到）」；该测试 39 → 41 项。
 
+## 详情卡片：点空白偶尔不关闭的兜底
+
+**现象**（用户 2026-10-17 反馈）：详情卡片打开后，点击卡片外的空白处**偶尔**不会关闭，
+再点一次胶囊才会收起。
+
+**原因**：0.8.2 的外点关闭只挂了 `pointerdown`（window 捕获）。这条路径在三种情况下收不到事件：
+
+| 盲区 | 说明 |
+| --- | --- |
+| 宿主不投递 PointerEvent | 旧 Android WebView、部分内嵌浏览器只实现 `mousedown`/`touchstart` |
+| 键盘激活 | 用 Tab 聚焦面板外的按钮、回车激活时只有 `click`，没有按下事件 |
+| 宿主吞掉按下 | 某些手势层/浮层在按下阶段就 `preventDefault()` 或改写了事件序列 |
+
+此外还有两处**页面 JS 无法观测**的盲区，属于 DSH 桌面端本身的行为，与插件无关：
+
+- **窗口拖拽区**：`[data-windows-titlebar]` 下有一条覆盖窗口顶部、`-webkit-app-region: drag`
+  的横条（`frame:before`）。命中拖拽区时 Chromium/Electron 整条事件序列都不派发给页面；
+- **原生滚动条**：点击滚动条同样不产生 DOM 事件。
+
+**修复**：按下类事件改为 `pointerdown` + `mousedown` + `touchstart` 三路同时挂（捕获阶段），
+并额外挂 `click` 兜底。去重用一个「本次交互是否从卡片内按下」的标记：
+
+```js
+var downInside = null                     // null = 本轮还没有按下事件
+function onOutside(e)     { downInside = inCard(e.target); if (!downInside) setOpen(false) }
+function onClickOutside(e){ if (downInside !== true && !inCard(e.target)) setOpen(false); downInside = null }
+```
+
+- 普通外点：按下瞬间关闭（与 0.8.2 观感一致）；
+- 键盘激活面板外控件：`click` 兜底关闭；
+- 在面板里拖选文字、松手落到面板外（`click` 的 target 退化成共同祖先）：**不**误关；
+- `setOpen(false)` 幂等，多个事件重复命中无副作用。
+
 ## 其他
 
-- 无其他功能或修复；0.8.2 的 DSHA WorkBuddy 修复、外点/Esc 关闭、展开动画、
+- 除上述修复外，0.8.2 的 DSHA WorkBuddy 修复、外点/Esc 关闭、展开动画、
   峰谷条方案 K 游标原样保留（见 [v0.8.2 发布说明](release-notes-v0.8.2.md)）。
 
 ## 测试
 
-- 断言同步：degrade-refresh **41** 项（¥/✦ 断言改薄空格形态；T3 适配阈值 5；
-  T7 改为「API Key 模式也显示峰谷条」）、collapsed-pill 4 项（`¥\u20097.38`）、
-  android-compat **14** 项（新增 API Key 峰谷相位断言）、fetch-backends **11** 项；
-  其余 panel-interactions 8 / footer-row 11 / settings 6 / workbuddy 22 /
-  mimo-parse 21 / peak-phase 32 / workbuddy-contract 5 / peak-marker 144 几何断言
-  全部通过。
+- 断言同步：degrade-refresh **42** 项（¥/✦ 断言改薄空格形态；T3 适配阈值 5；
+  T7 改为「API Key 模式也显示峰谷条」）、panel-interactions **11** 项（T12 扩展 + 新增
+  T20 mousedown 兜底、T21 click 兜底、T22 拖选不误关）、collapsed-pill 4 项
+  （`¥\u20097.38`）、android-compat **14** 项（新增 API Key 峰谷相位断言）、
+  fetch-backends **11** 项、line-endings **21** 项（新增守卫）；
+  其余 footer-row 11 / settings 6 / workbuddy 26 / mimo-parse 21 / peak-phase 32 /
+  workbuddy-contract 5 / peak-marker 144 几何断言全部通过。
 
 ## 已知未做（用户 2026-10-16 决定）
 
@@ -122,11 +157,16 @@
 - **上游 401 报错回显凭据的加固**（DeepSeek 官方会在 401 响应体里回显收到的 Key，
   插件原样透传）：已识别该信息泄露面，列为后续可选改进。
 
-## 升级
+## 安装（预发布版本）
 
-```sh
-dsh plugin --profile web add dsh-usage-dock@0.8.3
-```
+0.8.3 **尚未发布到 npm**（npm 上最新仍是 0.8.2），本次只提供 GitHub 预发布。
+两种拿包方式：
 
-桌面端按实际 profile 使用 `--profile desktop`。安装后重启 DSH / 安卓引擎并刷新页面。
+1. **GitHub Release 附件**（推荐给 DSH 插件管理器）：下载本 Release 的
+   `dsh-usage-dock-0.8.3.tgz`，在「设置 → 插件 → 添加插件」里粘贴该附件的直链
+   （`https://github.com/Slacom/dsh-usage-dock/releases/download/v0.8.3/dsh-usage-dock-0.8.3.tgz`），
+   插件管理器支持 `.tgz` 直链安装；
+2. **Git 仓库**：添加插件时填 `https://github.com/Slacom/dsh-usage-dock`（会装主干最新提交）。
+
+桌面端本机调试也可直接文件覆盖（见 `AGENTS.md` 第 4 节）。安装后重启 DSH / 安卓引擎并刷新页面。
 

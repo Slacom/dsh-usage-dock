@@ -1,5 +1,12 @@
 /**
- * WorkBuddy 剩余积分模块（0.8.1 新增渠道）：
+ * WorkBuddy 剩余积分模块（0.8.1 新增；0.8.3 拆分为两个独立渠道）：
+ *
+ * [0.8.3] 国内版 WorkBuddy 与国际版 WorkBuddy AI 的积分**不通用**
+ *（用户 2026-10-17 在第二台设备实测发现）。因此本模块导出**两个独立渠道**：
+ *   - `workbuddy`     → 国内版 WorkBuddy（配置键 workbuddyEnabled）
+ *   - `workbuddy-ai`  → 国际版 WorkBuddy AI（配置键 workbuddyAiEnabled）
+ * 两者在胶囊/详情卡片里各占一行/一区，并可在设置页分别开关与排序
+ *（与 DeepSeek / MiMo 等其他渠道完全同权）。
  *
  * 复用 dsh-workbuddy-connect 已登录的凭据读取积分——**本模块不做任何登录/认证**，
  * 与 Codex 渠道同款模式：只要在 workbuddy-connect 里登录过（桌面 App 或其设置页），
@@ -29,30 +36,43 @@
 import z from '@deepseek-ai/schemastery'
 import { planBase, execError } from './util.js'
 
-const fields = { enabled: 'workbuddyEnabled' }
-
-const plan = {
-  id: 'workbuddy',
-  name: 'WorkBuddy',
-  fields,
-  schema: {
-    workbuddyEnabled: z.boolean().default(true),
-  },
-  source: {
-    provider: 'dsh-workbuddy-connect',
-    endpoints: {
-      cn: '/plugins/dsh-workbuddy-connect/status',
-      ai: '/plugins/dsh-workbuddy-connect/ai/status',
-    },
-  },
-}
-
 /** 单次 status 读取的超时（毫秒）：status 内部会做真实计费查询，给足时间。
  * [0.8.3] 15s → 30s：该端点每轮都打上游计费，慢响应曾导致偶发超时被记成失败
  * （用户 2026-10-16 反馈胶囊偶现「获取失败」）；与 Host 单请求超时对齐。 */
 const STATUS_TIMEOUT_MS = 30000
 
-/** 读取一个 variant 的 status 端点；404 → { notFound }，网络失败 → { err }。 */
+const CN_PATH = '/plugins/dsh-workbuddy-connect/status'
+const AI_PATH = '/plugins/dsh-workbuddy-connect/ai/status'
+
+/** 国内版 WorkBuddy 渠道定义。 */
+const cnPlan = {
+  id: 'workbuddy',
+  name: 'WorkBuddy',
+  fields: { enabled: 'workbuddyEnabled' },
+  schema: {
+    workbuddyEnabled: z.boolean().default(true),
+  },
+  source: {
+    provider: 'dsh-workbuddy-connect',
+    endpoint: CN_PATH,
+  },
+}
+
+/** 国际版 WorkBuddy AI 渠道定义（0.8.3 拆出，独立开关/排序）。 */
+const aiPlan = {
+  id: 'workbuddy-ai',
+  name: 'WorkBuddy AI',
+  fields: { enabled: 'workbuddyAiEnabled' },
+  schema: {
+    workbuddyAiEnabled: z.boolean().default(true),
+  },
+  source: {
+    provider: 'dsh-workbuddy-connect',
+    endpoint: AI_PATH,
+  },
+}
+
+/** 读取一个 status 端点；404 → { notFound }，网络失败 → { err }。 */
 async function fetchStatus(base, path) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), STATUS_TIMEOUT_MS)
@@ -121,127 +141,77 @@ function creditsOf(body) {
   }
 }
 
-const VARIANT_LABELS = { cn: 'WorkBuddy', ai: 'WorkBuddy AI' }
-
 /**
- * 真实取数：并行读两个 variant 的 status，合成一条 wire 结果。
- * @param base - 回环 web 服务基地址（http://127.0.0.1:<port>，由 index.js 注入）。
+ * 真实取数：读**单个**版本（渠道）的 status 端点，合成一条 wire 结果。
+ * [0.8.3] 从「并行读两版 + 合并」改为「每个渠道只读自己的端点」——两个版本
+ * 现在是独立的渠道，互不拖累（一版失败不再影响另一版的显示）。
+ *
+ * @param base    - 回环 web 服务基地址（http://127.0.0.1:<port>，由 index.js 注入）。
+ * @param plan    - 渠道定义（cnPlan / aiPlan）。
+ * @param path    - 该渠道的 status 端点路径。
  */
-async function fetchPlanWithBase(base) {
-  const variants = [
-    { key: 'cn', path: plan.source.endpoints.cn },
-    { key: 'ai', path: plan.source.endpoints.ai },
-  ]
-  const results = await Promise.all(variants.map((v) => fetchStatus(base, v.path)))
-  const signedIn = []
-  const degraded = [] // [0.8.2] 记录各版本为何没数据（partial 脚注用）
-  let notFound = 0
-  let transportError = null
-  let semanticError = null
-  let semanticLabel = null
-  for (let i = 0; i < variants.length; i++) {
-    const r = results[i]
-    const label = VARIANT_LABELS[variants[i].key]
-    if (r.notFound === true) { notFound += 1; continue }
-    if (r.err !== undefined) {
-      // [0.8.2] 记录而非直接判死：只要另一个版本取到了数据，
-      // 就把失败降级为「部分数据」提示（见下方 signedIn 非空的处理）。
-      if (transportError === null) transportError = r.err
-      degraded.push(label + '：' + (r.err && r.err.message ? r.err.message : String(r.err)))
-      continue
-    }
-    const body = r.body
-    if (body === null || typeof body !== 'object') {
-      if (transportError === null) transportError = new Error('invalid status response')
-      degraded.push(label + '：响应结构无效')
-      continue
-    }
-    if (body.status === 'signed-out') continue // 未登录的版本直接不显示
-    if (body.creditsError !== undefined) {
-      // 语义错误（如令牌过期/上游拒答）：透传第一条，不拿旧值顶。
-      const detail = typeof body.creditsError === 'string' ? body.creditsError : '积分读取失败'
-      if (semanticError === null) {
-        semanticError = detail
-        semanticLabel = label
-      }
-      degraded.push(label + '：' + detail)
-      continue
-    }
-    const credits = creditsOf(body)
-    if (credits === null) {
-      if (semanticError === null) {
-        semanticError = '积分响应结构无法解析'
-        semanticLabel = label
-      }
-      degraded.push(label + '：积分响应结构无法解析')
-      continue
-    }
-    signedIn.push({ label, credits })
-  }
-
-  if (notFound === variants.length) {
+async function fetchPlanWithBase(base, plan, path) {
+  const r = await fetchStatus(base, path)
+  // 未安装：端点 404（workbuddy-connect 没装或版本过旧）。
+  if (r.notFound === true) {
     return Object.assign(planBase(plan), {
       error: 'not-installed',
       message: '未安装 dsh-workbuddy-connect（WorkBuddy 积分来自该插件）',
     })
   }
-  // [0.8.2] 失败降级策略。
-  //
-  // 原策略：任一已配置版本失败就直接报错，理由是「不能把另一版本的部分积分
-  // 伪装成完整合计」。该顾虑合理，但代价过大——只要另一个版本取不到数（哪怕
-  // 它压根没登录或本就没有部署），已登录版本的真实积分也会被一并丢弃。
-  //
-  // 新策略：先看有没有任何一个版本真的拿到了 credits。
-  //   - 有 → 照常展示该版本的合计，并标记 partial/partialNote，由客户端在面板
-  //          里以灰色脚注说明「另一版本未取到」，不把部分值伪装成完整合计；
-  //   - 没有 → 保持原有语义错误 / 传输错误 / 未登录的分类与文案，行为不变。
-  // signed-out / 404 依旧不算失败（它们不是「另一方坏了」，只是没登录/没装）。
-  if (signedIn.length === 0) {
-    if (semanticError !== null) {
-      return Object.assign(planBase(plan), {
-        error: 'api',
-        message: semanticLabel + '：' + semanticError,
-      })
-    }
-    if (transportError !== null) {
-      const msg = transportError && transportError.message ? transportError.message : String(transportError)
-      return Object.assign(planBase(plan), {
-        error: 'exec',
-        message: 'WorkBuddy 状态读取失败（' + msg + '）',
-      })
-    }
+  // 传输层失败：fetch 本身抛异常（连接被 reset / 超时 / 拒绝）。
+  if (r.err !== undefined) {
+    const msg = r.err && r.err.message ? r.err.message : String(r.err)
+    return Object.assign(planBase(plan), {
+      error: 'exec',
+      message: plan.name + ' 状态读取失败（' + msg + '）',
+    })
+  }
+  const body = r.body
+  if (body === null || typeof body !== 'object') {
+    return Object.assign(planBase(plan), {
+      error: 'exec',
+      message: plan.name + ' 状态读取失败（响应结构无效）',
+    })
+  }
+  // 未登录：该版本不显示（不是错误）。
+  if (body.status === 'signed-out') {
     return Object.assign(planBase(plan), {
       error: 'signed-out',
-      message: '未登录 WorkBuddy：请安装并登录 WorkBuddy / WorkBuddy AI 桌面应用（dsh-workbuddy-connect）',
+      message: '未登录 ' + plan.name + '：请在 dsh-workbuddy-connect 中登录该版本',
     })
   }
-
-  // 主行 = 各已登录版本的合计；unlimited 仅当所有已登录版本都不限额。
+  // 语义错误（令牌过期/上游拒答）：透传，不拿旧值顶。
+  if (body.creditsError !== undefined) {
+    const detail = typeof body.creditsError === 'string' ? body.creditsError : '积分读取失败'
+    return Object.assign(planBase(plan), {
+      error: 'api',
+      message: plan.name + '：' + detail,
+    })
+  }
+  const credits = creditsOf(body)
+  if (credits === null) {
+    return Object.assign(planBase(plan), {
+      error: 'api',
+      message: plan.name + '：积分响应结构无法解析',
+    })
+  }
+  // 单版本渠道：主行 = 该版本合计；明细只含该版本套餐。
   const accounts = []
-  const variantsOut = []
-  let total = 0
-  const unlimited = signedIn.length > 0 && signedIn.every((row) => row.credits.unlimited === true)
-  for (const row of signedIn) {
-    variantsOut.push({
-      label: row.label,
-      total: row.credits.unlimited ? null : row.credits.total,
-      unlimited: row.credits.unlimited === true,
-    })
-    if (row.credits.unlimited === true) continue
-    total += row.credits.total
-    for (const account of row.credits.accounts) {
-      accounts.push(Object.assign({ variant: row.label }, account))
-    }
+  for (const account of credits.accounts) {
+    accounts.push(Object.assign({ variant: plan.name }, account))
   }
-  const partial = degraded.length > 0
   return Object.assign(planBase(plan), {
-    creditsTotal: unlimited ? null : total,
-    creditsUnlimited: unlimited,
+    creditsTotal: credits.unlimited ? null : credits.total,
+    creditsUnlimited: credits.unlimited === true,
     creditsAccounts: accounts,
-    variants: variantsOut,
+    // variants 保留单条，客户端据此显示「版本名 + 数值」大号行。
+    variants: [{
+      label: plan.name,
+      total: credits.unlimited ? null : credits.total,
+      unlimited: credits.unlimited === true,
+    }],
     isAvailable: true,
-    // 部分取数：客户端据此加一条灰色脚注，避免把部分合计误读为完整合计。
-    ...partial ? { partial: true, partialNote: '以下版本未取到数据：' + degraded.join('；') } : {},
   })
 }
 
@@ -253,19 +223,33 @@ export function setWebBase(base) {
   injectedBase = typeof base === 'string' && base.length > 0 ? base : null
 }
 
-export async function fetchPlan(ctx) {
-  if (injectedBase === null) {
-    return Object.assign(planBase(plan), {
-      error: 'unavailable',
-      message: 'WorkBuddy 状态不可用（本插件的 web 服务未就绪，无法读取 workbuddy-connect 状态）',
-    })
-  }
-  try {
-    return await fetchPlanWithBase(injectedBase)
-  } catch (err) {
-    const msg = err && err.message ? err.message : String(err)
-    return Object.assign(execError(plan), { message: 'WorkBuddy 积分请求异常：' + msg })
+/** 生成某个渠道的 fetchPlan（共享注入的 base 与错误兜底逻辑）。 */
+function makeFetchPlan(plan, path) {
+  return async function fetchPlan() {
+    if (injectedBase === null) {
+      return Object.assign(planBase(plan), {
+        error: 'unavailable',
+        message: plan.name + ' 状态不可用（本插件的 web 服务未就绪，无法读取 workbuddy-connect 状态）',
+      })
+    }
+    try {
+      return await fetchPlanWithBase(injectedBase, plan, path)
+    } catch (err) {
+      const msg = err && err.message ? err.message : String(err)
+      return Object.assign(execError(plan), { message: plan.name + ' 积分请求异常：' + msg })
+    }
   }
 }
 
-export default Object.assign(plan, { fetch: fetchPlan })
+/** 国内版渠道（默认导出，保持既有 import 兼容）。 */
+export const workbuddy = Object.assign(cnPlan, { fetch: makeFetchPlan(cnPlan, CN_PATH) })
+/** 国际版渠道（0.8.3 新增，独立开关/排序）。 */
+export const workbuddyAi = Object.assign(aiPlan, { fetch: makeFetchPlan(aiPlan, AI_PATH) })
+
+/**
+ * 兼容导出：[0.8.3] 拆分渠道后，旧代码/测试仍从本模块 import
+ * `fetchPlan`（国内版取数）。保留同义导出，语义等同 `workbuddy.fetch`。
+ */
+export const fetchPlan = workbuddy.fetch
+
+export default workbuddy

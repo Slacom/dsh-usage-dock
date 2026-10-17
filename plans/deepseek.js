@@ -111,7 +111,15 @@ async function fetchAccountBalance(ctx) {
     const normal = pickBalance(summary.value)
     const bonus = pickBalance(summary.bonusWallets)
     if (normal === null && bonus === null) return { ok: false, reason: "账号余额为空" }
-    return { ok: true, balance: (normal || 0) + (bonus || 0) }
+    // [0.8.3] 赠金单独回传（不再只是「看不见的合并」）：详情面板按 MiMo 的方式
+    // 分「充值余额 / 赠金余额」两行显示（用户 2026-10-17 要求）。
+    // balance 仍是两者之和（胶囊按钮显示总计）；cashBalance/bonusBalance 供明细行。
+    return {
+      ok: true,
+      balance: (normal || 0) + (bonus || 0),
+      cashBalance: normal === null ? null : normal,
+      bonusBalance: bonus === null ? null : bonus,
+    }
   } catch (err) {
     const msg = err && err.message ? err.message : String(err)
     return { ok: false, reason: "账号余额读取失败: " + msg }
@@ -125,6 +133,9 @@ export async function fetchPlan(ctx, shell, cfg) {
   if (account.ok) {
     return Object.assign(planBase(plan), {
       balance: account.balance,
+      // [0.8.3] 赠金明细（账号模式）：供详情面板拆行显示；无赠金时为 null。
+      cashBalance: account.cashBalance,
+      bonusBalance: account.bonusBalance,
       isAvailable: true,
       via: "account",
       warnThreshold: warnThresholdOf(cfg),
