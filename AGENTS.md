@@ -262,9 +262,15 @@ npm publish                # Automation token 已配置，非交互可直接发
 $token = (("protocol=https`nhost=github.com`n`n" | git credential fill) -replace '^password=','' |
   Where-Object { $_ -notlike 'protocol=*' -and $_ -notlike 'host=*' -and $_ -notlike 'username=*' })
 # 然后 POST https://api.github.com/repos/Slacom/dsh-usage-dock/releases
-#   { tag_name, name, body（markdown，UTF-8 字节发送）, draft:false, prerelease:false }
+#   { tag_name, name: '<tag 名，如 v0.8.4>', body（markdown，UTF-8 字节发送）,
+#     draft:false, prerelease:false, make_latest:"true" }
 ```
 
+- **Release 标题统一用 tag 名**（`v0.8.4`、`v0.7.2`…），不要再写「dsh-usage-dock v0.8.4」或
+  「v0.7.2 — 某某修复」这类描述性标题；`/releases` 列表和「Latest」徽标才整齐可扫。
+- **必须带 `make_latest:"true"`**（仅正式版；预发布用 `prerelease:true` + `make_latest:"false"`）：
+  用 REST API 建的 release 不会自动抢「Latest」，2026-10-17 就是因为漏了它，
+  `/releases/latest` 一直停在 v0.8.2。事后修正：`PATCH /releases/<id>` 传 `{ make_latest:"true" }`。
 - 发布说明写在仓库里（如 `docs/release-notes-v0.6.2.md`），既进版本库、又可直接作为 Release 正文；
 - 历史：**v0.6.2 是本仓库的第一个 tag 与第一个 GitHub Release**；npm 上 0.4.x/0.5.x/0.6.0
   从未单独发布，用户是从 `0.3.0` 直接跳到 `0.6.1`/`0.6.2` 的——写发布说明时注意这一点，
