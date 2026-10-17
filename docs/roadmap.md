@@ -58,7 +58,7 @@
 
 ---
 
-## 方向 5：Agent 协作的更新/安装流程（已设计，排在 0.8.4）
+## 方向 5：Agent 协作的更新/安装流程（已设计，排在 0.8.5）
 
 > **状态（2026-10-17）**：用户确认方向，**设计已定，暂不实现**；0.8.3 封版发布后开工。
 > 协议文档与校验脚本已在 0.8.3 期间落库（`docs/agent-update.md`、`tools/verify-install.mjs`）。
@@ -82,7 +82,7 @@
    解包验证 → 备份 → 逐文件原子覆盖 → `tools/verify-install.mjs` 校验 → 提示重启；
    任何一步失败按回滚流程处理。
 
-**0.8.4 待做**：
+**0.8.5 待做**：
 - Host：`/api/plan-usage/update-check`（GitHub Releases 含 prerelease + semver 比较 +
   **防降级** + 10 分钟缓存 + 可选“跟踪预发布”开关）。版本源**不能只查 npm**：
   `latest` 会落后于 GitHub 上的 prerelease，会误判成“该降级”。
@@ -93,6 +93,21 @@
 
 **涉及文件**：`index.js`（新路由）、`client.js`（设置页顶部）、`docs/agent-update.md`（已存在）、
 `tools/verify-install.mjs`（已存在）、`tools/test-*.mjs`。
+
+---
+
+## 备选：通知覆盖检测（仅在 0.8.4 的层级修复不生效时启用）
+
+> **状态（2026-10-17）**：0.8.4 已把胶囊的 `zIndex:1000` 去掉，改为由 DOM 顺序决定绘制次序。
+> 官方通知是服务端下发的，本地无法复现验证；若真实通知仍然与胶囊互相穿透（说明该卡先于我们
+> 挂载），再启用本方案。
+
+**做法**：胶囊挂载后，用 `document.elementFromPoint()` 取胶囊中心点的最顶层元素；若它不在
+我们自己的子树里，说明被外部浮层覆盖 → 给胶囊内容加 `visibility: hidden`（视觉上等同「被压住」），
+并在 `pointerdown` / `visibilitychange` / 30s 轮询时重新检测，一旦不再被覆盖就还原。
+
+**约束**：只在展开（wide）态启用；检测频率不得高于 500ms；不得影响胶囊的点击与悬停状态；
+mock 环境没有 `elementFromPoint` 时直接跳过。
 
 ---
 

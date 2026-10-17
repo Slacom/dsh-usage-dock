@@ -287,6 +287,31 @@ async function render(parent) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// T12 — 胶囊/面板不得再带正的 z-index：DSH 官方通知卡是后挂的 portal，
+//       我们一旦 z-index:1000 就会盖在通知卡上，透明背景让两段文字互相穿透
+//       （2026-10-17 用户截图里的「重合」）。
+// ---------------------------------------------------------------------------
+{
+  try {
+    const row = fakeNode({ display: 'flex', flexDirection: 'row', flexWrap: 'nowrap' })
+    const [rootEl, pill] = await render(row)
+    const z = rootEl.props.style.zIndex
+    assert.ok(z === undefined || z === 'auto',
+      '胶囊根节点不得带 z-index（实际为 ' + String(z) + '）：否则会盖住 DSH 的官方通知卡')
+    assert.equal(rootEl.props.style.position, 'relative', '根节点仍需定位，作为面板的定位基准')
+    // 面板只在展开态渲染：点开一次再验证它仍是浮层（相对胶囊根定位）。
+    pill.props.onClick()
+    const opened = await runtime.settle({ wide: true, configForm: null })
+    const panelEl = opened.props.children[1]
+    assert.ok(panelEl, '打开态应渲染详情面板')
+    assert.equal(panelEl.props.style.position, 'absolute', '详情面板仍是浮层（相对胶囊根定位）')
+    record('T12 胶囊不抢通知卡的层级（无正 z-index，面板仍为浮层）', 'PASS')
+  } catch (err) {
+    record('T12 层级不抢通知卡', 'FAIL', err.message)
+  }
+}
+
 client.restore()
 const failed = results.filter((r) => r.status === 'FAIL')
 console.log('\n' + results.length + ' 项：' + (results.length - failed.length) + ' 通过, ' + failed.length + ' 失败')

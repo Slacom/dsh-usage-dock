@@ -514,7 +514,13 @@ function PeakBar(props) {
 //   .dshRemoteSidebarEntry.isWide{width:calc(100% + 8px);height:34px;margin:4px -4px}
 // 我们照抄同样的 4px（ROW_BLEED），让两种灰底的左右边界对齐。
 var ROW_BLEED = 4
-var rootStyle = { position: 'relative', flex: '1 1 auto', minWidth: 0, boxSizing: 'border-box', zIndex: 1000, fontFamily: 'inherit' }
+// [0.8.4] 去掉 zIndex:1000 —— 那是 0.2.1 最早版本为「浮层压在侧栏内容上」随手加的，
+// 但它同时把胶囊抬到了 DSH 官方通知卡（底左悬浮卡，portal 挂在页面尾部）**上面**：
+// 胶囊背景本来就是透明的，于是两段文字互相穿透，看着像「重合」。
+// 现在回到 `auto`：DOM 顺序决定绘制次序，后挂的 portal（通知/浮层）自然盖住我们。
+// 侧栏内容都是静态流（侧栏 CSS 里只有顶部固定按钮用 z-index:30，与底部面板不重叠），
+// 所以去掉 1000 不会让详情面板被侧栏内容压住。守卫用例：test-footer-row.mjs 的 T12。
+var rootStyle = { position: 'relative', flex: '1 1 auto', minWidth: 0, boxSizing: 'border-box', fontFamily: 'inherit' }
 // [local patch 0.7.0] 外形与 DSH 侧栏里的其他按钮保持一致：默认**完全透明**、
 // 无边框无阴影（不再是那个「边缘分明的胶囊」），只保留状态点 + 套餐额度文字；
 // 只有鼠标悬停（且当前可交互）时才浮出与其他按钮同款的灰色底。

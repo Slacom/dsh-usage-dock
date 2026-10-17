@@ -11,7 +11,7 @@ DeepSeek Harness（DSH）的**侧栏用量/余额插件**：在 Web/桌面端左
 用量与余额，点击可展开详情面板。fork 自 `chendefine/dsh-plugins-plan-usage`，改名 `dsh-usage-dock`
 以避免与上游混淆，并做了一系列定制（见第 6 节）。
 
-**当前版本**：0.8.3（2026-10-17 **正式发布**：GitHub Release / v0.8.3 标签 / npm `0.8.3` 均上线，桌面端与平板实测通过）　|　**上一公开版**：0.8.2　|　**更早**：0.8.1、0.7.2（0.8.0 未单独发布）
+**当前版本**：0.8.4（本地构建，仅修复「胶囊盖住官方通知卡」，待真机验证）　|　**上一公开版**：0.8.3（2026-10-17 正式发布：GitHub Release / v0.8.3 标签 / npm `0.8.3`，桌面端与平板实测通过）　|　**更早**：0.8.2、0.8.1、0.7.2（0.8.0 未单独发布）
 
 > **2026-10-15 0.8.2 说明**：主方向为 DSHA WorkBuddy「fetch failed」修复（宿主
 > dsh-web-mobile compress.js × gzip 中间件踩踏，消费侧两处绕过：status 请求声明
@@ -21,7 +21,7 @@ DeepSeek Harness（DSH）的**侧栏用量/余额插件**：在 Web/桌面端左
 > 0.8.1 时期：WorkBuddy 积分与渠道排序、充值入口整体移除、峰谷条固定中点 + 24h 平滑移动图案；
 > 0.8.0 的 classic/充值记录是历史阶段，最终实现以 [v0.8.2 发布说明](docs/release-notes-v0.8.2.md) 与 [v0.8.1 发布说明](docs/release-notes-v0.8.1.md) 为准。
 > DSHA/安卓检查包括无 shell、无账号/configEditor 服务、无 WAAPI/ResizeObserver 的降级与 hooks 稳定性；真实 WorkBuddy Connect 0.7.4 状态处理器对接通过，但并非 Android 真机联网实测。
-> 测试：`test-android-compat.mjs`（14）、`test-settings.mjs`（6）、`test-workbuddy.mjs`（26）、`test-workbuddy-contract.mjs <上游lib/index.js>`（5）、`test-panel-interactions.mjs`（12，0.8.2 新增 8 项 / 0.8.3 扩到 12）、`test-peak-marker.mjs`（144 几何断言，0.8.2 改方案 K）、`test-line-endings.mjs`（21，0.8.3 新增）、`test-fetch-backends.mjs`（13，0.8.3 扩到 13）。
+> 测试：`test-android-compat.mjs`（14）、`test-settings.mjs`（6）、`test-workbuddy.mjs`（26）、`test-workbuddy-contract.mjs <上游lib/index.js>`（5）、`test-panel-interactions.mjs`（12，0.8.2 新增 8 项 / 0.8.3 扩到 12）、`test-peak-marker.mjs`（144 几何断言，0.8.2 改方案 K）、`test-line-endings.mjs`（21，0.8.3 新增）、`test-fetch-backends.mjs`（13，0.8.3 扩到 13）、`test-footer-row.mjs`（12，0.8.4 新增 T12）。
 > **2026-10-16 / 17 0.8.3**：胶囊 WorkBuddy 积分改「✦ 」前缀（U+2726 单色符号，随主题深浅），
 > 替换「（积分）」全角后缀，与「¥39.86」前缀语法同构（用户选定；候选符号与真实渲染
 > 截图留档 `docs/demos/credit-symbol-demos.html` 与 `legacy/symbol-check/`）。同版还包含
@@ -34,6 +34,10 @@ DeepSeek Harness（DSH）的**侧栏用量/余额插件**：在 Web/桌面端左
 > [v0.8.3 发布说明](docs/release-notes-v0.8.3.md)。注意：窗口顶部
 > `-webkit-app-region: drag` 拖拽条与原生滚动条**不产生任何 DOM 事件**，页面侧无法感知，
 > 属于 DSH/Chromium 的固有限制。
+> **2026-10-17 0.8.4**：胶囊不再盖住 DSH 官方通知卡——`rootStyle` 里去掉了自 0.2.1-slacom.1
+> 就有的 `zIndex:1000`（它把透明背景的胶囊抬到 portal 通知卡之上，两段文字互相穿透）。
+> 回到 `auto` 后由 DOM 顺序决定，后挂的通知/浮层自然覆盖胶囊。像素证据与核查过程见
+> [v0.8.4 发布说明](docs/release-notes-v0.8.4.md)。
 
 ## 2. 关键路径
 
@@ -316,12 +320,16 @@ $token = (("protocol=https`nhost=github.com`n`n" | git credential fill) -replace
    另含详情卡片「点空白偶尔不关」兜底：按下类事件三路（pointerdown/mousedown/
    touchstart）+ click 兜底，`downInside` 去重防拖选误关，panel-interactions 8 → 11。
    已知无法修复的盲区：窗口顶部 `-webkit-app-region: drag` 拖拽条与原生滚动条不产生 DOM 事件。
+13. 0.8.4（2026-10-17，本地构建待验证）：DSH 官方通知卡（左下角悬浮、portal 挂在页面尾部）
+   出现时与胶囊文字互相穿透。像素测量确认胶囊是**全对比**画在通知卡白底之上 → 我们在上；
+   根因是 `rootStyle` 的 `zIndex:1000`（第一版就有）。改为默认 `auto` 后由 DOM 顺序决定，
+   通知/浮层自然覆盖胶囊。footer-row 测试 11 → 12（T12 守住「胶囊不得带正 z-index」）。
 
 ## 11. 未来方向（roadmap）
 
 完整记录在 **[docs/roadmap.md](docs/roadmap.md)**，排新版本时从那里取。当前待做：
 
-1. **方向 5：Agent 协作的更新/安装流程（0.8.4 计划，设计已定）**：插件不能自我替换
+1. **方向 5：Agent 协作的更新/安装流程（0.8.5 计划，设计已定）**：插件不能自我替换
    （`pluginManager.installBundle` 在 `hmr` 存在时拒绝已安装包；自卸载会中断调用链），
    改为「插件检测 + 生成带 sha256/安装目录的提示词 → 用户复制给会话 Agent → Agent 按
    [docs/agent-update.md](docs/agent-update.md) 执行 → 提示重启」。协议文档与
