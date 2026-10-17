@@ -5,8 +5,6 @@
 
 DeepSeek Harness（DSH）的侧栏套餐用量插件：在左侧栏底部显示余额、积分和剩余额度，点击展开详情。
 
-> 当前版本 **0.8.3**（0.8.2 已发布：[v0.8.2 发布说明](https://github.com/Slacom/dsh-usage-dock/releases/tag/v0.8.2)；本版为 WorkBuddy 积分符号调整）。
-
 ![侧栏余额与额度预览](https://raw.githubusercontent.com/Slacom/dsh-usage-dock/main/preview.png)
 
 ## 支持渠道
@@ -22,7 +20,7 @@ DeepSeek Harness（DSH）的侧栏套餐用量插件：在左侧栏底部显示�
 | WorkBuddy / WorkBuddy AI | 已安装的 dsh-workbuddy-connect 状态接口 | 合计剩余积分、套餐明细 |
 
 - 每 **30 秒**刷新；展开面板、窗口聚焦、页面重新可见时立即刷新。
-- 短暂网络失败保留旧值，连续两轮失败显示错误；未登录、缺凭据等错误立即显示。
+- 短暂网络失败保留旧值，连续 5 轮失败才显示错误；未登录、缺凭据等错误立即显示。
 - 胶囊独占侧栏底部一行，位于其他底部插件上方；侧栏折叠时只显示圆点，不可点击。
 - 设置页可开关渠道、配置凭据及余额警告阈值，通过 ▲ / ▼ 调整显示顺序。
 - 余额向下取整到分。DeepSeek / MiMo 警告阈值默认 10 元，填 0 不警告。
@@ -33,7 +31,7 @@ DeepSeek Harness（DSH）的侧栏套餐用量插件：在左侧栏底部显示�
 安卓端包括基于 `0.2.0-rc.2` 的 DSHA / DeepCode 移植环境。不同移植版本仍需核对宿主 API。
 
 ```sh
-dsh plugin --profile web add dsh-usage-dock@0.8.2
+dsh plugin --profile web add dsh-usage-dock
 ```
 
 桌面端按实际 profile 使用 `--profile desktop`；也可在「设置 → 插件」添加包名。
@@ -44,7 +42,7 @@ dsh plugin --profile web add dsh-usage-dock@0.8.2
 - 取数在 **Host 的 Node 原生 fetch** 中执行，不需要手机安装 Python、curl 或桌面应用。
   随附 Python 脚本和系统 curl 仅为有 shell 环境的备用后端。
 - 没有 `deepseekAccount` 服务时使用 DeepSeek API Key；账号模式的峰谷条不出现在 API Key 模式中。
-- 不依赖桌面充值桥；本版不提供内嵌充值按钮。充值在相应平台或官方账号设置中操作。
+- 不依赖桌面充值桥，不提供内嵌充值按钮。充值在相应平台或官方账号设置中操作。
 - WebView 缺 WAAPI 时退化为静态相位定位；缺 ResizeObserver 时定时校准轨道宽度。
 - 已通过无 shell / 无账号服务 / 无配置编辑服务模拟、窄侧栏折叠守卫、请求竞态回归。
   **代码及接口契约检查不代表所有 Android 机型均已真机测试。**
@@ -94,7 +92,7 @@ MiMo Cookie 可在电脑浏览器登录控制台后，从开发者工具的请�
 Cookie 过期需要重新获取；`tp-*` / `ttp-*` 专用 Key 不支持此余额查询。
 
 峰谷条按北京时间工作日 09:00–12:00、14:00–18:00 计算，周末及内置假日表为空闲时段。
-假日表需随年份更新。本版保留 2px 柱与修正后的倒三角，光柱等候选仅在开发演示页保留，未实装。
+假日表需随年份更新。峰谷条保留 2px 柱与倒三角游标，光柱等候选仅在开发演示页保留，未实装。
 
 ## 卸载
 
