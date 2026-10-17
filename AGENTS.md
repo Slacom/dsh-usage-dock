@@ -11,7 +11,7 @@ DeepSeek Harness（DSH）的**侧栏用量/余额插件**：在 Web/桌面端左
 用量与余额，点击可展开详情面板。fork 自 `chendefine/dsh-plugins-plan-usage`，改名 `dsh-usage-dock`
 以避免与上游混淆，并做了一系列定制（见第 6 节）。
 
-**当前版本**：0.8.4（本地构建，仅修复「胶囊盖住官方通知卡」，待真机验证）　|　**上一公开版**：0.8.3（2026-10-17 正式发布：GitHub Release / v0.8.3 标签 / npm `0.8.3`，桌面端与平板实测通过）　|　**更早**：0.8.2、0.8.1、0.7.2（0.8.0 未单独发布）
+**当前版本**：0.8.4（2026-10-17 正式发布：GitHub Release / v0.8.4 标签 / npm `0.8.4`；修复「胶囊盖住官方通知卡」，用户真机确认生效）　|　**上一公开版**：0.8.3（GitHub Release + npm，桌面端与平板实测通过）　|　**更早**：0.8.2、0.8.1、0.7.2（0.8.0 未单独发布）
 
 > **2026-10-15 0.8.2 说明**：主方向为 DSHA WorkBuddy「fetch failed」修复（宿主
 > dsh-web-mobile compress.js × gzip 中间件踩踏，消费侧两处绕过：status 请求声明
@@ -320,7 +320,7 @@ $token = (("protocol=https`nhost=github.com`n`n" | git credential fill) -replace
    另含详情卡片「点空白偶尔不关」兜底：按下类事件三路（pointerdown/mousedown/
    touchstart）+ click 兜底，`downInside` 去重防拖选误关，panel-interactions 8 → 11。
    已知无法修复的盲区：窗口顶部 `-webkit-app-region: drag` 拖拽条与原生滚动条不产生 DOM 事件。
-13. 0.8.4（2026-10-17，本地构建待验证）：DSH 官方通知卡（左下角悬浮、portal 挂在页面尾部）
+13. 0.8.4（2026-10-17，**已正式发布**：GitHub Release + npm `0.8.4`，用户真机确认提示卡可覆盖胶囊）：DSH 官方通知卡（左下角悬浮、portal 挂在页面尾部）
    出现时与胶囊文字互相穿透。像素测量确认胶囊是**全对比**画在通知卡白底之上 → 我们在上；
    根因是 `rootStyle` 的 `zIndex:1000`（第一版就有）。改为默认 `auto` 后由 DOM 顺序决定，
    通知/浮层自然覆盖胶囊。footer-row 测试 11 → 12（T12 守住「胶囊不得带正 z-index」）。

@@ -33,20 +33,19 @@
 - 胶囊根节点**不得**带正 `z-index`（允许 `undefined` / `'auto'`）；
 - 根节点仍 `position: relative`、面板仍 `position: absolute`（防止有人为了修层级把面板改成静态）。
 
-**验证状态（重要）**：官方通知是服务端下发的，本地**无法复现**来对比修复前后。当前结论建立在
-「卡片几何 + 像素测量 + CSS 层叠规则」三条证据上；实际效果要等下一次真实通知出现时确认。
-
-若届时仍然互相穿透（说明该卡先于我们挂载），备选方案已记入 roadmap：用
+**验证状态**：官方通知内容由服务端下发，本地无法主动复现；发布前由用户真机确认——**DSH 的
+「安装并重启」提示卡已经能完整盖住胶囊**（同属页尾挂载的浮层，验证的正是这条层叠路径）。
+若将来出现仍互相穿透的浮层（先于我们挂载），备选方案已记入 roadmap：用
 `document.elementFromPoint()` 检测胶囊所在位置是否被外部元素覆盖，覆盖时暂时隐藏我们的文字
 （不依赖任何 z-index 假设）。
 
-## 安装（预发布，仅 GitHub）
+## 安装
 
-0.8.4 **尚未发布到 npm**（npm `latest` 仍是 0.8.3），本版只提供 GitHub 预发布，供其它设备试装：
+0.8.4 已发布到 **npm**（`latest`）与 **GitHub Release**：
 
-1. **Release 附件直链**（推荐）：在「设置 → 插件 → 添加插件」里粘贴
-   `https://github.com/Slacom/dsh-usage-dock/releases/download/v0.8.4/dsh-usage-dock-0.8.4.tgz`
-2. **Git 仓库**：添加插件时填 `https://github.com/Slacom/dsh-usage-dock`（装主干最新提交）
-3. 已安装旧版的，需**先卸载再安装**（DSH 对第三方插件不支持原地升级）
+1. **npm（推荐）**：`dsh plugin --profile <profile> add dsh-usage-dock@0.8.4`，
+   或在「设置 → 插件 → 添加插件」里填 `dsh-usage-dock`；
+2. **Release 附件直链**：`https://github.com/Slacom/dsh-usage-dock/releases/download/v0.8.4/dsh-usage-dock-0.8.4.tgz`
+3. **Git 仓库**：`https://github.com/Slacom/dsh-usage-dock`（装主干最新提交）
 
-npm 版本待真机验证通过后再发（届时 `latest` 会从 0.8.3 升到 0.8.4）。
+已安装旧版的需**先卸载再安装**（DSH 对第三方插件不支持原地升级）；卸载不会删除渠道配置。
