@@ -271,6 +271,12 @@ $token = (("protocol=https`nhost=github.com`n`n" | git credential fill) -replace
 - **必须带 `make_latest:"true"`**（仅正式版；预发布用 `prerelease:true` + `make_latest:"false"`）：
   用 REST API 建的 release 不会自动抢「Latest」，2026-10-17 就是因为漏了它，
   `/releases/latest` 一直停在 v0.8.2。事后修正：`PATCH /releases/<id>` 传 `{ make_latest:"true" }`。
+- **正文只写「改了什么 / 解决了什么问题 / 怎么解决」**：面向用户、3–8 条，标题已经给出
+  版本号就不要再重复标题。**不要**写像素值、CSS 属性名、内部类名/事件名、宿主实现细节
+  （用户 2026-10-17 明确要求，0.8.2 那种「对齐到 330px、差 5px」的写法不再使用）。
+  工程细节留在 `docs/release-notes-v<版本>.md` 的「工程细节（维护者用）」小节。
+  0.8.3 起的文档都带「更新摘要（GitHub Release 正文）」小节，Release 正文直接取该节；
+  更早版本（0.6.2–0.8.2）的文档只有工程细节，其 Release 正文已于 2026-10-17 在 GitHub 上改写。
 - 发布说明写在仓库里（如 `docs/release-notes-v0.6.2.md`），既进版本库、又可直接作为 Release 正文；
 - 历史：**v0.6.2 是本仓库的第一个 tag 与第一个 GitHub Release**；npm 上 0.4.x/0.5.x/0.6.0
   从未单独发布，用户是从 `0.3.0` 直接跳到 `0.6.1`/`0.6.2` 的——写发布说明时注意这一点，
