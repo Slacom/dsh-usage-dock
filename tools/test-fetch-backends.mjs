@@ -246,7 +246,7 @@ function record(name, status, note) {
   const DEEPSEEK_BALANCE = {
     is_available: true,
     balance_infos: [
-      { currency: 'CNY', total_balance: '11.38', granted_balance: '0.00', topped_up_balance: '11.38' },
+      { currency: 'CNY', total_balance: '11.38', granted_balance: '2.00', topped_up_balance: '9.38' },
     ],
   }
   let intercepted = 0
@@ -293,6 +293,29 @@ function record(name, status, note) {
     assert.equal(intercepted, 1)
     assert.equal(shell.state.calls, 0, '不应回落到 python/curl')
     record('T6 平板场景：DeepSeek API Key 正确读出余额 ¥11.38（零 shell 调用）', 'PASS')
+
+    // T6d [0.8.3] API Key 模式也必须带充值/赠金明细：没有 deepseekAccount 的设备
+    // （DSHA / 平板 / 未登录桌面端）只走这条路径，缺这两个字段详情面板就不会拆行。
+    assert.equal(out.cashBalance, 9.38, '应映射 topped_up_balance（充值余额）')
+    assert.equal(out.bonusBalance, 2, '应映射 granted_balance（赠金余额）')
+    record('T6d API Key 模式返回充值/赠金明细', 'PASS')
+
+    // T6e [0.8.3] 上游没给明细字段时回 null，不能伪造成 0（否则面板会把「没数据」
+    // 画成「赠金 0 元」）。
+    {
+      const saved = DEEPSEEK_BALANCE.balance_infos
+      DEEPSEEK_BALANCE.balance_infos = [{ currency: 'CNY', total_balance: '3.00' }]
+      const bareOut = await deepseek.fetch(
+        { get: () => undefined },
+        tabletShell(),
+        { deepseekApiKey: 'sk-tablet-test' },
+      )
+      assert.equal(bareOut.balance, 3)
+      assert.equal(bareOut.cashBalance, null, '缺 topped_up_balance 时必须回 null')
+      assert.equal(bareOut.bonusBalance, null, '缺 granted_balance 时必须回 null')
+      DEEPSEEK_BALANCE.balance_infos = saved
+      record('T6e 明细字段缺失时回 null（面板只显示总额）', 'PASS')
+    }
 
     // T7：桌面端账号余额仍然优先（含赠金），且不发起任何 HTTP 请求。
     const before = intercepted

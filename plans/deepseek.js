@@ -7,7 +7,8 @@
  *    { normal_wallets: [{currency, balance}], bonus_wallets: [...] }，
  *    赠金与普通余额一并计入显示。
  * 2. **DeepSeek 开放平台 API Key**（回退）：GET https://api.deepseek.com/user/balance
- *    （Bearer 鉴权），取 CNY 的 total_balance。
+ *    （Bearer 鉴权），取 CNY 的 total_balance，并同时映射 topped_up_balance（充值）与
+ *    granted_balance（赠金）——两条数据源都要能给出详情面板的明细行。
  *
  * 账号服务只在 Desktop 组合里存在；缺失、未登录或读取失败时静默回退到 API Key，
  * 因此普通 Web 部署的行为与之前一致。
@@ -167,8 +168,17 @@ export async function fetchPlan(ctx, shell, cfg) {
     const cny = infos.find((b) => b && b.currency === "CNY")
     const info = cny !== undefined ? cny : infos[0]
     const balance = info !== undefined ? toNum(info.total_balance) : null
+    // [0.8.3] 开放平台 /user/balance 也带明细：topped_up_balance（充值）/ granted_balance（赠金）。
+    // 此前只映射了 total_balance，于是 **API Key 模式**（没有 deepseekAccount 的设备，如
+    // DSHA / 平板，或账号未登录时）详情面板只有总额、没有「充值余额 / 赠金余额」两行——
+    // 用户 2026-10-17 发现的两条路径不一致。缺失字段交给 toNum 返回 null（面板只显示总额），
+    // 不能伪造成 0，否则会把「接口没给」画成「赠金是 0 元」。
+    const cashBalance = info !== undefined ? toNum(info.topped_up_balance) : null
+    const bonusBalance = info !== undefined ? toNum(info.granted_balance) : null
     return Object.assign(planBase(plan), {
       balance: balance,
+      cashBalance: cashBalance,
+      bonusBalance: bonusBalance,
       isAvailable: data.is_available === true,
       via: "api",
       warnThreshold: warnThresholdOf(cfg),

@@ -309,6 +309,69 @@ client.restore()
   }
 }
 
+// ===========================================================================
+// 第四组：DeepSeek 余额明细（充值 / 赠金）——账号与 API Key 两种 wire 形态
+// ===========================================================================
+{
+  // 面板文本收集器（与上面几组同款）
+  const collect = (node) => {
+    const texts = []
+    const walk = (n) => {
+      if (n === null || n === undefined) return
+      if (typeof n === 'string' || typeof n === 'number') { texts.push(String(n)); return }
+      if (typeof n !== 'object') return
+      if (Array.isArray(n)) { n.forEach(walk); return }
+      const kids = n.props ? n.props.children : undefined
+      if (Array.isArray(kids)) kids.forEach(walk)
+      else if (kids !== undefined) walk(kids)
+    }
+    walk(node)
+    return texts.join('\n')
+  }
+  const openWithPlan = async (planObj) => {
+    const rt = createRuntime()
+    const cl = loadClient(rt, { payload: { ok: true, data: { plans: [planObj] } } })
+    const row = fakeNode({ display: 'flex', flexDirection: 'row', flexWrap: 'nowrap' })
+    rt.setParent(row)
+    rt.mount(cl.Badge, { wide: true, configForm: null })
+    await rt.settle({ wide: true, configForm: null })
+    const tree = await rt.settle({ wide: true, configForm: null })
+    tree.props.children[0].props.onClick()
+    const opened = await rt.settle({ wide: true, configForm: null })
+    const text = collect(opened.props.children[1])
+    cl.restore()
+    return text
+  }
+  try {
+    // 账号模式：host 给 cashBalance / bonusBalance → 两行明细必须出现。
+    const accountText = await openWithPlan({
+      id: 'deepseek', name: 'DeepSeek', balance: 38.72, cashBalance: 34.22, bonusBalance: 4.5,
+      isAvailable: true, via: 'account', warnThreshold: 10,
+    })
+    assert.ok(accountText.includes('充值余额：'), '账号模式应渲染「充值余额：」明细')
+    assert.ok(accountText.includes('赠金余额：'), '账号模式应渲染「赠金余额：」明细')
+    assert.ok(accountText.includes('34.22') && accountText.includes('4.50'), '明细数值应取 cash/bonus 字段')
+
+    // API Key 模式（[0.8.3] 修复后同样带明细）：两个字段齐全时也要分行。
+    const apiText = await openWithPlan({
+      id: 'deepseek', name: 'DeepSeek', balance: 11.38, cashBalance: 9.38, bonusBalance: 2,
+      isAvailable: true, via: 'api', warnThreshold: 10,
+    })
+    assert.ok(apiText.includes('充值余额：') && apiText.includes('9.38'), 'API Key 模式也应渲染充值余额明细')
+    assert.ok(apiText.includes('赠金余额：') && apiText.includes('2.00'), 'API Key 模式也应渲染赠金余额明细')
+
+    // 上游没给明细（旧 Host / 字段缺失）：只能有总额，不得出现明细行或伪造的 0。
+    const bareText = await openWithPlan({
+      id: 'deepseek', name: 'DeepSeek', balance: 3, isAvailable: true, via: 'api', warnThreshold: 10,
+    })
+    assert.ok(!bareText.includes('充值余额：'), '缺明细字段时不得渲染「充值余额：」')
+    assert.ok(!bareText.includes('赠金余额：'), '缺明细字段时不得渲染「赠金余额：」')
+    record('T23 DeepSeek 余额明细：账号/API Key 两种形态都分行，缺字段不伪造', 'PASS')
+  } catch (err) {
+    record('T23 DeepSeek 余额明细', 'FAIL', err.message)
+  }
+}
+
 const failed = results.filter((r) => r.status === 'FAIL')
 console.log('\n' + results.length + ' 项：' + (results.length - failed.length) + ' 通过, ' + failed.length + ' 失败')
 process.exit(failed.length === 0 ? 0 : 1)

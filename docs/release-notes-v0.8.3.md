@@ -61,6 +61,25 @@
   T6b（哨兵 Key 不发上游请求、错误以账号侧为主因）、T6c（纯数字 Key 按哨兵处理），
   该测试 8 → 11 项。
 
+## DeepSeek 余额明细：充值 / 赠金分行（账号 + API Key 两条路径）
+
+- **需求（用户 2026-10-17）**：DeepSeek 的赠送余额「和 MiMo 一样在详情卡片里分开描述」。
+- **账号路径**（桌面端已登录 DSH 账号，`deepseekAccount`）：
+  `value` = 普通余额钱包 → `cashBalance`（面板写「充值余额」）；
+  `bonusWallets` = 赠金钱包 → `bonusBalance`（面板写「赠金余额」）；
+  `balance` 仍是两者之和，胶囊显示总计。
+- **API Key 路径**（**此前遗漏，本次补上**）：开放平台 `GET /user/balance` 的
+  `balance_infos[]` 本来就带 `topped_up_balance`（充值）与 `granted_balance`（赠金），
+  但旧实现只映射了 `total_balance`。于是没有 `deepseekAccount` 的设备（DSHA / 平板 /
+  未登录桌面端）只有总额一行、看不到明细——用户 2026-10-17 发现两条路径不一致。
+  现在两条路径都返回 `cashBalance` / `bonusBalance`。
+- **缺字段不伪造 0**：上游没给明细时 `toNum` 返回 `null`，客户端判 `typeof === 'number'`
+  不成立 → 只显示总额，避免把「接口没给」画成「赠金 0 元」。
+- **面板布局**：与 MiMo 同款「同一行左右两端」——DeepSeek 左「充值余额：」右「赠金余额：」；
+  MiMo 左「现金余额：」右「赠送余额：」（控制台口径）。
+- 测试：`test-fetch-backends.mjs` 11 → **13** 项，新增 T6d（API Key 模式返回充值/赠金明细：
+  9.38 + 2.00 = 11.38）、T6e（明细字段缺失时回 `null`，面板只显示总额）。
+
 ## 峰谷条：API Key / 账号两种模式在所有设备都显示
 
 - **背景（用户 2026-10-16 要求）**：峰谷条此前仅在 DeepSeek 账号登录（`via === 'account'`）
@@ -139,10 +158,10 @@ function onClickOutside(e){ if (downInside !== true && !inCard(e.target)) setOpe
 ## 测试
 
 - 断言同步：degrade-refresh **42** 项（¥/✦ 断言改薄空格形态；T3 适配阈值 5；
-  T7 改为「API Key 模式也显示峰谷条」）、panel-interactions **11** 项（T12 扩展 + 新增
-  T20 mousedown 兜底、T21 click 兜底、T22 拖选不误关）、collapsed-pill 4 项
-  （`¥\u20097.38`）、android-compat **14** 项（新增 API Key 峰谷相位断言）、
-  fetch-backends **11** 项、line-endings **21** 项（新增守卫）；
+  T7 改为「API Key 模式也显示峰谷条」）、panel-interactions **12** 项（T12 扩展 + 新增
+  T20 mousedown 兜底、T21 click 兜底、T22 拖选不误关、T23 DeepSeek 明细分行）、
+  collapsed-pill 4 项（`¥\u20097.38`）、android-compat **14** 项（新增 API Key 峰谷相位断言）、
+  fetch-backends **13** 项（新增 T0 哨兵、T6b、T6c、T6d、T6e）、line-endings **21** 项（新增守卫）；
   其余 footer-row 11 / settings 6 / workbuddy 26 / mimo-parse 21 / peak-phase 32 /
   workbuddy-contract 5 / peak-marker 144 几何断言全部通过。
 
