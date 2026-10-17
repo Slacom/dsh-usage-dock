@@ -40,10 +40,13 @@
 `document.elementFromPoint()` 检测胶囊所在位置是否被外部元素覆盖，覆盖时暂时隐藏我们的文字
 （不依赖任何 z-index 假设）。
 
-## 升级
+## 安装（预发布，仅 GitHub）
 
-```powershell
-dsh plugin --profile <profile> add dsh-usage-dock@0.8.4
-```
+0.8.4 **尚未发布到 npm**（npm `latest` 仍是 0.8.3），本版只提供 GitHub 预发布，供其它设备试装：
 
-npm 尚未发布本版（0.8.4 为本地构建，待真机验证后推送）。
+1. **Release 附件直链**（推荐）：在「设置 → 插件 → 添加插件」里粘贴
+   `https://github.com/Slacom/dsh-usage-dock/releases/download/v0.8.4/dsh-usage-dock-0.8.4.tgz`
+2. **Git 仓库**：添加插件时填 `https://github.com/Slacom/dsh-usage-dock`（装主干最新提交）
+3. 已安装旧版的，需**先卸载再安装**（DSH 对第三方插件不支持原地升级）
+
+npm 版本待真机验证通过后再发（届时 `latest` 会从 0.8.3 升到 0.8.4）。
