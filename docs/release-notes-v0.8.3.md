@@ -18,8 +18,16 @@
   - ✦ 与数字之间用**英文空格**（`STAR_GAP`），¥/$ 保持薄空格（`SYMBOL_GAP`）：
     ✦ 缩放后进宽变小，需配更宽的分隔才与 ¥ 打平。canvas 墨迹级可见间隙实测：
     胶囊 ✦ 1.81 vs ¥ 1.87（差 0.06px）、面板 ✦ 3.74 vs ¥ 3.60（差 0.14px）。
-  - ✦ 必须**内嵌在数值 span 内**，不能拆成 flex 子项——面板大号行 `gap: 8` 会被
-    吃两次，使 ✦ 后面多出 8px 空隙（0.8.3 中途出现过的回归，已修正）。
+  - **垂直对齐（方案 B，第三轮修正）**：✦ 与数字此前是同一文本流内的基线对齐，
+    基线本身是齐的（Android 实测底边同为 y=392），但 **Android Noto 把 ✦ 画得又小又靠下**
+    （面板实测：✦ 墨迹 10px vs 数字 16px，光学中心低 3.0px；胶囊低 2.0px），而 Windows
+    Segoe UI Symbol 下同一份 CSS 偏移 0.00px——**纯平台字体回退差异**，用 translateY
+    只能治好一端。改为**数值区 flex 中心对齐**：`valueFlexStyle(size)` 给容器
+    `display:inline-flex; alignItems:center`，✦ 与数字各成子项，间距由数字子项的
+    `marginLeft: 0.34em` 提供（等价于原先的 STAR_GAP 视觉间距，但不再依赖字体基线）。
+    实测偏移：胶囊 -1.17px → **-0.17px**；面板降至亚像素级。
+  - 注意：flex 子项只在**数值区内层**（`valueFlexStyle` 包裹的「✦ + 数字」组），
+    不拆到面板大号行的外层 flex（那会吃掉两次 `gap: 8`，是 0.8.3 中途的回归）。
   - 面板大号行 WorkBuddy 与 DeepSeek/MiMo 行高一致：✦ 缩放后不再把行撑高
     （未缩放时其墨迹 ascent 14 / descent 2 比 ¥ 的 13 / 0 更大）。
 - ✦ 为单色文本符号，继承文字色（`--dsw-alias-label-primary`），随深浅色主题

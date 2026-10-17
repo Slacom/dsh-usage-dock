@@ -227,28 +227,43 @@ var SYMBOL_GAP = /* U+2009 thin space（勿改成普通空格，间距实测见�
 // 因此间距常量分开：¥/$ 用 SYMBOL_GAP，✦ 用 STAR_GAP。
 var STAR_GAP = ' '
 
-// [0.8.3] ✦ 的「与 ¥ 等大等宽」渲染参数（用户两轮实测后定稿）。
+// [0.8.3] ✦ 的渲染参数（用户三轮实测后定稿：Android 与桌面都要对齐）。
 //
-// 问题 1（视觉大一号）：✦ 字形在 18px 下墨迹 ascent14/descent2，比 ¥ 的
-//   ascent13/descent0 更大且基线不对称，直接同字号渲染会把 WorkBuddy 行撑高、
-//   看起来比余额行「大一号」（数字本身经墨迹测量完全等大）。
-// 问题 2（符号列错轴）：胶囊数值列**右对齐**，对齐的是「进宽右缘」。¥ 进宽
-//   6.47px、✦ 进宽 9.79px（12px 语境），右缘虽对齐但墨迹中心差 1.79px——
-//   用户看到的「¥ 和 ✦ 不在同一条垂直轴线」。
+// 演进：
+//   1) 视觉「大一号」：✦ 在 18px 下墨迹 ascent14/descent2，比 ¥（13/0）更高且
+//      基线不对称 → ✦ 缩到基准字号 2/3。
+//   2) 符号列错轴：胶囊数值列右对齐，而 ¥ 进宽 6.47px / ✦ 进宽 9.79px
+//      → 缩到 2/3 后进宽 6.53 ≈ ¥ 6.47，右对齐下中心与数字起点同时对齐。
+//   3) [方案 B] 光学中心偏下：✦ 与数字**基线虽齐**，但 Android Noto 把 ✦ 画得
+//      又小又靠下（实测面板：✦ 墨迹 10px vs 数字 16px，中心低 3.0px；胶囊低 2.0px；
+//      同一份 CSS 在 Windows Segoe UI Symbol 下偏移 0.00px——纯平台字体差异，
+//      用 translateY 只能治好一端）。因此数值区改**flex 中心对齐**
+//      （align-items:center 按盒子中心对齐，不依赖字体基线），符号与数字各成子项。
 //
-// 解法：✦ 取「基准字号 × 2/3」并包成 inline-block。实测（Chrome canvas）：
-//   12px 语境 ✦@8px  → 进宽 6.53 vs ¥ 6.47（差 0.06）、墨迹高 6 vs 9、中心偏移 0.00
-//   18px 语境 ✦@12px → 进宽 9.79 vs ¥ 9.99（差 0.20）、墨迹高 11 vs 13、中心偏移 0.00
-// 于是 $ / ¥ / ✦ 三种符号占位几乎相同，右对齐下中心与数字起点同时对齐。
-// 必须内嵌在数值 span 里使用（不要拆成 flex 子项——面板行 gap:8 会被吃两次，
-// 使 ✦ 后面多出 8px 空隙，0.8.3 中途出现过该回归）。
+// 用法：数值区容器用 valueFlexStyle(fontSize)，内部依次放
+//   h('span', { style: starFixStyle(fontSize) }, '✦') 与 h('span', {}, 数字)。
+//   ⚠️ 符号必须是**子项**（不能塞回同一个文本 span，那样又回到基线对齐）。
 function starFixStyle(fontSize) {
   return {
     display: 'inline-block',
     fontSize: Math.round(fontSize * 2 / 3), // 与 ¥ 进宽/中心对齐的比例（实测见上）
     lineHeight: 1,                          // 防止撑高行框
   }
-}' '
+}
+
+/**
+ * [0.8.3 方案 B] 数值区容器：flex 横向 + 中心对齐。
+ * 不依赖字体基线，因此在 Windows / Android 的字体回退差异下都能把 ✦ 与数字居中对齐。
+ * 右对齐由外层容器的 marginLeft:auto 决定；宽度按内容自适应。
+ */
+function valueFlexStyle(fontSize) {
+  return {
+    display: 'inline-flex',
+    alignItems: 'center',
+    fontSize: fontSize,
+    lineHeight: 1.2,
+  }
+}
 
 // ===========================================================================
 // [0.8.1 定稿] WorkBuddy 积分明细的自适应列表
@@ -924,18 +939,21 @@ function PlanUsageBadge(props) {
     var plan = plans[i]
     var meta = planMeta(plan.id)
     // [local patch 0.8.1] WorkBuddy 积分渠道：右侧显示剩余积分（千分位）；
-    // [0.8.3] 「（积分）」全角后缀改为「✦」前缀（U+2726，单色、随主题深浅），
-    // 与余额渠道「¥39.85」的「前缀符号 + 数字」语法同构（用户 2026-10-16 选定）。
-    // ✦ 用 starFixStyle(12)=8px 缩放：进宽与 ¥ 几乎相同（6.53 vs 6.47），右对齐下
-    // 符号中心与数字起点同时对齐（用户实测「¥ 与 ✦ 不在同一垂直轴线」的修正）。
-    // 因此这一行给 valueNodes（节点数组）而不是 values（纯字符串）。
+    // [0.8.3] 「（积分）」全角后缀改为「✦」前缀（U+2726，单色、随主题深浅）。
+    // ✦ 用 starFixStyle(12)=8px 缩放（进宽 ≈ ¥），并用 valueFlexStyle 做 flex
+    // **中心对齐**——Android Noto 把 ✦ 画得偏下，基线对齐会低 2–3px（实测），
+    // flex 的 align-items:center 不依赖字体基线，两端都居中。
     if (meta.creditMode === true && (typeof plan.creditsTotal === 'number' || plan.creditsUnlimited === true)) {
       var wbNum = plan.creditsUnlimited === true ? '∞' : formatCredit(plan.creditsTotal)
       capsuleRows.push({
         dot: plan.stale === true ? 'var(--dsw-alias-label-tertiary)' : 'var(--dsw-alias-state-success-primary)',
         label: meta.name,
         values: ['✦' + STAR_GAP + wbNum], // title / 无障碍文本用纯字符串
-        valueNodes: [h('span', { style: starFixStyle(12), key: 'star' }, '✦'), STAR_GAP + wbNum],
+        valueNodes: [
+          h('span', { style: starFixStyle(12), key: 'star' }, '✦'),
+          h('span', { style: { marginLeft: '0.34em' }, key: 'num' }, wbNum),
+        ],
+        valueFlex: true,
         stale: plan.stale === true,
       })
       continue
@@ -1043,7 +1061,12 @@ function PlanUsageBadge(props) {
         return h('span', { style: pillRowStyle, key: idx },
           h('span', { style: Object.assign({}, dotStyle, { background: r.dot || dotColor }) }),
           wide && h('span', { style: capNameStyle }, r.label),
-          wide && h('span', { style: r.stale ? Object.assign({}, capValueStyle, staleValueStyle) : capValueStyle },
+          wide && h('span', {
+            style: r.valueFlex === true
+              // [0.8.3 方案 B] WorkBuddy 行：flex 中心对齐（符号盒与数字盒按中心对齐）
+              ? Object.assign({}, capValueStyle, valueFlexStyle(12), r.stale ? staleValueStyle : {})
+              : (r.stale ? Object.assign({}, capValueStyle, staleValueStyle) : capValueStyle),
+          },
             r.valueNodes ? r.valueNodes : r.values.join(' ')),
         )
       })
@@ -1073,7 +1096,14 @@ function PlanUsageBadge(props) {
               h('span', { style: Object.assign({}, dotStyle, { width: 9, height: 9, background: 'var(--dsw-alias-state-success-primary)' }) }),
               // [0.8.3] 面板大号行与胶囊同构：「✦∞」。✦ 必须**内嵌在这个数值 span 里**
               // （不能拆成 flex 子项：本行 gap:8 会被吃两次，✦ 后面多出 8px 空隙）。
-              h('span', {}, h('span', { style: starFixStyle(18) }, '✦'), STAR_GAP + '∞'),
+              // [0.8.3 方案 B] 大号行改 flex 中心对齐：✦ 与数字各成子项，
+              // align-items:center 不依赖字体基线（Android Noto 的 ✦ 偏下 2–3px）。
+              // 注意本行是 flex 容器（balRowStyleStatic），这里再套一层 inline-flex
+              // 只影响这组「✦ + 数字」，不会让 gap:8 被吃两次。
+              h('span', { style: valueFlexStyle(18) },
+                h('span', { style: starFixStyle(18) }, '✦'),
+                h('span', { style: { marginLeft: '0.34em' } }, '∞'),
+              ),
             ),
           )
         } else if (typeof plan.creditsTotal === 'number') {
@@ -1103,9 +1133,11 @@ function PlanUsageBadge(props) {
           inner = h('div', {},
             h('div', { style: Object.assign({}, balRowStyleStatic, { color: 'var(--dsw-alias-label-primary)' }) },
               h('span', { style: Object.assign({}, dotStyle, { width: 9, height: 9, background: 'var(--dsw-alias-state-success-primary)' }) }),
-              // [0.8.3] 面板大号行与胶囊同构：「✦1,748」。✦ 内嵌在数值 span 内
-              // （拆成 flex 子项会多吃一次 gap:8，见 starFixStyle 注释）。
-              h('span', {}, h('span', { style: starFixStyle(18) }, '✦'), STAR_GAP + formatCredit(plan.creditsTotal)),
+              // [0.8.3 方案 B] 与胶囊同构：flex 中心对齐的「✦ + 数字」。
+              h('span', { style: valueFlexStyle(18) },
+                h('span', { style: starFixStyle(18) }, '✦'),
+                h('span', { style: { marginLeft: '0.34em' } }, formatCredit(plan.creditsTotal)),
+              ),
             ),
             detailBlock,
             // [0.8.2] 部分取数脚注：某个版本取不到数据时，合计只是已取到版本的

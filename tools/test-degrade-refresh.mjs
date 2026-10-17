@@ -338,10 +338,17 @@ async function openPanel(payload) {
     },
   }
   let tree = await refreshWith(async () => ({ json: async () => few }))
-  // [0.8.3] ✦ 与数字间是**英文空格**（STAR_GAP）——✦ 缩放后进宽变小，配普通空格
-  // 才与 ¥ 的 thin（SYMBOL_GAP）可见间隙打平（实测见 client.js 常量注释）。
-  check('T11a 胶囊显示「✦ 3,401.5」前缀形态（英文空格）', textOf(tree).includes('✦ 3,401.5')
-    && !textOf(tree).includes('（积分）'), textOf(tree))
+  // [0.8.3 方案 B] ✦ 与数字现在是 flex 的两个子项（中心对齐不依赖字体基线），
+  // 两者间距由数字子项的 marginLeft(0.34em) 提供，不再是文本里的空格。
+  // 因此断言：符号与数字都在、顺序正确、无「（积分）」后缀、且数值区是 flex 容器。
+  const pillText = textOf(tree)
+  check('T11a 胶囊显示「✦ + 3,401.5」（flex 结构，符号在前）',
+    pillText.includes('✦') && pillText.includes('3,401.5')
+    && pillText.indexOf('✦') < pillText.indexOf('3,401.5')
+    && !pillText.includes('（积分）'), pillText)
+  const starFlex = elementsOf(tree).find((el) => el.props && el.props.style
+    && el.props.style.display === 'inline-flex' && el.props.style.alignItems === 'center')
+  check('T11a2 WorkBuddy 数值区为 flex 中心对齐（方案 B）', starFlex !== undefined)
   tree = await openPanel(few)
   let text = textAll(tree)
   check('T11b 少量明细以文字铺开（无滚动容器）', text.includes('企业额度') && !text.includes('积分来自'), text)
