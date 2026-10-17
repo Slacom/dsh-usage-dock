@@ -3,7 +3,7 @@
 > 记录已经想清楚、但**尚未排期实现**的改进点。每条都注明动机、涉及位置与实现约束，
 > 未来排版本时直接从这里取。已实现的条目移到文末「已落地」并注明版本。
 
-**当前版本**：0.8.1，见 [release-notes-v0.8.1.md](release-notes-v0.8.1.md)。
+**当前版本**：0.8.3，见 [release-notes-v0.8.3.md](release-notes-v0.8.3.md)（2026-10-17 正式发布）。
 0.8.0 是未单独发布的本地阶段；最终版已移除内嵌充值入口，增加 WorkBuddy 积分与渠道排序。
 游标替代方案用户决定暂保留、不实装，见 [新方向演示](demos/cursor-directions-v2.html)。
 
@@ -58,7 +58,55 @@
 
 ---
 
+## 方向 5：Agent 协作的更新/安装流程（已设计，排在 0.8.4）
+
+> **状态（2026-10-17）**：用户确认方向，**设计已定，暂不实现**；0.8.3 封版发布后开工。
+> 协议文档与校验脚本已在 0.8.3 期间落库（`docs/agent-update.md`、`tools/verify-install.mjs`）。
+
+**提出**：2026-10-17（用户希望插件能自助更新；评估后确认“插件不能替换自己”）。
+
+**为什么不让插件自己装**（结论性，别再回头试）：
+- DSH 的 `pluginManager.installBundle` 在 `hmr` 服务存在时对已安装包直接抛
+  `already-installed`（见 `dsh-plugin-manager/lib/index.js`，`dsh-base` 默认挂载 `hmr`）；
+  唯一出路是先 `removeBundle` 卸载自己 → loader 立刻卸载当前 fiber，后续安装调用链断掉；
+- 绕过 pnpm 直接覆盖 `node_modules` 会让 profile 清单/锁文件与磁盘长期不一致
+  （0.8.3 期间排查过的「代码来源 0.7.2 / 当前版本 0.8.3」就是这个后果）；
+- 自下载自覆盖还绕开了 pnpm 的 integrity 校验，且失败时可能让整个 profile 起不来。
+
+**方案：三角色分工**
+1. **插件**（只读）：设置页顶部「检查更新」→ 命中新版本显示徽标 + changelog 摘要 +
+   「复制更新提示词」按钮。提示词里带**精确参数**：当前版本、目标版本、安装目录绝对路径、
+   附件直链、sha256、profile 名、是否跟踪预发布。
+2. **用户**：点复制 → 粘进会话。
+3. **会话 Agent**：按 `docs/agent-update.md` 执行——能力自检 → 下载 → 校验 sha256 →
+   解包验证 → 备份 → 逐文件原子覆盖 → `tools/verify-install.mjs` 校验 → 提示重启；
+   任何一步失败按回滚流程处理。
+
+**0.8.4 待做**：
+- Host：`/api/plan-usage/update-check`（GitHub Releases 含 prerelease + semver 比较 +
+  **防降级** + 10 分钟缓存 + 可选“跟踪预发布”开关）。版本源**不能只查 npm**：
+  `latest` 会落后于 GitHub 上的 prerelease，会误判成“该降级”。
+- Client：按钮/徽标/changelog 摘要/复制提示词（提示词由插件按模板生成，与文档同源）。
+- 能力探测：Agent 写不了安装目录（移动端沙箱/只读）时降级为「下载到工作区 + 引导走插件页」。
+- 测试：update-check 的版本比较与防降级、提示词模板字段完整性、离线/限流降级。
+- 明确的边界：**永不自动重启 DSH**（没有公开 API，且会杀掉宿主），只提示。
+
+**涉及文件**：`index.js`（新路由）、`client.js`（设置页顶部）、`docs/agent-update.md`（已存在）、
+`tools/verify-install.mjs`（已存在）、`tools/test-*.mjs`。
+
+---
+
 ## 已落地
+
+### 0.8.3（2026-10-17，正式发布）
+
+- WorkBuddy 积分改「✦ 」前缀（U+2726），缩放行内块 + flex 中心对齐，跨平台光学居中对齐。
+- WorkBuddy 与 WorkBuddy AI 拆成两个独立渠道（分别开关、排序、胶囊分行、面板分行）。
+- DeepSeek 余额明细：账号路径 `value`/`bonusWallets`、API Key 路径
+  `topped_up_balance`/`granted_balance`，缺失字段不伪造 0。
+- 详情卡片外点关闭兜底：`pointerdown` + `mousedown` + `touchstart` + `click`，`downInside` 去重。
+- 超时 30s / 失败阈值 5；API Key 模式也渲染峰谷条；哨兵 API Key 跳过注定 401 的请求。
+- 新增 `tools/test-line-endings.mjs` 守卫 LF/CRLF 混改。
 
 ### 0.8.1（2026-10-15，最终实现）
 

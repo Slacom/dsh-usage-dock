@@ -11,7 +11,7 @@ DeepSeek Harness（DSH）的**侧栏用量/余额插件**：在 Web/桌面端左
 用量与余额，点击可展开详情面板。fork 自 `chendefine/dsh-plugins-plan-usage`，改名 `dsh-usage-dock`
 以避免与上游混淆，并做了一系列定制（见第 6 节）。
 
-**当前版本**：0.8.3（GitHub 预发布 pre-release，待用户真机测试；0.8.2 已于 2026-10-16 完整发布：GitHub 主干 / v0.8.2 标签 / Release / npm 均上线，移动端初步实测通过）　|　**上一公开版**：0.8.2　|　**更早**：0.8.1、0.7.2（0.8.0 未单独发布）
+**当前版本**：0.8.3（2026-10-17 **正式发布**：GitHub Release / v0.8.3 标签 / npm `0.8.3` 均上线，桌面端与平板实测通过）　|　**上一公开版**：0.8.2　|　**更早**：0.8.1、0.7.2（0.8.0 未单独发布）
 
 > **2026-10-15 0.8.2 说明**：主方向为 DSHA WorkBuddy「fetch failed」修复（宿主
 > dsh-web-mobile compress.js × gzip 中间件踩踏，消费侧两处绕过：status 请求声明
@@ -309,7 +309,7 @@ $token = (("protocol=https`nhost=github.com`n`n" | git credential fill) -replace
    降级）、峰谷条游标改方案 K「上下对尖」（上下三角夹住「现在」，白柱与轨道内覆盖物
    全部移除）。测试：workbuddy 22 项、panel-interactions 8 项（新增）、peak-marker
    144 几何断言（改方案 K）；mock-react 对齐 effect cleanup 与 mock DOM 父子链语义。
-12. 0.8.3（2026-10-16 / 17，GitHub 预发布 pre-release，待真机测试）：
+12. 0.8.3（2026-10-16 / 17，**已正式发布**：GitHub Release + npm `0.8.3`，桌面端与平板实测通过）：
    WorkBuddy 积分改「✦ 」前缀、WorkBuddy 与 WorkBuddy AI 拆成两个独立渠道
    （可分别开关与排序）、DeepSeek 充值/赠金分行、胶囊数值右对齐、超时 30s / 失败阈值 5、
    API Key 模式也渲染峰谷条，并新增 `tools/test-line-endings.mjs`（21）守卫 LF/CRLF 混改；
@@ -321,7 +321,13 @@ $token = (("protocol=https`nhost=github.com`n`n" | git credential fill) -replace
 
 完整记录在 **[docs/roadmap.md](docs/roadmap.md)**，排新版本时从那里取。当前待做：
 
-1. **Host 端 `/api/plan-usage` 结果缓存 + 请求合并**（⚠️ 配套方案，roadmap 方向 4 里负面效果
+1. **方向 5：Agent 协作的更新/安装流程（0.8.4 计划，设计已定）**：插件不能自我替换
+   （`pluginManager.installBundle` 在 `hmr` 存在时拒绝已安装包；自卸载会中断调用链），
+   改为「插件检测 + 生成带 sha256/安装目录的提示词 → 用户复制给会话 Agent → Agent 按
+   [docs/agent-update.md](docs/agent-update.md) 执行 → 提示重启」。协议文档与
+   `tools/verify-install.mjs` 已落库，剩余工作量见 roadmap 方向 5。**永不自动重启 DSH**。
+
+2. **Host 端 `/api/plan-usage` 结果缓存 + 请求合并**（⚠️ 配套方案，roadmap 方向 4 里负面效果
    与风险写得很全，动手前必读）：按渠道独立内存缓存（TTL 30s 起步）+ single-flight +
    stale-if-error，收敛多窗口翻倍打上游的请求量。**用户 2026-10-14 确认：备选方向，
    暂不推进**。前置条件：`?fresh=1` 强制刷新通道（0.8.0 的三个立即刷新触发点必须能
@@ -333,4 +339,4 @@ $token = (("protocol=https`nhost=github.com`n`n" | git credential fill) -replace
 
 ---
 
-*文档更新时间：2026-10-15*
+*文档更新时间：2026-10-17*

@@ -1,7 +1,7 @@
 # dsh-usage-dock v0.8.3 发布说明
 
-发布日期：2026-10-16（外壳/符号部分）· 2026-10-17（追加「点空白不关闭」兜底，并以 GitHub
-**预发布 pre-release** 形式发布，供其它设备安装测试）
+发布日期：2026-10-16（外壳/符号部分）· 2026-10-17（追加「点空白不关闭」兜底与 DeepSeek
+API Key 明细，同日**正式发布**：GitHub Release + npm `0.8.3`）
 
 ## 符号与间距统一（胶囊 + 详情面板）
 
@@ -176,16 +176,19 @@ function onClickOutside(e){ if (downInside !== true && !inCard(e.target)) setOpe
 - **上游 401 报错回显凭据的加固**（DeepSeek 官方会在 401 响应体里回显收到的 Key，
   插件原样透传）：已识别该信息泄露面，列为后续可选改进。
 
-## 安装（预发布版本）
+## 安装
 
-0.8.3 **尚未发布到 npm**（npm 上最新仍是 0.8.2），本次只提供 GitHub 预发布。
-两种拿包方式：
+0.8.3 已发布到 **npm**（`latest`）与 **GitHub Release**。三种拿包方式：
 
-1. **GitHub Release 附件**（推荐给 DSH 插件管理器）：下载本 Release 的
-   `dsh-usage-dock-0.8.3.tgz`，在「设置 → 插件 → 添加插件」里粘贴该附件的直链
-   （`https://github.com/Slacom/dsh-usage-dock/releases/download/v0.8.3/dsh-usage-dock-0.8.3.tgz`），
+1. **npm（推荐）**：`dsh plugin --profile <profile> add dsh-usage-dock@0.8.3`，
+   或在「设置 → 插件 → 添加插件」里填 `dsh-usage-dock`；
+2. **GitHub Release 附件**：下载本 Release 的 `dsh-usage-dock-0.8.3.tgz`，在「添加插件」里
+   粘贴附件直链（`https://github.com/Slacom/dsh-usage-dock/releases/download/v0.8.3/dsh-usage-dock-0.8.3.tgz`），
    插件管理器支持 `.tgz` 直链安装；
-2. **Git 仓库**：添加插件时填 `https://github.com/Slacom/dsh-usage-dock`（会装主干最新提交）。
+3. **Git 仓库**：添加插件时填 `https://github.com/Slacom/dsh-usage-dock`（装主干最新提交）。
 
 桌面端本机调试也可直接文件覆盖（见 `AGENTS.md` 第 4 节）。安装后重启 DSH / 安卓引擎并刷新页面。
+
+> 升级说明：DSH 0.2.x 的插件管理器对第三方插件不支持原地升级（详情页没有「更新」按钮），
+> 需要先卸载再安装；卸载不会删除 profile 里的渠道配置。
 
