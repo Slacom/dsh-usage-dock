@@ -1,0 +1,29 @@
+{
+  "_note": "脱敏 fixture：边界与非法值。用于断言「不把缺数据/坏数据转换成 0% 已用或 100% 剩余」。",
+  "_case": "broken —— 空对象、缺窗口、非法数值、边界 0/1",
+  "variants": {
+    "empty": {},
+    "nulls": { "usage": null, "limits": null, "usages": null },
+    "zeroLimit": {
+      "usage": { "limit": "0", "used": "0", "resetTime": "2026-10-06T13:23:46Z" }
+    },
+    "nonNumeric": {
+      "usage": { "limit": "abc", "used": "xyz", "resetTime": "2026-10-06T13:23:46Z" }
+    },
+    "ratioBoundLow": {
+      "usages": { "limit_5h": { "used_ratio": 0, "reset_time": "2026-10-06T13:23:46Z" } }
+    },
+    "ratioBoundHigh": {
+      "usages": { "limit_5h": { "used_ratio": 1, "reset_time": "2026-10-06T13:23:46Z" } }
+    },
+    "ratioOutOfRange": {
+      "usages": { "limit_5h": { "used_ratio": 1.7, "reset_time": "2026-10-06T13:23:46Z" } }
+    },
+    "limitWithoutUsed": {
+      "usage": { "limit": "100", "resetTime": "2026-10-06T13:23:46Z" }
+    },
+    "limitWithRemainingOnly": {
+      "usage": { "limit": "100", "remaining": "100", "resetTime": "2026-10-06T13:23:46Z" }
+    }
+  }
+}

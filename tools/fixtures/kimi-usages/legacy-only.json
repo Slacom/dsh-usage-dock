@@ -1,0 +1,22 @@
+{
+  "_note": "脱敏 fixture：仅保留字段形状与量级，无账号/令牌/套餐名。来源见 docs/evidence-0.9.0.md。",
+  "_case": "legacy-only —— 只有旧版 usage + limits[]，无 ratio-pool",
+  "user": { "region": "cn", "membership": { "level": "LEVEL_BASIC" } },
+  "usage": {
+    "limit": "100",
+    "used": "19",
+    "remaining": "81",
+    "resetTime": "2026-09-19T16:45:59.449979Z"
+  },
+  "limits": [
+    {
+      "window": { "duration": 300, "timeUnit": "TIME_UNIT_MINUTE" },
+      "detail": {
+        "limit": "100",
+        "used": "1",
+        "remaining": "99",
+        "resetTime": "2026-09-19T14:45:59.449979Z"
+      }
+    }
+  ]
+}
