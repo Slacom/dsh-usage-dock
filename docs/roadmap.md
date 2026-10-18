@@ -111,6 +111,91 @@ mock 环境没有 `elementFromPoint` 时直接跳过。
 
 ---
 
+## 方向 6：把额度/余额暴露给模型，让 Agent 按余额阶段降级（已评估，待排期）
+
+> **状态（2026-10-18）**：用户提出「余额低于阈值时让模型收尾而不是开新任务」。技术路径已验证
+> 可行，但**必须先修方向 7**（口径错了会让模型误判），且建议与方向 5 一起排 0.8.5/0.9.0。
+
+**需求**：插件通过 DSH 官方工具注册（`ctx.tools.register()`）或 MCP，向模型提供「各渠道还剩多少」，
+使 Agent 能在额度紧张时改变行为——例如 Codex 剩余 <20% 时不再启动高成本任务，改为：
+完成当前最小工作单元 → 检查 Git 变更 → 跑必要测试 → 保存进度与后续操作 → 停止。
+
+**可行性（已核对 DSH 0.2.1-rc.1 源码）**：
+
+| 事实 | 结论 |
+| --- | --- |
+| `ctx.tools` 由 `@deepseek-ai/dsh-tools` 提供，`dsh-base` 默认挂载（id: `tools`） | 官方路径存在，**不需要 MCP** |
+| 注册即生效：schema 自动流入提示词组装（`wireSchemas`），无需额外声明 | 一条 `register()` 就够 |
+| `register(definition)` 只校验 `name` / `output.schema` / `output.render` | **可以不 import `defineTool`**，手写 JSON Schema 即可 |
+| `@deepseek-ai/dsh-tools` 在本机**无法从插件目录解析**（`ERR_MODULE_NOT_FOUND`；连 `dsh-codex-connect` 也解析不到，profile 的 `node_modules` 只投影了 `schemastery`/`cosmokit`） | **绝不能 `import`**；只能 `ctx.get('tools')` 运行时取，缺服务就静默跳过 |
+| 当前 `index.js` 的 `inject = ['webServer']`，cordis 的 inject 是**硬依赖**（服务缺失即不加载） | **不能**把 `'tools'` 加进 inject——DSHA/移动端没有该服务会整插件不加载 |
+| `ctx.systemPrompt.section({name, order, text})` 可注入提示词段（`dsh-time-context` 是现成先例） | 政策文案可走这里；同样只能 `ctx.get` 取 |
+
+**设计草案**：
+
+1. **工具 `usage_status`**（只读，无副作用）：返回每个渠道的结构化状态——
+   `{ id, kind: 'balance'|'quota'|'credits', remaining, limit, percent, percentMode, state: 'ok'|'low'|'exhausted', resetsAt, fetchedAt, stale }`。
+   **不返回**任何 Key/Cookie/token，只返回数字与时间。
+2. **复用现有取数**：工具内部走与 `/api/plan-usage` 相同的 `PLANS` 编排，但要加**短 TTL 缓存（30s）
+   + single-flight**（否则模型每一步都调一次，等于把上游打成 DDoS；这也顺带是方向 4 的最小版本）。
+3. **政策层是提示词，不是代码**：阈值阶梯（如 20% / 50%）写进可选的 `systemPrompt.section`，
+   默认**关闭**（`quotaPolicyEnabled`），因为这会实质改变 Agent 行为。工具描述里写明
+   「需要决策是否继续高成本任务时调用」。
+4. **门槛**：必须先在设置页配置阈值（复用 `*WarnThreshold` 的形态），未配置就只报数不劝停。
+5. **风险**：
+   - 模型可能反复调用工具 → 靠 TTL 缓存 + 描述里写明「一次任务内调用 1–2 次足够」；
+   - 数据必须可信 → **依赖方向 7 先修**，否则「已用 94%」被当成「只剩 6%」，会让 Agent 无谓停工；
+   - 移动端没有 `ctx.tools` → 功能整体缺席，不能报错，胶囊照常工作。
+
+**工作量**：工具 + 缓存 + 测试 ≈ 1 天；提示词段与配置项 +0.5 天；文档 +0.5 天。
+
+**涉及文件**：`index.js`（`ctx.get('tools')` / `ctx.get('systemPrompt')` 守卫 + 工具定义）、
+`plans/*`（复用）、`client.js`（设置页开关与阈值）、`tools/test-*.mjs`。
+
+---
+
+## 方向 7：Kimi Code 的百分比口径错误（⚠️ 确认存在的 bug，待修）
+
+> **状态（2026-10-18）**：用户在仓库审查时提出「Kimi 显示的疑似是已用而不是剩余」。
+> **核实结果：确实显示的是「已用」，而界面没有任何口径说明**，与 Codex 的「剩余」并列时会被误读。
+
+**证据链**：
+
+| 位置 | 事实 |
+| --- | --- |
+| `plans/kimi-code.js:70` | `percent = Math.round(used / limit * 100)` → **已用百分比** |
+| `plans/kimi-code.js:116` | 月度会员额度用 `amountUsedRatio` / `kimiCodeUsedRatio` → 同样是**已用比例** |
+| `client.js:64` | Kimi 没有 `percentMode`，默认按「用量」语义：`toneColor`（≥90 红）、标题写「用量」、`worstPercent` 取最大值 |
+| `client.js:70` + `plans/codex.js:34` | Codex 显式 `percentMode: 'remaining'`，取的是 `remainingPercent`，面板标题「剩余额度」，并有脚注「百分比表示剩余额度」 |
+| 第三方实现交叉验证 | [pi-kimi-code-usage](https://www.npmjs.com/package/pi-kimi-code-usage) 的 `pctOf` 同样 `used/limit` 并显式标注「已用 X%」；[kimi-quota-line](https://www.npmjs.com/package/kimi-quota-line) 则算 `remaining/limit` 并标注「X% left」——**上游同时给了 used 与 remaining，取哪个是显示层选择** |
+
+**结论**：不是解析错，是**语义未声明**。当前 Kimi 胶囊显示「94%」= 已用 94%，但旁边 Codex 的
+「98%」= 剩余 98%，两个数字方向相反且都只有百分号，用户（以及未来的 Agent 工具）必然误读。
+
+**修复方案（二选一，倾向 A + B 并行）**：
+
+- **A（最小改动，零风险）**：保留「已用」口径，但把口径**显式化**——面板标题已写「用量」，
+  再补一条脚注「百分比表示已用量」；胶囊 tooltip 同步。与 GLM / OpenCode 保持一致
+  （它们的 `percentage` 同样是已用，见 [glm-quota-line](https://www.npmjs.com/package/glm-quota-line)
+  注释「historically this has represented used percent」）。
+- **B（口径统一，用户直觉）**：把 Kimi 改成 `percentMode: 'remaining'`（与 Codex 一致），
+  host 侧改算 `remaining / limit`（月度同理改用 `1 - usedRatio`）。代价：Kimi 与 GLM/OpenCode
+  口径不同，需在 `PLAN_NOTES` 里逐渠道标注。
+- **建议**：A 先落地（保证不误导），同时给 `PLAN_NOTES` 补一张「口径表」；B 作为配置项
+  （`kimiPercentMode`）后置。
+
+**顺带发现（同批修）**：
+
+- Kimi 新版响应可能返回**ratio-pool 结构** `usages: { limit_5h, limit_month_total, limit_month_code }`
+  （字段 `used_ratio` / `reset_time`），而当前解析只认 `usage` + `limits[]`，遇到这种账号会
+  **整块显示为空**（社区同类实现已踩过：CodexBar #3694 / #4306）。建议加 fallback：优先
+  `limits[]`，缺失时读 `usages.limit_5h`，月度优先 `limit_month_total`。
+
+**涉及文件**：`plans/kimi-code.js`（口径 + ratio-pool fallback）、`client.js`（`percentMode`、
+`PLAN_NOTES` 脚注、tooltip）、`tools/test-*.mjs`（新增口径断言，防止再退回去）。
+
+---
+
 ## 已落地
 
 ### 0.8.4（2026-10-17，正式发布）
