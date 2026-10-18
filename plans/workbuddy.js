@@ -36,10 +36,19 @@
 import z from '@deepseek-ai/schemastery'
 import { planBase, execError } from './util.js'
 
-/** 单次 status 读取的超时（毫秒）：status 内部会做真实计费查询，给足时间。
- * [0.8.3] 15s → 30s：该端点每轮都打上游计费，慢响应曾导致偶发超时被记成失败
- * （用户 2026-10-16 反馈胶囊偶现「获取失败」）；与 Host 单请求超时对齐。 */
-const STATUS_TIMEOUT_MS = 30000
+/**
+ * 单次 status 读取的超时（毫秒）。
+ *
+ * [0.8.3] 15s → 30s；[0.8.5] 30s → 35s，**必须严格大于** workbuddy-connect 内部的
+ * 计费查询超时（其 `host-heartbeat-*.js` 的 `JSON_TIMEOUT_MS = 30000`）：
+ *   - 若我们先超时（旧值 30s 与它相等，属于竞态）：拿到的是自己造的 AbortError，
+ *     丢失「上游到底怎么错的」这条信息（是 401 掉登录还是 429 限流）；
+ *   - 现在等它把 `creditsError` 结构化返回，本模块才能按 kind 分流成
+ *     语义错误（透传）/ 暂时失败（保留旧值、灰化）。
+ * 同时要小于客户端 `/api/plan-usage` 的 40s 超时（见 client.js），否则整体请求会被
+ * 浏览器侧中断，连带所有渠道一起失败。
+ */
+const STATUS_TIMEOUT_MS = 35000
 
 const CN_PATH = '/plugins/dsh-workbuddy-connect/status'
 const AI_PATH = '/plugins/dsh-workbuddy-connect/ai/status'
@@ -115,6 +124,75 @@ async function fetchStatus(base, path) {
   }
 }
 
+/**
+ * [0.8.5] 把 workbuddy-connect 的 `creditsError` 文本分类，决定**能不能保留旧值**。
+ *
+ * 背景（用户 2026-10-18 反馈）：胶囊里 WorkBuddy / WorkBuddy AI 经常直接显示
+ * 「获取失败」而不先灰化。原因不是降级逻辑没写，而是**分类太粗**——
+ * 之前只要看到 `creditsError` 就归为 `error:'api'`，而客户端的语义错误是
+ * **立即透传、不保留旧值**的（缺凭据/登录失效必须马上告诉用户）。
+ *
+ * connect 侧抛出的错误大部分是**暂时的**：它的 `fetchCredits` 里
+ * `!response.ok || envelope.code !== 0` 一律向上抛，再被 status 路由包成
+ * `creditsError`，文案由 `envelopeError()` 固定生成：
+ *   `workbuddy upstream <kind> (http <status>): <上游原始 msg>`
+ * kind 来自其 `classifyUpstreamError`：
+ *   hard_credit / session_dead / soft_rate / not_found / server / client
+ *
+ * [0.8.5 修正 P2] **只认前缀，不扫全文**：上游原始 msg 是第三方文案，可能包含
+ * 「http 401」「timeout」等字样（例如 429 响应体里写着 "your token ... 401"），
+ * 若对整段做子串匹配就会被它带偏——曾出现「soft_rate 429 被判成 api、直接放弃灰化」
+ * 的误判。因此：
+ *   1. 先按固定前缀解析 `kind` 与 `status`，命中即以此为准（这两项来自 connect 自己的
+ *      分类，不受上游文案影响）；
+ *   2. 前缀不匹配（旧版 connect / 文案被改写）才退回全文启发式，且顺序改为
+ *      **先判暂时、再判语义**——因为「误判成语义错误」会让胶囊直接显示失败，
+ *      代价比多灰化几轮大得多。
+ *
+ * 分流规则：
+ *   - `session_dead`（401 登录态失效）、`hard_credit`（402 积分/付费被拒）
+ *     → `api` 语义错误，立即显示，不拿旧值顶（旧值会误导成「还有积分」）；
+ *   - `soft_rate`（429 限流）、`server`（5xx）、`client` 其它、`not_found`
+ *     → `exec` 暂时失败，客户端保留旧值并灰化，连续 FAIL_THRESHOLD 轮才显示失败；
+ *   - 无法识别 → 暂时失败（保守：宁可多试几轮，也不要一有风吹草动就报错）。
+ *
+ * @param {string} text - `creditsError` 原文（connect 侧已脱敏、截断 500 字）。
+ * @returns {{ error: 'api'|'exec', transient: boolean }}
+ */
+function classifyCreditsError(text) {
+  const msg = typeof text === 'string' ? text : String(text)
+  const lower = msg.toLowerCase()
+
+  // 1) 固定前缀优先：`workbuddy upstream <kind> (http <status>): <上游文案>`
+  const head = /^workbuddy upstream ([a-z_]+) \(http (\d{3})\)/.exec(lower)
+  if (head !== null) {
+    const kind = head[1]
+    const status = parseInt(head[2], 10)
+    // connect 自己的分类：只有这两类是「确定没救了」。
+    if (kind === 'session_dead' || kind === 'hard_credit') {
+      return { error: 'api', transient: false }
+    }
+    // 其余（soft_rate / server / client / not_found / 未来新增的 kind）一律暂时失败。
+    // 唯一的例外是 HTTP 状态码本身就确定了语义：401/402 直接判语义。
+    if (status === 401 || status === 402) return { error: 'api', transient: false }
+    return { error: 'exec', transient: true }
+  }
+
+  // 2) 前缀不匹配时的兜底启发式。顺序很重要：**先判暂时**。
+  //    暂时性信号（限流/5xx/网络/超时）优先，避免被上游文案里的「401/token」带偏。
+  if (/\bhttp (429|5\d\d)\b/.test(lower)
+    || /soft_rate|server|timeout|timed out|abort|network|fetch failed|econn|socket|tls|certificate/.test(lower)) {
+    return { error: 'exec', transient: true }
+  }
+  // 明确的语义信号（登录态/凭据/积分被拒）：只有出现这些关键词才立即报错。
+  if (/session_dead|hard_credit|signed[ _-]?out|unauthor|invalid[ _-]?token|token (?:expired|invalid)|not signed in|登录(?:已)?失效|未登录/.test(lower)
+    || /\bhttp 401\b|\bhttp 402\b/.test(lower)) {
+    return { error: 'api', transient: false }
+  }
+  // 3) 无法识别 → 暂时失败（保守）。
+  return { error: 'exec', transient: true }
+}
+
 /** 归一化 signed-in 响应里的 credits 段；结构不认识 → null。 */
 function creditsOf(body) {
   const credits = body !== null && typeof body === 'object' && body.credits !== null
@@ -181,18 +259,24 @@ async function fetchPlanWithBase(base, plan, path) {
       message: '未登录 ' + plan.name + '：请在 dsh-workbuddy-connect 中登录该版本',
     })
   }
-  // 语义错误（令牌过期/上游拒答）：透传，不拿旧值顶。
+  // [0.8.5] creditsError 按类别分流：只有登录失效/硬拒绝才立即报错，
+  // 限流、5xx、超时、结构变化一律记为暂时失败（exec），客户端会保留旧值并灰化，
+  // 连续 FAIL_THRESHOLD 轮才显示「获取失败」——用户要求尽量少看到失败。
   if (body.creditsError !== undefined) {
     const detail = typeof body.creditsError === 'string' ? body.creditsError : '积分读取失败'
+    const verdict = classifyCreditsError(detail)
     return Object.assign(planBase(plan), {
-      error: 'api',
+      error: verdict.error,
       message: plan.name + '：' + detail,
+      // 给客户端与调试用：明确标记这是一次「可重试」的失败。
+      transient: verdict.transient || undefined,
     })
   }
   const credits = creditsOf(body)
   if (credits === null) {
+    // 结构解析失败往往是上游改版/半截响应，同样按暂时失败处理（不立即报错）。
     return Object.assign(planBase(plan), {
-      error: 'api',
+      error: 'exec',
       message: plan.name + '：积分响应结构无法解析',
     })
   }

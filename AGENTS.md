@@ -11,7 +11,7 @@ DeepSeek Harness（DSH）的**侧栏用量/余额插件**：在 Web/桌面端左
 用量与余额，点击可展开详情面板。fork 自 `chendefine/dsh-plugins-plan-usage`，改名 `dsh-usage-dock`
 以避免与上游混淆，并做了一系列定制（见第 6 节）。
 
-**当前版本**：0.8.4（2026-10-17 正式发布：GitHub Release / v0.8.4 标签 / npm `0.8.4`；修复「胶囊盖住官方通知卡」，用户真机确认生效）　|　**上一公开版**：0.8.3（GitHub Release + npm，桌面端与平板实测通过）　|　**更早**：0.8.2、0.8.1、0.7.2（0.8.0 未单独发布）
+**当前版本**：0.8.5（本地构建待验证：WorkBuddy 失败回退分类 + 失败阈值 8）　|　**上一公开版**：0.8.4（GitHub Release + npm；修复「胶囊盖住官方通知卡」，用户真机确认生效）　|　**更早**：0.8.3、0.8.2、0.8.1、0.7.2（0.8.0 未单独发布）
 
 > **2026-10-15 0.8.2 说明**：主方向为 DSHA WorkBuddy「fetch failed」修复（宿主
 > dsh-web-mobile compress.js × gzip 中间件踩踏，消费侧两处绕过：status 请求声明
@@ -21,7 +21,7 @@ DeepSeek Harness（DSH）的**侧栏用量/余额插件**：在 Web/桌面端左
 > 0.8.1 时期：WorkBuddy 积分与渠道排序、充值入口整体移除、峰谷条固定中点 + 24h 平滑移动图案；
 > 0.8.0 的 classic/充值记录是历史阶段，最终实现以 [v0.8.2 发布说明](docs/release-notes-v0.8.2.md) 与 [v0.8.1 发布说明](docs/release-notes-v0.8.1.md) 为准。
 > DSHA/安卓检查包括无 shell、无账号/configEditor 服务、无 WAAPI/ResizeObserver 的降级与 hooks 稳定性；真实 WorkBuddy Connect 0.7.4 状态处理器对接通过，但并非 Android 真机联网实测。
-> 测试：`test-android-compat.mjs`（14）、`test-settings.mjs`（6）、`test-workbuddy.mjs`（26）、`test-workbuddy-contract.mjs <上游lib/index.js>`（5）、`test-panel-interactions.mjs`（12，0.8.2 新增 8 项 / 0.8.3 扩到 12）、`test-peak-marker.mjs`（144 几何断言，0.8.2 改方案 K）、`test-line-endings.mjs`（21，0.8.3 新增）、`test-fetch-backends.mjs`（13，0.8.3 扩到 13）、`test-footer-row.mjs`（12，0.8.4 新增 T12）。
+> 测试：`test-android-compat.mjs`（14）、`test-settings.mjs`（6）、`test-workbuddy.mjs`（27）、`test-workbuddy-contract.mjs <上游lib/index.js>`（7，0.8.5 拆语义/暂时两组）、`test-panel-interactions.mjs`（12，0.8.2 新增 8 项 / 0.8.3 扩到 12）、`test-peak-marker.mjs`（144 几何断言，0.8.2 改方案 K）、`test-line-endings.mjs`（21，0.8.3 新增）、`test-fetch-backends.mjs`（13，0.8.3 扩到 13）、`test-footer-row.mjs`（12，0.8.4 新增 T12）、`test-degrade-refresh.mjs`（43，0.8.5 适配阈值 8）。
 > **2026-10-16 / 17 0.8.3**：胶囊 WorkBuddy 积分改「✦ 」前缀（U+2726 单色符号，随主题深浅），
 > 替换「（积分）」全角后缀，与「¥39.86」前缀语法同构（用户选定；候选符号与真实渲染
 > 截图留档 `docs/demos/credit-symbol-demos.html` 与 `legacy/symbol-check/`）。同版还包含
@@ -38,6 +38,13 @@ DeepSeek Harness（DSH）的**侧栏用量/余额插件**：在 Web/桌面端左
 > 就有的 `zIndex:1000`（它把透明背景的胶囊抬到 portal 通知卡之上，两段文字互相穿透）。
 > 回到 `auto` 后由 DOM 顺序决定，后挂的通知/浮层自然覆盖胶囊。像素证据与核查过程见
 > [v0.8.4 发布说明](docs/release-notes-v0.8.4.md)。
+> **2026-10-18 0.8.5**：WorkBuddy / WorkBuddy AI 不再「动不动就获取失败」——根因是 Host 侧把
+> connect 的 `creditsError` **一律**当成语义错误（`api`），客户端于是跳过「灰化保旧值」直接报错。
+> 现在按文案里的 `kind` 分流：`session_dead` / `hard_credit` 才算语义错误，限流 / 5xx / 超时 /
+> 结构变化都归暂时失败（`exec` + `transient:true`）；分类器**只认固定前缀**再退回启发式，
+> 避免被上游文案里的「401」带偏。同时：`STATUS_TIMEOUT_MS` 30s→35s（必须大于
+> connect 内部的 30s 计费超时才能拿到真实原因）、`FAIL_THRESHOLD` 5→8（约 4 分钟）、客户端整体请求
+> 超时 30s→40s（必须大于 Host 的 35s）。详见 [v0.8.5 发布说明](docs/release-notes-v0.8.5.md)。
 
 ## 2. 关键路径
 
@@ -339,12 +346,17 @@ $token = (("protocol=https`nhost=github.com`n`n" | git credential fill) -replace
    出现时与胶囊文字互相穿透。像素测量确认胶囊是**全对比**画在通知卡白底之上 → 我们在上；
    根因是 `rootStyle` 的 `zIndex:1000`（第一版就有）。改为默认 `auto` 后由 DOM 顺序决定，
    通知/浮层自然覆盖胶囊。footer-row 测试 11 → 12（T12 守住「胶囊不得带正 z-index」）。
+14. 0.8.5（2026-10-18，本地构建）：胶囊「获取失败」过多。根因是 `plans/workbuddy.js` 把
+    `creditsError` 一律译为 `error:'api'`（客户端视为语义错误 → 立即透传、不灰化）。
+    改为按 connect 的 `classifyUpstreamError` 类别分流（session_dead/hard_credit 语义，其余暂时），
+    并给条目加 `transient:true`；客户端 `settle()` 显式信任该标记。阈值 5 → 8，
+    两端超时 30/30s → 35/40s。workbuddy 26 → 27、degrade-refresh 42 → 43。
 
 ## 11. 未来方向（roadmap）
 
 完整记录在 **[docs/roadmap.md](docs/roadmap.md)**，排新版本时从那里取。当前待做：
 
-1. **方向 5：Agent 协作的更新/安装流程（0.8.5 计划，设计已定）**：插件不能自我替换
+1. **方向 5：Agent 协作的更新/安装流程（0.8.6 计划，设计已定）**：插件不能自我替换
    （`pluginManager.installBundle` 在 `hmr` 存在时拒绝已安装包；自卸载会中断调用链），
    改为「插件检测 + 生成带 sha256/安装目录的提示词 → 用户复制给会话 Agent → Agent 按
    [docs/agent-update.md](docs/agent-update.md) 执行 → 提示重启」。协议文档与
@@ -362,4 +374,4 @@ $token = (("protocol=https`nhost=github.com`n`n" | git credential fill) -replace
 
 ---
 
-*文档更新时间：2026-10-17*
+*文档更新时间：2026-10-18*

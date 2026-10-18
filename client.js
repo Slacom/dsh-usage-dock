@@ -305,8 +305,10 @@ function floorToCent(value) {
 
 /** 连续失败达到该轮数后才显示「获取失败」（更早的失败保留旧值 + 灰字）。
  * [0.8.3] 2 → 5（用户 2026-10-16 决定）：30 秒轮询下约 2.5 分钟才转「获取失败」，
- * 给 WorkBuddy 实时计费查询的偶发超时留出恢复窗口，避免数值灰一下就直接报错。 */
-var FAIL_THRESHOLD = 5
+ * 给 WorkBuddy 实时计费查询的偶发超时留出恢复窗口，避免数值灰一下就直接报错。
+ * [0.8.5] 5 → 8（用户 2026-10-18 再次要求「尽量少看到获取失败」）：约 4 分钟。
+ * 配合 WorkBuddy 渠道的错误分类（限流/5xx/超时都算暂时失败）一起生效。 */
+var FAIL_THRESHOLD = 8
 
 /** 失败期间旧值的显示色：弱化灰（不加「更新于」标注，见 roadmap 方向 3 定稿）。 */
 var staleValueStyle = { color: 'var(--dsw-alias-label-tertiary)' }
@@ -801,7 +803,10 @@ function PlanUsageBadge(props) {
         seen[plan.id] = true
         if (plan.error) {
           // 缺凭据、登录失效等语义错误立即透传；仅暂时的网络/执行错误允许保留旧值。
-          var transient = plan.error === 'curl' || plan.error === 'exec' || plan.error === 'rpc'
+          // [0.8.5] host 可以在条目上显式标 transient:true（目前 WorkBuddy 渠道用它
+          // 区分「限流/5xx/超时/结构变化」与「登录失效」），显式标记优先于按 error 名猜。
+          var transient = plan.transient === true
+            || plan.error === 'curl' || plan.error === 'exec' || plan.error === 'rpc'
             || (plan.error === 'http' && /HTTP (429|5\d\d)/.test(plan.message || ''))
           if (!transient) {
             delete failStreaks[plan.id]
@@ -885,7 +890,11 @@ function PlanUsageBadge(props) {
       var timeout = new Promise(function (_resolve, reject) {
         // [0.8.3] 20s → 30s（用户 2026-10-16 实测：WorkBuddy 实时计费查询偶发超时，
         // 20s 偏紧；超时被归为 transient 失败，会推进「获取失败」轮数）。
-        timer = setTimeout(function () { current.abort(); reject(new Error('usage timeout')) }, 30000)
+        // [0.8.5] 30s → 40s：Host 的 WorkBuddy 单次读取上限已提到 35s（要等
+        // workbuddy-connect 自己的 30s 计费超时落地，才能拿到结构化错误原因）。
+        // 浏览器侧若仍是 30s，会**先**掐断整个 /api/plan-usage，连带所有渠道一起失败。
+        // 因此这里必须严格大于 35s，且留 5s 余量。
+        timer = setTimeout(function () { current.abort(); reject(new Error('usage timeout')) }, 40000)
       })
       // 包含 json 解析的超时；即使底层不能取消，也会释放请求锁并忽略迟到结果。
       var pending = Promise.resolve().then(function () {

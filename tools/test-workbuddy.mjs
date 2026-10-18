@@ -93,12 +93,57 @@ async function withServer(routes, fn) {
   check('W4 signed-out → signed-out 提示', wire.error === 'signed-out', wire)
 }
 
-// W5 creditsError 语义错误透传。
+// W5 [0.8.5] creditsError 按类别分流：
+//   - 语义错误（登录失效 / 积分硬拒绝）→ error:'api'，客户端立即显示、不拿旧值顶；
+//   - 暂时错误（限流 / 5xx / 超时 / 结构变化）→ error:'exec' + transient:true，
+//     客户端保留旧值并灰化，连续 FAIL_THRESHOLD 轮才显示「获取失败」。
+// 用户 2026-10-18 反馈：胶囊里经常直接「获取失败」不先灰化 —— 根因就是这里
+// 之前把**所有** creditsError 都归成 api（语义错误），而 connect 侧的计费查询
+// 失败绝大多数是暂时性的。
 {
-  const wire = await withServer({
-    '/plugins/dsh-workbuddy-connect/status': { code: 200, body: JSON.stringify({ status: 'signed-in', creditsError: 'token expired' }) },
+  // connect 侧的文案模板（已核对其 lib/index.js 的 envelopeError）：
+  //   `workbuddy upstream <kind> (http <status>): <msg>`
+  const cases = [
+    // [creditsError 原文, 期望 error, 期望 transient, 说明]
+    ['workbuddy upstream session_dead (http 401): token expired', 'api', undefined, '登录失效'],
+    ['workbuddy upstream hard_credit (http 402): insufficient credit', 'api', undefined, '积分硬拒绝'],
+    ['workbuddy upstream soft_rate (http 429): too many requests', 'exec', true, '限流'],
+    ['workbuddy upstream server (http 502): bad gateway', 'exec', true, '上游 5xx'],
+    ['workbuddy upstream client (http 400): bad request', 'exec', true, '其它 4xx 按暂时处理'],
+    ['workbuddy upstream not_found (http 404): no route', 'exec', true, 'not_found 也按暂时处理'],
+    ['The operation was aborted due to timeout', 'exec', true, '超时'],
+    ['fetch failed', 'exec', true, '网络失败'],
+    ['some unknown failure', 'exec', true, '无法识别 → 暂时（保守）'],
+    // [0.8.5 修正 P2] 上游文案里的「401」不得压过前缀 kind：曾出现
+    // soft_rate 429 因正文含 401 而被判成语义错误 → 直接放弃灰化。
+    ['workbuddy upstream soft_rate (http 429): invalid token (http 401)', 'exec', true, '冲突文案：前缀优先'],
+    // 无前缀的裸文本里若同时出现暂时与语义信号，仍以暂时为准（保守）。
+    ['upstream timeout while checking token expired', 'exec', true, '裸文本：暂时优先'],
+    // 无前缀、但语义信号很明确（token expired / 未登录）才判语义。
+    ['synthetic token expired', 'api', undefined, '裸文本：明确的令牌失效'],
+    ['not signed in', 'api', undefined, '无前缀但语义明确'],
+    // 无前缀、完全看不出原因的 → 暂时（保守）。
+    ['credits unavailable', 'exec', true, '裸文本：无法识别 → 暂时'],
+  ]
+  let ok = 0
+  for (const [text, wantError, wantTransient, label] of cases) {
+    const wire = await withServer({
+      '/plugins/dsh-workbuddy-connect/status': { code: 200, body: JSON.stringify({ status: 'signed-in', creditsError: text }) },
+    }, async (base) => { setWebBase(base); return await fetchPlan() })
+    const hit = wire.error === wantError
+      && (wantTransient === true ? wire.transient === true : wire.transient === undefined)
+      && typeof wire.message === 'string' && wire.message.includes(text)
+    if (!hit) { ok = -1; check('W5b [' + label + '] 分流错误', false, wire); break }
+    ok++
+  }
+  if (ok >= 0) check('W5b creditsError 十三类分流（前缀优先 + 暂时优先）', true)
+
+  // 结构无法解析（上游改版/半截响应）也必须是暂时失败，不能立即报错。
+  const broken = await withServer({
+    '/plugins/dsh-workbuddy-connect/status': { code: 200, body: JSON.stringify({ status: 'signed-in', credits: { accounts: [] } }) },
   }, async (base) => { setWebBase(base); return await fetchPlan() })
-  check('W5 creditsError 透传', wire.error === 'api' && wire.message.includes('token expired'), wire)
+  check('W5c 结构无法解析 → exec（暂时失败，保留旧值）',
+    broken.error === 'exec' && broken.creditsTotal === undefined, broken)
 }
 
 // W6 不限额：unlimited → creditsUnlimited、creditsTotal null。
@@ -117,6 +162,8 @@ async function withServer(routes, fn) {
 
 // W8 [0.8.3 独立渠道] 单渠道失败不再产生「部分取数」——两个版本现在各自独立，
 // 一版失败只影响自己那一行（partial 机制随「合并」一起废弃）。
+// [0.8.5] 这里的「语义错误」样例改成真正的登录失效文案（session_dead）：旧的
+// `token expired` 裸文本现在按保守规则归为暂时失败（exec），见 W5b。
 {
   const original = globalThis.fetch
   try {
@@ -125,7 +172,7 @@ async function withServer(routes, fn) {
       globalThis.fetch = async (url) => {
         if (String(url).includes('/ai/')) {
           if (kind === 'transport') throw new Error('offline')
-          return { status: 200, json: async () => ({ status: 'signed-in', creditsError: 'token expired' }) }
+          return { status: 200, json: async () => ({ status: 'signed-in', creditsError: 'workbuddy upstream session_dead (http 401): token expired' }) }
         }
         return { status: 200, json: async () => ({ status: 'signed-in', credits: { total: 100 } }) }
       }

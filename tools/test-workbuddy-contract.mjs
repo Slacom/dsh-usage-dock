@@ -13,10 +13,17 @@ const loop=source.slice(loopStart,source.indexOf('//#endregion',loopStart))
 const status=source.slice(statusStart,source.indexOf('//#endregion',statusStart))
 const makeHandler=new Function(loop+'\n'+status+';return workBuddyStatusHandler')()
 const credits={total:1906,accounts:[{packageName:'个人体验版',remain:500,size:500},{packageName:'拉新权益包',remain:1000,size:1000},{packageName:'其他积分',remain:406,size:500}]}
-let billingError=false,billingCalls=0
+// [0.8.5] 两组失败场景：语义错误（登录失效 → api）与暂时错误（限流 → exec + transient）。
+// connect 侧的 fetchCredits 抛出什么就包装成 `workbuddy upstream <kind> (http <status>): <msg>`
+// （见其 envelopeError），因此这里用同样形状的错误来模拟，而不是裸文本。
+let billingError=null,billingCalls=0
 const cn=makeHandler({
  store:{status:async()=>({state:'signed-in',source:'plugin-copy'}),current:async()=>({synthetic:true})},
- client:{fetchCredits:async()=>{billingCalls++;if(billingError)throw new Error('synthetic token expired');return credits}},
+ client:{fetchCredits:async()=>{
+  billingCalls++
+  if(billingError!==null)throw new Error(billingError)
+  return credits
+ }},
  models:()=>[]
 })
 const ai=makeHandler({store:{status:async()=>({state:'signed-out'})},models:()=>[]})
@@ -38,9 +45,29 @@ try {
  const denied=await fetch(base+'/plugins/dsh-workbuddy-connect/status',{headers:{Origin:'https://untrusted.example'}})
  assert.equal(denied.status,403)
  console.log('[PASS] 未绕过上游 Host/Origin 安全限制')
- billingError=true
- const failed=await fetchPlan()
- assert.equal(failed.error,'api');assert(failed.message.includes('synthetic token expired'));assert.equal(failed.creditsTotal,undefined)
- console.log('[PASS] 上游积分异常正确透传而非显示伪造余额')
- console.log('\n5项真实源码接口契约通过（模拟认证/计费，非手机联网实测）')
+
+ // 语义错误：登录失效 → 立即报错（api），且不伪造余额。
+ billingError='workbuddy upstream session_dead (http 401): synthetic token expired'
+ const signedOut=await fetchPlan()
+ assert.equal(signedOut.error,'api')
+ assert.equal(signedOut.transient,undefined)
+ assert(signedOut.message.includes('synthetic token expired'))
+ assert.equal(signedOut.creditsTotal,undefined)
+ console.log('[PASS] 登录失效（session_dead）→ api 语义错误，不伪造余额')
+
+ // 暂时错误：限流 → exec + transient，交给客户端灰化保旧值。
+ billingError='workbuddy upstream soft_rate (http 429): usage exceeds frequency limit'
+ const rateLimited=await fetchPlan()
+ assert.equal(rateLimited.error,'exec')
+ assert.equal(rateLimited.transient,true)
+ assert.equal(rateLimited.creditsTotal,undefined)
+ console.log('[PASS] 限流（soft_rate 429）→ exec + transient，客户端可灰化保旧值')
+
+ // 冲突文案：上游消息里混入「http 401」，但前缀是 soft_rate → 仍按暂时处理。
+ billingError='workbuddy upstream soft_rate (http 429): your token appears invalid (http 401)'
+ const conflicting=await fetchPlan()
+ assert.equal(conflicting.error,'exec','前缀 kind 必须优先于正文里的 401 字样')
+ assert.equal(conflicting.transient,true)
+ console.log('[PASS] 冲突文案（soft_rate 前缀 + 正文 401）仍判暂时失败')
+ console.log('\n7项真实源码接口契约通过（模拟认证/计费，非手机联网实测）')
 } finally {setWebBase(null);await new Promise(resolve=>server.close(resolve))}

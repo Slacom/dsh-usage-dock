@@ -108,15 +108,18 @@ async function refreshWith(fetchImpl) {
 }
 
 // ---------------------------------------------------------------------------
-// T3 连续 5 轮失败（0.8.3 阈值 2 → 5）→ 显示「获取失败」（且不再拿旧余额顶替）
+// T3 连续失败达阈值（0.8.3 阈值 2 → 5；0.8.5 → 8）→ 显示「获取失败」
+//    （且不再拿旧余额顶替）
 // ---------------------------------------------------------------------------
 {
-  // 已经失败 1 轮（T2），再失败 4 轮凑满阈值 5。
+  // T2 已经失败 1 轮；这里再失败 5 轮 → 共 7 轮，仍未到阈值 8。
   let tree = await refreshWith(globalThis.fetch)
-  check('T3.pre 第 2 轮失败仍保留旧值（阈值 5，未到）', textOf(tree).includes('¥ 7.38'), textOf(tree))
-  for (let i = 0; i < 3; i++) tree = await refreshWith(globalThis.fetch)
+  check('T3.pre 第 2 轮失败仍保留旧值（阈值 8，未到）', textOf(tree).includes('¥ 7.38'), textOf(tree))
+  for (let i = 0; i < 4; i++) tree = await refreshWith(globalThis.fetch)
+  check('T3.pre2 第 6 轮失败仍保留旧值（阈值 8，未到）', textOf(tree).includes('¥ 7.38'), textOf(tree))
+  for (let i = 0; i < 2; i++) tree = await refreshWith(globalThis.fetch)
   const text = textOf(tree)
-  check('T3 连续 5 轮失败显示「获取失败」', text.includes('获取失败'), text)
+  check('T3 连续 8 轮失败显示「获取失败」', text.includes('获取失败'), text)
   check('T3 失败后不再显示旧余额', !text.includes('¥ 7.38'), text)
 }
 // ---------------------------------------------------------------------------
