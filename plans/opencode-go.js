@@ -33,13 +33,15 @@ const plan = {
 }
 
 /** 拉取 OpenCode Go 用量：usage 结构（+useBalance）。 */
-export async function fetchPlan(ctx, shell, cfg) {
-  const apiKey = await resolveApiKey(ctx, cfg, fields.apiKey, source.refs)
+export async function fetchPlan(ctx, shell, cfg, options) {
+  const apiKey = await resolveApiKey(ctx, cfg, fields.apiKey, source.refs, options)
   if (apiKey === undefined) return noKey(plan)
   try {
     const { data, err } = await curlJson(shell, source.endpoint, {
       auth: apiKey,
       bearer: source.bearer,
+      signal: options === undefined ? undefined : options.signal,
+      timeoutMs: options === undefined || typeof options.remaining !== 'function' ? undefined : options.remaining(),
     })
     if (err !== undefined) return Object.assign(planBase(plan), err)
     const u = data.usage != null && typeof data.usage === 'object' ? data.usage : data

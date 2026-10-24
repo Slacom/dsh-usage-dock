@@ -18,8 +18,11 @@ const props={form}
 try {
  let tree=runtime.mount(client.SettingsPage,props)
  check('设置页按实例 this 读取配置，无桌面桥依赖',()=>assert(textOf(tree).includes('Usage Dock')||textOf(tree).includes('启用套餐')))
- check('WorkBuddy 使用自己的登录来源提示',()=>assert(textOf(tree).includes('复用 dsh-workbuddy-connect 的登录态')))
- const arrow=elements(tree).find(n=>n.props?.['aria-label']==='WorkBuddy 上移')
+  // [2026-10-21] 国内版改读模型配置里的 WorkBuddy2API 网关，不再依赖 Connect。
+  check('WorkBuddy 提示改为读取模型网关配置',()=>assert(textOf(tree).includes('workbuddy 网关配置')))
+
+  // [2026-10-21] 明确点「WorkBuddy 上移」，让后续顺序断言与具体渠道绑定。
+  const arrow=elements(tree).find(n=>n.type==='button'&&n.props&&n.props['aria-label']==='WorkBuddy 上移')
  check('渠道排序是原生可点击按钮，不依赖 hover',()=>assert.equal(arrow.type,'button'))
  arrow.props.onClick()
  tree=await runtime.settle(props)

@@ -59,13 +59,29 @@ const plan = {
   source,
 }
 
-/** 从钱包数组里挑出 CNY（找不到则取第一个）并解析为数字。 */
-function pickBalance(wallets) {
+/**
+ * 从钱包数组里挑出 CNY（找不到则取第一个），返回数值与**实际所选币种**。
+ *
+ * [D6-C] 复核发现：模型工具只拿到余额、拿不到币种，于是 USD 账户被当成无币种金额。
+ * 这里把「选了哪个币种」一并带回去，供 wire/工具投影使用；金额本身仍是数字，
+ * 不做任何跨币种相加。
+ */
+function pickWallet(wallets) {
   const list = Array.isArray(wallets) ? wallets.filter((w) => w != null && typeof w === "object") : []
   const cny = list.find((w) => w.currency === "CNY")
   const picked = cny !== undefined ? cny : list[0]
   if (picked === undefined) return null
-  return toNum(picked.balance)
+  const amount = toNum(picked.balance)
+  const currency = typeof picked.currency === "string" && picked.currency.length > 0
+    ? picked.currency
+    : null
+  return { amount, currency }
+}
+
+/** 兼容旧调用：只要数值。 */
+function pickBalance(wallets) {
+  const picked = pickWallet(wallets)
+  return picked === null ? null : picked.amount
 }
 
 /**
@@ -109,17 +125,35 @@ async function fetchAccountBalance(ctx) {
     if (summary.status === "failed") return { ok: false, reason: "账号余额读取失败（Platform 返回 failed）" }
     if (summary.status !== "ready") return { ok: false, reason: "账号返回未知状态: " + String(summary.status) }
     // value = 普通余额钱包；bonusWallets = 赠金钱包。
-    const normal = pickBalance(summary.value)
-    const bonus = pickBalance(summary.bonusWallets)
+    const normalWallet = pickWallet(summary.value)
+    const bonusWallet = pickWallet(summary.bonusWallets)
+    const normal = normalWallet === null ? null : normalWallet.amount
+    const bonus = bonusWallet === null ? null : bonusWallet.amount
     if (normal === null && bonus === null) return { ok: false, reason: "账号余额为空" }
-    // [0.8.3] 赠金单独回传（不再只是「看不见的合并」）：详情面板按 MiMo 的方式
-    // 分「充值余额 / 赠金余额」两行显示（用户 2026-10-17 要求）。
-    // balance 仍是两者之和（胶囊按钮显示总计）；cashBalance/bonusBalance 供明细行。
+    // [Y4] **只对可证明同币种的钱包求和**。
+    //
+    // 复核指出：旧实现把「CNY 10 + USD 2」加成 12、把「CNY 10 + 无币种 2」也加成
+    // 12 并标成 CNY —— 前者是跨币总额，后者把未知单位当成 CNY（还会进入金额策略）。
+    // 因此：
+    //   - 两个钱包币种相同且都已知 → 求和并声明该币种；
+    //   - 只有一个有钱包 → 直接用它的金额与币种；
+    //   - 异币或币种未知 → `balance: null` + `mixedCurrency: true`，
+    //     不再编造一个统一总额（明细仍用 cashBalance / bonusBalance 表达）。
+    const known = [normalWallet, bonusWallet].filter((w) => w !== null && w.currency !== null)
+    const sameCurrency = known.length === [normalWallet, bonusWallet].filter((w) => w !== null).length
+      && known.length > 0
+      && known.every((w) => w.currency === known[0].currency)
+    const summed = sameCurrency ? (normal || 0) + (bonus || 0) : null
     return {
       ok: true,
-      balance: (normal || 0) + (bonus || 0),
+      balance: summed,
       cashBalance: normal === null ? null : normal,
       bonusBalance: bonus === null ? null : bonus,
+      currency: summed === null ? null : known[0].currency,
+      // [Z4] 混币时仍要能说明「哪一笔是什么单位」：明细行只在单位可证时才带符号。
+      cashCurrency: normalWallet === null ? null : normalWallet.currency,
+      bonusCurrency: bonusWallet === null ? null : bonusWallet.currency,
+      mixedCurrency: summed === null,
     }
   } catch (err) {
     const msg = err && err.message ? err.message : String(err)
@@ -128,7 +162,7 @@ async function fetchAccountBalance(ctx) {
 }
 
 /** 拉取 DeepSeek 余额：优先 DSH 账号，回退开放平台 API Key。 */
-export async function fetchPlan(ctx, shell, cfg) {
+export async function fetchPlan(ctx, shell, cfg, options) {
   // 1) 账号余额（桌面端登录即可用，无需任何 Key）
   const account = await fetchAccountBalance(ctx)
   if (account.ok) {
@@ -137,6 +171,12 @@ export async function fetchPlan(ctx, shell, cfg) {
       // [0.8.3] 赠金明细（账号模式）：供详情面板拆行显示；无赠金时为 null。
       cashBalance: account.cashBalance,
       bonusBalance: account.bonusBalance,
+      // [D6-C][Y4] 账号模式的实际币种；混合/未知币种时为 null（此时 balance 也为 null）。
+      currency: account.currency === undefined ? null : account.currency,
+      // [Z4] 逐钱包币种（供详情面板只展示单位可证的明细）。
+      cashCurrency: account.cashCurrency === undefined ? null : account.cashCurrency,
+      bonusCurrency: account.bonusCurrency === undefined ? null : account.bonusCurrency,
+      mixedCurrency: account.mixedCurrency === true,
       isAvailable: true,
       via: "account",
       warnThreshold: warnThresholdOf(cfg),
@@ -147,7 +187,7 @@ export async function fetchPlan(ctx, shell, cfg) {
   // [0.8.3] 哨兵/占位 Key（如用户为「屏蔽 API 版模型」而设的 `1`）已在 resolveApiKey
   // 里被剔除，这里拿到的 undefined 表示「确实没有可用 Key」。此时不再向上游发注定
   // 401 的请求，直接以账号侧原因为主因回报（用户实测该文案最能说明问题）。
-  const apiKey = await resolveApiKey(ctx, cfg, fields.apiKey, source.refs)
+  const apiKey = await resolveApiKey(ctx, cfg, fields.apiKey, source.refs, options)
   if (apiKey === undefined) {
     return Object.assign(noKey(plan), {
       message: "账号余额不可用（" + account.reason + "），且未配置 DeepSeek API Key",
@@ -157,6 +197,8 @@ export async function fetchPlan(ctx, shell, cfg) {
     const { data, err } = await curlJson(shell, source.endpoint, {
       auth: apiKey,
       bearer: source.bearer,
+      signal: options === undefined ? undefined : options.signal,
+      timeoutMs: options === undefined || typeof options.remaining !== 'function' ? undefined : options.remaining(),
     })
     if (err !== undefined) {
       // API Key 回退也失败时，把账号侧原因一并带上，便于定位。
@@ -179,6 +221,11 @@ export async function fetchPlan(ctx, shell, cfg) {
       balance: balance,
       cashBalance: cashBalance,
       bonusBalance: bonusBalance,
+      // [D6-C] 带回**实际所选钱包的币种**（CNY 优先，否则第一个）。
+      // 不硬编码 CNY：USD 账户曾被工具报成无币种金额。
+      currency: info !== undefined && typeof info.currency === "string" && info.currency.length > 0
+        ? info.currency
+        : null,
       isAvailable: data.is_available === true,
       via: "api",
       warnThreshold: warnThresholdOf(cfg),

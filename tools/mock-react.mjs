@@ -251,7 +251,42 @@ export function loadClient(runtime, options) {
   globalThis.setInterval = () => 0
   globalThis.clearInterval = () => {}
 
-  globalThis.fetch = async () => ({ json: async () => opts.payload })
+  /**
+   * [0.9.1] 按 URL 区分：
+   *   - `/api/plan-usage/custom-status` 返回**可选模型渠道**列表
+   *     （设置页的自定义区需要它渲染「余额来源」下拉）；
+   *   - 其它一律返回 `opts.payload`（取数响应）。
+   *
+   * 之前所有 URL 都返回同一个 payload，导致 custom-status 拿到取数结构、
+   * `providers` 为空，自定义区只能显示「还没有可选的模型渠道」。
+   */
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('custom-status')) {
+      return {
+        json: async () => ({
+          ok: true,
+          data: {
+            keys: opts.customStatusKeys || {},
+            refs: opts.customStatusRefs || {},
+            providers: opts.providers || [{ provider: 'review-fixture', displayName: 'Review Fixture', origin: 'https://a.example' }],
+          },
+        }),
+      }
+    }
+    /**
+     * [2026-10-23] 额度窗口能力（设置页按渠道/窗口配阈值时读取的**只读 metadata**）。
+     *
+     * 默认返回空 `channels`：没有样本就是"未知"，设置页只显示已保存的窗口配置。
+     * 需要特定样本的测试用 `opts.quotaWindows` 注入，`opts.quotaWindowsError` 可模拟失败。
+     */
+    if (String(url).includes('quota-windows')) {
+      if (opts.quotaWindowsError === true) throw new Error('quota-windows unreachable')
+      return {
+        json: async () => ({ ok: true, data: { channels: opts.quotaWindows || {}, readAt: 1 } }),
+      }
+    }
+    return { json: async () => opts.payload }
+  }
 
   new Function(source)()
 

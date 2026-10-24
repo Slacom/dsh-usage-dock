@@ -100,8 +100,31 @@ export function currencySymbol(currency) {
 }
 
 /** 拉取小米 MiMo 余额：控制台 Cookie 鉴权，单端点。 */
-export async function fetchPlan(ctx, shell, cfg) {
-  const cookie = normalizeMimoCookie(cfg != null ? cfg.mimoCookie : undefined)
+export async function fetchPlan(ctx, shell, cfg, options) {
+  // [F2] 有冻结描述时必须**严格遵守**其状态（与身份同源）：
+  //   explicit → 只读它自己的冻结字段（缺失/无效也不回退实时 cfg）
+  //   none     → 直接缺凭据（零请求）
+  //   其它（MiMo 没有引用来源）→ 安全拒绝，不冒充未采样
+  // 只有 null/undefined（未采样）才读 cfg。
+  const frozen = options !== null && options !== undefined
+    && options.frozenCredential !== null && options.frozenCredential !== undefined
+    && typeof options.frozenCredential === 'object'
+    ? options.frozenCredential
+    : null
+  let cookieSource = cfg != null ? cfg.mimoCookie : undefined
+  if (frozen !== null) {
+    if (frozen.kind !== 'explicit'
+      || frozen.fields === null || frozen.fields === undefined
+      || frozen.fields.mimoCookie === undefined) {
+      // none / ref / 未知状态 / 显式但缺少该字段：一律安全拒绝，绝不回退到当前配置。
+      return Object.assign(planBase(plan), {
+        error: 'no-key',
+        message: '未配置小米开放平台控制台 Cookie：登录 platform.xiaomimimo.com 后，F12 → 网络 → 任一请求的请求头 cookie 整段复制（需含 userId 与 serviceToken）',
+      })
+    }
+    cookieSource = frozen.fields.mimoCookie
+  }
+  const cookie = normalizeMimoCookie(cookieSource)
   if (cookie === null) {
     return Object.assign(planBase(plan), {
       error: 'no-key',
@@ -110,6 +133,8 @@ export async function fetchPlan(ctx, shell, cfg) {
   }
   try {
     const { data, err } = await curlJson(shell, source.endpoint, {
+      signal: options === undefined ? undefined : options.signal,
+      timeoutMs: options === undefined || typeof options.remaining !== 'function' ? undefined : options.remaining(),
       headers: {
         cookie,
         // 部分网关对无 UA 的请求有风控；带上与控制台一致的浏览器标识。

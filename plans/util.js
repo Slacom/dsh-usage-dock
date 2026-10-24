@@ -59,7 +59,12 @@ let preferredBackend = null
 async function fetchBackend(url, opts, reqHeaders) {
   const method = opts.method === 'POST' ? 'POST' : 'GET'
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  // [Y2] 工具预算更短时用它，否则保持原有的 30 秒。
+  const budget = typeof opts.timeoutMs === 'number' && opts.timeoutMs > 0
+    ? Math.min(opts.timeoutMs, REQUEST_TIMEOUT_MS)
+    : REQUEST_TIMEOUT_MS
+  const timer = setTimeout(() => controller.abort(), budget)
+  const detach = linkAbort(opts.signal, controller)
   try {
     const init = { method, headers: reqHeaders, signal: controller.signal }
     if (method === 'POST' && typeof opts.body === 'string' && opts.body.length > 0) {
@@ -67,6 +72,9 @@ async function fetchBackend(url, opts, reqHeaders) {
     }
     const res = await fetch(url, init)
     const text = await res.text()
+    if (aborted(opts)) {
+      return { exitCode: 1, stdout: { text: '' }, stderr: { text: 'aborted during fetch' } }
+    }
     return { exitCode: 0, stdout: { text: text + '\n__DSH_HTTP__' + res.status } }
   } catch (err) {
     // undici 的报错只有一句 "fetch failed"，真正的原因（ENOTFOUND/ECONNREFUSED/
@@ -83,15 +91,53 @@ async function fetchBackend(url, opts, reqHeaders) {
     return { exitCode: 1, stdout: { text: '' }, stderr: { text: parts.join(' ') } }
   } finally {
     clearTimeout(timer)
+    if (typeof detach === 'function') detach()
   }
 }
 
-/** 执行某个后端的请求；python/curl 需要 shell 服务，fetch 不需要。 */
-function runBackend(backend, shell, url, opts, reqHeaders) {
+/**
+ * 把外部 signal 接到内部 controller 上（工具预算取消时立刻中断传输）。
+ * 返回解绑函数；没有 `AbortSignal.any` 的运行环境也能工作。
+ */
+function linkAbort(externalSignal, controller) {
+  if (externalSignal === null || externalSignal === undefined) return null
+  if (typeof externalSignal.addEventListener !== 'function') return null
+  const onAbort = () => {
+    try { controller.abort() } catch (err) { /* 已中止 */ }
+  }
+  if (externalSignal.aborted === true) {
+    onAbort()
+    return null
+  }
+  externalSignal.addEventListener('abort', onAbort, { once: true })
+  return () => {
+    if (typeof externalSignal.removeEventListener === 'function') {
+      externalSignal.removeEventListener('abort', onAbort)
+    }
+  }
+}
+
+/**
+ * 执行某个后端的请求；python/curl 需要 shell 服务，fetch 不需要。
+ *
+ * [Y2] `opts.signal` / `opts.timeoutMs` 由调用方（模型工具）注入更短的预算：
+ * 到期后**不再启动下一个后端**，也不把结果当作成功返回。
+ */
+async function runBackend(backend, shell, url, opts, reqHeaders) {
+  if (aborted(opts)) return { exitCode: 1, stdout: { text: '' }, stderr: { text: 'aborted before ' + backend } }
   if (backend === 'fetch') return fetchBackend(url, opts, reqHeaders)
-  return shell.run(backend === 'python'
+  const spec = backend === 'python'
     ? pythonSpec(shell, url, opts, reqHeaders)
-    : curlSpec(shell, url, opts, reqHeaders))
+    : curlSpec(shell, url, opts, reqHeaders)
+  const result = await shell.run(spec)
+  // 已经取消：即使命令返回了结果也丢弃，避免迟到响应被当成成功。
+  if (aborted(opts)) return { exitCode: 1, stdout: { text: '' }, stderr: { text: 'aborted during ' + backend } }
+  return result
+}
+
+/** 调用方是否已取消。 */
+function aborted(opts) {
+  return opts != null && opts.signal != null && opts.signal.aborted === true
 }
 
 /** Python shim 的请求规格：整体走环境变量（密钥绝不进命令行）。 */
@@ -243,6 +289,10 @@ export async function curlJson(shell, url, opts) {
     : [preferredBackend].concat(usable.filter((backend) => backend !== preferredBackend))
   const failures = []
   for (const backend of order) {
+    // [Y2] 已取消/超出工具预算：不再尝试任何后端（尤其不要换个后端重发凭据）。
+    if (aborted(opts)) {
+      return { err: { error: 'network', transient: true, message: 'upstream request cancelled（超出本次查询预算）' } }
+    }
     let result
     try {
       result = await runBackend(backend, shell, url, opts, reqHeaders)
@@ -338,8 +388,31 @@ export async function resolveCredentialApiKey(ctx, refs) {
  * 按「插件配置 > 模型配置（凭据库）」解析某套餐的 API Key。
  * [0.8.3] 哨兵值（如占位用的 `1`）一律视为「没有可用 Key」，返回 undefined——
  * 调用方据此走「未配置 Key」分支，不再向上游发注定失败的请求。
+ *
+ * [Q1][Q2] `options.frozenCredential` 是调用方（模型工具）为**该渠道**冻结的本次
+ * 实际生效来源。语义必须分清三种：
+ *   - 没有该渠道的条目（未采样，例如账号型渠道）→ 走原来的正常解析，不能凭空报缺凭据；
+ *   - `{ kind:'explicit' }` → 用冻结的显式值（不再看配置，也不再解析任何引用）；
+ *   - `{ kind:'ref' }` → 用冻结的引用值（引用已按候选顺序选好，不再二次解析）；
+ *   - `{ kind:'none' }` → 采样完成且确认没有可用凭据，直接按缺凭据处理。
  */
-export async function resolveApiKey(ctx, cfg, apiKeyField, refs) {
+export async function resolveApiKey(ctx, cfg, apiKeyField, refs, options) {
+  const frozen = options !== null && options !== undefined ? options.frozenCredential : null
+  if (frozen !== null && frozen !== undefined && typeof frozen === 'object') {
+    if (frozen.kind === 'none') return undefined
+    if (frozen.kind === 'explicit') {
+      const fieldValue = frozen.fields !== null && frozen.fields !== undefined
+        ? frozen.fields[apiKeyField]
+        : undefined
+      if (typeof fieldValue === 'string' && fieldValue.length > 0 && !isSentinelApiKey(fieldValue)) return fieldValue
+      return undefined
+    }
+    if (frozen.kind === 'ref') {
+      const value = frozen.value
+      if (typeof value === 'string' && value.length > 0 && !isSentinelApiKey(value)) return value
+      return undefined
+    }
+  }
   const raw = typeof cfg[apiKeyField] === 'string' ? cfg[apiKeyField] : ''
   const pluginKey = raw.length > 0 && !isSentinelApiKey(raw) ? raw : undefined
   if (pluginKey !== undefined) return pluginKey

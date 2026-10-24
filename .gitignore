@@ -7,3 +7,6 @@ node_modules/
 # 本地保留、不入库（历史补丁与第三方参考源码）
 legacy/
 reference/
+
+# 本地诊断/探针（asar 解包、一次性权限与配置探针；0.9.0 起）
+.diagnostics/

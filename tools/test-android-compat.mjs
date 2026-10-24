@@ -8,7 +8,9 @@ function check(name, fn) { fn(); passed++; console.log('[PASS] '+name) }
 const disabled = Object.fromEntries(PLANS.map(p => [p.fields.enabled, false]))
 function handlerFor(config, get = () => undefined) {
   let handler
-  apply({ get, webServer: { port: 12345, register(spec) { handler=spec.handler; return ()=>{} } }, effect: fn=>fn() }, config)
+  // [0.9.0] 本版新增了第二条路由（/api/plan-usage/custom-status）：这里按路径取
+  // 用量路由，不再假设「最后一次 register 就是用量路由」。
+  apply({ get, webServer: { port: 12345, register(spec) { if (spec.path === '/api/plan-usage') handler=spec.handler; return ()=>{} } }, effect: fn=>fn() }, config)
   return handler
 }
 async function request(handler, method='GET') {
@@ -60,16 +62,17 @@ try {
       })
     } finally {first.fetch=originalA;second.fetch=originalB}
   }
-  // 这里改 mock：模拟安卓端未安装可选的 WorkBuddy 插件。
+  // 这里改 mock：模拟安卓端未安装可选的 WorkBuddy Connect。
   globalThis.fetch=async()=>({status:404,json:async()=>({})})
-  // [0.8.3] WorkBuddy 已拆成国内版/国际版两个独立渠道：未安装时各自 not-installed。
-  const missing=await request(handlerFor({...disabled,workbuddyEnabled:true,workbuddyAiEnabled:true}))
-  check('未安装 WorkBuddy 两个渠道各自 not-installed',()=>{
-    assert.equal(missing.body.data.plans.length,2)
+  // [2026-10-21] 国内版改读 WorkBuddy2API 网关（来自模型配置），**不再依赖** Connect 是否安装；
+  // 国际版仍走 Connect 端点，未安装时仍是 not-installed。
+  // [2026-10-21] workbuddy-ai 已退场：现在只剩一个国内渠道。
+  const missing=await request(handlerFor({...disabled,workbuddyEnabled:true}))
+  check('国内版按模型网关状态取数（不再依赖 Connect）',()=>{
+    assert.equal(missing.body.data.plans.length,1)
     assert.equal(missing.body.data.plans[0].id,'workbuddy')
-    assert.equal(missing.body.data.plans[0].error,'not-installed')
-    assert.equal(missing.body.data.plans[1].id,'workbuddy-ai')
-    assert.equal(missing.body.data.plans[1].error,'not-installed')
+    // 国内版：该宿主没有模型目录 → 能力不可用（不再是 not-installed）。
+    assert.equal(missing.body.data.plans[0].error,'unavailable')
   })
   const post=await request(handler,'POST')
   check('方法限制仍为405',()=>assert.equal(post.status,405))

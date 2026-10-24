@@ -57,7 +57,7 @@ function safeAmount(value) {
 }
 
 /** 拉取 Codex 主额度桶，并归一化为 plan-usage 的 5小时/周限/月限 wire。 */
-export async function fetchPlan() {
+export async function fetchPlan(ctx, shell, cfg, options) { void ctx; void shell; void cfg; void options;
   try {
     const mod = await import('dsh-codex-connect')
     if (typeof mod.readOpenAICodexRateLimits !== 'function'

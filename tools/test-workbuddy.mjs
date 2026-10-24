@@ -47,49 +47,48 @@ async function withServer(routes, fn) {
     const ai = await fetchPlanAi()
     return { cn, ai }
   })
-  check('W1a 国内版渠道只报国内版合计', wire.cn.id === 'workbuddy' && wire.cn.creditsTotal === 3401.5, wire.cn)
+  /**
+   * [2026-10-21] 国内版已改读 WorkBuddy2API 网关（来自模型配置），**不再读 Connect 端点**。
+   * 这里断言「两版互不合并」的既有性质，以及国内版不再从 Connect 拿数；
+   * 网关取数的完整口径见 tools/test-workbuddy-gateway.mjs。
+   */
+  check('W1a 国内版不再从 Connect 端点取数', wire.cn.id === 'workbuddy' && wire.cn.creditsTotal === undefined, wire.cn)
   check('W1b 国际版渠道只报国际版合计', wire.ai.id === 'workbuddy-ai' && wire.ai.creditsTotal === 2275, wire.ai)
-  check('W1c 两版不再合并成合计', wire.cn.creditsTotal !== 5676.5 && wire.ai.creditsTotal !== 5676.5)
-  check('W1d 明细 variant 标签各自只有自己', wire.cn.creditsAccounts.length === 1
-    && wire.cn.creditsAccounts[0].variant === 'WorkBuddy'
-    && wire.ai.creditsAccounts.length === 1
-    && wire.ai.creditsAccounts[0].variant === 'WorkBuddy AI', { cn: wire.cn, ai: wire.ai })
-  check('W1e variants 单条（供客户端显示版本大号行）', wire.cn.variants.length === 1
-    && wire.cn.variants[0].label === 'WorkBuddy'
-    && wire.ai.variants.length === 1
-    && wire.ai.variants[0].label === 'WorkBuddy AI', { cn: wire.cn.variants, ai: wire.ai.variants })
+  check('W1c 两版不再合并成合计', wire.ai.creditsTotal !== 5676.5)
+  check('W1d 国际版明细 variant 标签只有自己', wire.ai.creditsAccounts.length === 1
+    && wire.ai.creditsAccounts[0].variant === 'WorkBuddy AI', wire.ai.creditsAccounts)
+  check('W1e 国际版 variants 单条（供客户端显示版本大号行）', wire.ai.variants.length === 1
+    && wire.ai.variants[0].label === 'WorkBuddy AI', wire.ai.variants)
 }
 
-// W2 单版本登录：国内版登录、国际版未登录 → 两渠道行为互不影响。
+// W2 国际版正常取数（Connect 端点）。国内版已改网关，不再参与该路径。
 {
   const wire = await withServer({
-    '/plugins/dsh-workbuddy-connect/status': { code: 200, body: JSON.stringify({ status: 'signed-in', credits: { total: 100 } }) },
-    '/plugins/dsh-workbuddy-connect/ai/status': { code: 200, body: JSON.stringify({ status: 'signed-out' }) },
+    '/plugins/dsh-workbuddy-connect/ai/status': { code: 200, body: JSON.stringify({ status: 'signed-in', credits: { total: 100 } }) },
   }, async (base) => {
     setWebBase(base)
-    return { cn: await fetchPlan(), ai: await fetchPlanAi() }
+    return { ai: await fetchPlanAi() }
   })
-  check('W2a 国内版正常取数', wire.cn.creditsTotal === 100, wire.cn)
-  check('W2b 国际版未登录 → signed-out（不影响国内版）', wire.ai.error === 'signed-out', wire.ai)
+  check('W2a 国际版正常取数', wire.ai.creditsTotal === 100, wire.ai)
 }
 
 // W3 未安装：本渠道端点 404 → not-installed（每个渠道各自判断）。
 {
   const wire = await withServer({}, async (base) => {
     setWebBase(base)
-    const cn = await fetchPlan()
+
     const ai = await fetchPlanAi()
-    return { cn, ai }
+    return { ai }
   })
-  check('W3 端点 404 → 两渠道各自 not-installed', wire.cn.error === 'not-installed' && wire.ai.error === 'not-installed', wire)
+  check('W3 端点 404 → 两渠道各自 not-installed', wire.ai.error === 'not-installed' && wire.ai.error === 'not-installed', wire)
 }
 
 // W4 未登录（端点返回 signed-out）→ signed-out 语义提示。
 {
   const wire = await withServer({
-    '/plugins/dsh-workbuddy-connect/status': { code: 200, body: JSON.stringify({ status: 'signed-out' }) },
     '/plugins/dsh-workbuddy-connect/ai/status': { code: 200, body: JSON.stringify({ status: 'signed-out' }) },
-  }, async (base) => { setWebBase(base); return await fetchPlan() })
+    '/plugins/dsh-workbuddy-connect/ai/status': { code: 200, body: JSON.stringify({ status: 'signed-out' }) },
+  }, async (base) => { setWebBase(base); return await fetchPlanAi() })
   check('W4 signed-out → signed-out 提示', wire.error === 'signed-out', wire)
 }
 
@@ -128,8 +127,8 @@ async function withServer(routes, fn) {
   let ok = 0
   for (const [text, wantError, wantTransient, label] of cases) {
     const wire = await withServer({
-      '/plugins/dsh-workbuddy-connect/status': { code: 200, body: JSON.stringify({ status: 'signed-in', creditsError: text }) },
-    }, async (base) => { setWebBase(base); return await fetchPlan() })
+      '/plugins/dsh-workbuddy-connect/ai/status': { code: 200, body: JSON.stringify({ status: 'signed-in', creditsError: text }) },
+    }, async (base) => { setWebBase(base); return await fetchPlanAi() })
     const hit = wire.error === wantError
       && (wantTransient === true ? wire.transient === true : wire.transient === undefined)
       && typeof wire.message === 'string' && wire.message.includes(text)
@@ -140,8 +139,8 @@ async function withServer(routes, fn) {
 
   // 结构无法解析（上游改版/半截响应）也必须是暂时失败，不能立即报错。
   const broken = await withServer({
-    '/plugins/dsh-workbuddy-connect/status': { code: 200, body: JSON.stringify({ status: 'signed-in', credits: { accounts: [] } }) },
-  }, async (base) => { setWebBase(base); return await fetchPlan() })
+    '/plugins/dsh-workbuddy-connect/ai/status': { code: 200, body: JSON.stringify({ status: 'signed-in', credits: { accounts: [] } }) },
+  }, async (base) => { setWebBase(base); return await fetchPlanAi() })
   check('W5c 结构无法解析 → exec（暂时失败，保留旧值）',
     broken.error === 'exec' && broken.creditsTotal === undefined, broken)
 }
@@ -149,15 +148,15 @@ async function withServer(routes, fn) {
 // W6 不限额：unlimited → creditsUnlimited、creditsTotal null。
 {
   const wire = await withServer({
-    '/plugins/dsh-workbuddy-connect/status': { code: 200, body: JSON.stringify({ status: 'signed-in', credits: { total: 0, unlimited: true } }) },
-  }, async (base) => { setWebBase(base); return await fetchPlan() })
+    '/plugins/dsh-workbuddy-connect/ai/status': { code: 200, body: JSON.stringify({ status: 'signed-in', credits: { total: 0, unlimited: true } }) },
+  }, async (base) => { setWebBase(base); return await fetchPlanAi() })
   check('W6 unlimited → creditsUnlimited', wire.creditsUnlimited === true && wire.creditsTotal === null, wire)
 }
 // W7 网络失败（连接拒绝）→ exec 错误。
 {
   setWebBase('http://127.0.0.1:1') // port 1 几乎必然连接失败
-  const wire = await fetchPlan()
-  check('W7 传输失败 → exec + 原因', wire.error === 'exec' && wire.message.includes('WorkBuddy 状态读取失败'), wire)
+  const wire = await fetchPlanAi()
+  check('W7 传输失败 → exec + 原因', wire.error === 'exec' && wire.message.includes('状态读取失败'), wire)
 }
 
 // W8 [0.8.3 独立渠道] 单渠道失败不再产生「部分取数」——两个版本现在各自独立，
@@ -176,29 +175,29 @@ async function withServer(routes, fn) {
         }
         return { status: 200, json: async () => ({ status: 'signed-in', credits: { total: 100 } }) }
       }
-      const cn = await fetchPlan()
+
       const ai = await fetchPlanAi()
-      check('W8a 国内版渠道不受国际版失败影响（' + kind + '）', cn.creditsTotal === 100 && cn.error === undefined, cn)
+      check('W8a 国际版失败不产生部分取数（' + kind + '）', ai.error !== undefined && ai.creditsTotal === undefined, ai)
       check('W8b 国际版渠道各自报错（' + kind + '）',
         ai.error === (kind === 'semantic' ? 'api' : 'exec'), ai)
       check('W8c 单渠道结果不再带 partial（合并机制已废弃）',
-        cn.partial === undefined && ai.partial === undefined, { cn, ai })
+        ai.partial === undefined, { ai })
     }
     // 两个渠道都失败 → 各自报 exec，互不干扰。
     globalThis.fetch = async () => { throw new Error('offline') }
-    const cnErr = await fetchPlan()
+    const cnErr = await fetchPlanAi()
     const aiErr = await fetchPlanAi()
     check('W8d 两渠道都失败 → 各自报 exec', cnErr.error === 'exec' && aiErr.error === 'exec', { cnErr, aiErr })
     check('W8e 失败结果不带 partial / 数据字段',
       cnErr.partial === undefined && cnErr.creditsTotal === undefined
       && aiErr.partial === undefined && aiErr.creditsTotal === undefined, { cnErr, aiErr })
     globalThis.fetch = undefined
-    const unavailable = await fetchPlan()
+    const unavailable = await fetchPlanAi()
     check('W9 缺 fetch 返回结构化错误', unavailable.error === 'exec', unavailable)
     const aborter = globalThis.AbortController
     try {
       globalThis.AbortController = undefined
-      const exceptional = await fetchPlan()
+      const exceptional = await fetchPlanAi()
       check('W10 外层异常返回结构化错误（execError 导入守卫）', exceptional.error === 'exec', exceptional)
     } finally { globalThis.AbortController = aborter }
   } finally { globalThis.fetch = original }
@@ -217,15 +216,15 @@ async function withServer(routes, fn) {
       seen.push({ url: String(url), headers: (init && init.headers) || null })
       return { status: 200, json: async () => ({ status: 'signed-out' }) }
     }
-    await fetchPlan()
+    await fetchPlanAi()
     await fetchPlanAi()
     check('W11 两渠道各发一条 status 请求（共两条）', seen.length === 2, seen)
     check('W11a 请求头带 accept-encoding: identity', seen.every((s) => s.headers
       && s.headers['accept-encoding'] === 'identity'), seen)
     check('W11b 请求头带 accept: application/json', seen.every((s) => s.headers
       && s.headers['accept'] === 'application/json'), seen)
-    check('W11c 两渠道命中各自的端点', seen.some((s) => s.url.endsWith('/plugins/dsh-workbuddy-connect/status'))
-      && seen.some((s) => s.url.endsWith('/plugins/dsh-workbuddy-connect/ai/status')), seen)
+  check('W11c 命中国际版端点', seen.every((s) => s.url.endsWith('/plugins/dsh-workbuddy-connect/ai/status')), seen)
+
   } finally { globalThis.fetch = original }
 }
 console.log(failCount === 0

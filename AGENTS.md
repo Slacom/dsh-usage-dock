@@ -11,7 +11,172 @@ DeepSeek Harness（DSH）的**侧栏用量/余额插件**：在 Web/桌面端左
 用量与余额，点击可展开详情面板。fork 自 `chendefine/dsh-plugins-plan-usage`，改名 `dsh-usage-dock`
 以避免与上游混淆，并做了一系列定制（见第 6 节）。
 
-**当前版本**：0.8.5（本地构建待验证：WorkBuddy 失败回退分类 + 失败阈值 8）　|　**上一公开版**：0.8.4（GitHub Release + npm；修复「胶囊盖住官方通知卡」，用户真机确认生效）　|　**更早**：0.8.3、0.8.2、0.8.1、0.7.2（0.8.0 未单独发布）
+**当前版本**：0.9.0（三渠道退场 + 通用自定义余额 + `usage_status` 只读工具 + 可选额度策略 + 单列设置页。
+**0.9.1 曾是过程内的整改标签，已并入 0.9.0**，不要把它当作已单独发布过的版本）　|　
+**上一公开版**：0.8.4（GitHub Release + npm）　|　**更早**：0.8.5（仅本地定档）、0.8.3、0.8.2、0.8.1、0.7.2（0.8.0 未单独发布）
+
+> **审核入口（先读这条）**：当前**权威**记录是
+> [0.9.0 发布状态](docs/release-status-v0.9.0-20261024.md)（程序已部署、用户已确认本地验收；
+> 验收证据、未验证边界、`0.9.1` 标签归属都在那里）。下方 2026-10-21/22 段落是**历史过程记录**，
+> 口径以状态文档为准；历史结论不删除、API 契约继续有效。
+
+> **2026-10-22 0.9.1 历史状态（过程记录，已并入 0.9.0）**：
+> 冻结 A/B/C 根因已完成本地修复与行为验收；**51 组 1642 项（含12个生命周期场景）+ 行尾75 + 几何144 + 契约7 = 1868项，54脚本全部exit0、0跳过**。
+> 新包 `92DC823A…`（232905字节 / 27文件）[本地包](legacy/local-build-0.9.0/operation-fix-20261022/dsh-usage-dock-0.9.0.tgz)已按用户授权备份并部署desktop profile，27文件mismatch=0；**未自动重启，等待用户手动重启及新会话确认，不能把磁盘已部署当作运行时已激活**。[试装步骤与回滚](docs/deploy-local-operation-fix-20261022.md)。
+> - 最新修复与验收：[A操作归属修复](docs/fix-custom-operation-v0.9.1-20261022.md)、构建记录§24。真实Host提示词注入/重试、策略UI等仍是独立未完项，不并入自定义渠道修补。
+> - 现状与验证分栏：[docs/status-0.9.1-20261021.md](docs/status-0.9.1-20261021.md)
+> - 逐轮整改细节：[docs/quota-policy-build-v0.9.0.md](docs/quota-policy-build-v0.9.0.md) §14–§24
+> - **内置 WorkBuddy 已改走 WorkBuddy2API 网关**（`plans/workbuddy.js` `fetchFromGateway`，
+>   `GET <origin>/status` 根路径 + 复用模型来源 Bearer Key）；`workbuddy-ai` 已退场。
+> - **第六轮复核 R6-01…R6-05** 已修：同 Key 指纹分叉（identify/GUI 两套编码）、
+>   WorkBuddy 来源与账号选择未进观察身份、明细吃光 8 秒工具预算、错误回显上游正文、
+>   `response.ok` 兼容分支。详见构建记录 §20。
+> - **构建级缺陷 B1–B12**（超时误 abort、正文读两次、`locked` 未定义导致设置页白屏等）
+>   见构建记录 §19.3 —— 这批都是实现错误而非需求变更，且多数只在合成对象上测过，
+>   真机先发现。改这类代码请用真实 `signal` / 单次消费 body / 真实作用域验证。
+
+> **2026-10-18 0.9.0 审查整改（R1–R7 + 连接目标安全）**：独立审查发现 7 个可复现缺陷与 1 个安全偏差，
+> 已全部修复并各自补了「先失败、后通过」的复现用例。要点（细节见
+> [审查整改记录](docs/remediation-v0.9.0.md)）：
+> - **R1 预算贯穿全流程**：`createBudget()` 的绝对 deadline 覆盖排队、`credentials.resolve`、
+>   DNS、连接与 body；过期后**不再发请求**，迟到依赖不回填。
+> - **R2 代次用实际凭据**：`credentialFingerprint()` 对**真正发送的 Key**（含引用解析结果）取
+>   不可逆短哈希，`generationOf()` 在拿到 Key 后才定稿 = 引用轮换/清空/解析失败都会换 gen。
+> - **R3 配置变化即时作废**：客户端 `customConfigSignature()` + 模块级 `configEpoch`
+>   （保存成功即 bump，覆盖「只改 Key」）作为轮询 effect 依赖 —— 配置一变就 abort 在途请求、
+>   清空旧值与失败计数；显示层按**当前已保存配置**过滤。旧实现只比较两份 wire.gen，在途旧响应会被接受。
+> - **R4 错误行保留身份**：整体失败第 8 轮的纯错误行保留 `custom`/`gen`（只剥余额），
+>   carry 按已保存配置清理，删除/停用后不再残留成 `custom:xxx 获取失败`。
+> - **R5 显式 Key 也受目标绑定**：显式已保存 Key 与凭据引用**统一**要求
+>   `credentialHost === originOf(url)`（规范化 origin，大小写/默认端口/IPv6 一致），
+>   否则**零请求**返回 `credential-unconfirmed`。新录入的 Key 保存时自动绑定当前 origin。
+> - **R6 先校验后写**：`save()` 改为「校验（零副作用）→ 一次 mutate 提交公开字段+secret 路径 →
+>   如实报告」；无 `mutate` 且要写 Key 时整页拒绝，绝不先写元数据再提示取消。部分成功会明说。
+> - **R7 统一解包 volatile**：`unpackConfig()` 在交给 provider 前解包**所有**字段（Key/Cookie/阈值/
+>   数组），修掉「无 configEditor 时用户填了 Key 仍报 no-key」的既有缺口。
+> - **安全（连接目标）**：不再「先 lookup 再让 fetch 自己解析」。`resolveValidatedAddresses()`
+>   拿到全部公网地址后，`requestJson` 用 `node:https` + `makeLookup()` 把 `lookup` **钉死**在这份
+>   地址上（`servername` 仍为真实域名，TLS 校验从不关闭，不跟随重定向）；拿不到 `node:https`
+>   时返回 `unbound` 并**保守拒绝**，不静默降级。
+> 测试：新增 `test-review-fixes`（40）、`test-custom-race`（39）、`test-config-unwrap`（22）、
+> `test-recheck-fixes`（25），全量 **22 组 768 项通过**（另契约 7 项）。
+> 仍为**仅本地构建**：未部署、未重启、未提交、未推送。（方向 6 后来已获授权实施，见下方条目。）
+>
+> **第二轮复核（V1–V5）追加修复**（[复核报告](docs/recheck-v0.9.0-remediation.md)）：
+> - **V1 端口 origin**：新增 `composeOrigin()`，只接受 hostname、端口去前导零、默认端口不写入；
+>   `originOf()` 统一四种输入；`validateBalanceUrl()` 直接返回可比较的 `origin`。
+>   此前 `https://a.example:8443` 被算成 `https://[a.example:8443]:8443`，
+>   导致**正确确认被拒、旧 443 确认却能向 8443 发 Key**。
+> - **V2 已渲染数据作废**：`state.applied`（数据所属配置身份）+ 逐条签名 + `customDataStillValid()`
+>   在**渲染时**判定；`wireMatchesCurrentConfig()` 用 wire `gen` 识别「Host 2 秒配置缓存回旧数据」；
+>   `knownGens` 放组件级 ref（否则 effect 重建后旧快照又会被当新数据）。改 URL/币种/只改 Key 都**立刻**生效。
+> - **V3 单条预算**：`createBudget()` 取 `min(now+totalMs, deadlineAt)`，不再被子任务继承整批 20 秒放大。
+> - **V4 冷启动并发**：`loadHttps()` 缓存**同一个 Promise**，不再在 import 完成前暴露 undefined。
+> - **V5 截断响应**：stream 错误不再被吞成 EOF；EOF 后校验 `res.complete`，
+>   Content-Length 不足 / chunked 未终止 / 中途断开一律判失败，合法 JSON 前缀也不能冒充成功。
+> 新包 `AAE306…`（旧 `e4fc46…` 作废）。
+>
+> **第三轮复核（W1–W3）追加修复**（[第三轮复核](docs/recheck-v0.9.0-round3.md)）：
+> V1/V3/V4/V5 通过，V2 仍有三处缺口，根因都是「客户端在猜 Host 用的是哪份配置」。改为 **Host 出证**：
+> - **配置身份协议**：`configDigestOf()`（Host）与 `configDigestOfClient()`（客户端）用同一套规则
+>   算 16 位摘要（条目公开身份 + **非密**修订号 `customKeyRev`）。Host 路由返回
+>   `data.cfg = { digest, readAt, reloadable }`，`digest` 用**本次实际读到的 cfg** 计算。
+>   客户端只比较摘要：不等 → 整批不显示，也不标成当前配置的 applied。
+> - **W1**：从没见过 gen 时不再直接接受旧配置 wire（首个请求被取消 + Host 2 秒缓存场景）；
+>   组件重挂、快速修改、旧缓存回放都覆盖，Host 读到新配置后自动恢复。
+> - **W2**：`customKeyRev` 与 secret 写**同一次 mutate**，幂等写入（同一把 Key）也会 +1，
+>   因此「保存是否生效」不再靠 gen 变化判断；收到可信摘要后同一 gen 也能恢复。
+>   不删 `configDirtyIds` 兜底，否则保存后旧值会回填。
+> - **W3**：`lastList`/`failStreaks`/`customGens` 移到组件级 ref，effect 重建**不再清空全表**；
+>   只逐条作废「身份确实变了 / 停用 / 删除」的条目，未改动的 B 与内置渠道继续沿用基线与失败计数。
+> 新增 `test-recheck-round3`（29），全量 **22 组 776 项通过**。新包 `E4861F38…`（旧 `AAE306…` 作废）。
+>
+> **第四轮复核（X1–X2）追加修复**（[第四轮复核](docs/recheck-v0.9.0-round4.md)）：
+> - **X1 双端摘要规范化统一**：Host 的 `entryPublicIdentity()` 会 trim URL/路径/引用、
+>   规范化币种、小写 `credentialHost`，而客户端拼的是原始字段 —— 于是
+>   `url = ' https://a.example/b '` 这类**合法输入**让 Host 的成功证明永远不匹配，
+>   界面只剩「—」。现在客户端 `digestEntryIdentity()` 与 Host 逐字同构
+>   （`digestText` trim+截断、`digestCurrency` trim+大写、host 小写）；
+>   `customEntrySignature()` 也走同一规范化，避免「没改却被判成改过」。
+>   **规范化放在摘要计算里**，不是保存时 trim —— 这样既有配置 / CLI / YAML / 真实 Config 都覆盖。
+> - **X2 只改 `customKeyRev` 也生效**：`expectedDigest` 原来被读进 effect 闭包、依赖里也没有它，
+>   于是别的窗口保存 Key 后（本页无 `bumpConfigEpoch`）旧值不隐藏、匹配新修订的结果被永久拒绝。
+>   现在比较 `expectedDigestRef.current`（当前值）、`expectedDigest` 进入 effect 依赖、
+>   逐条身份 `customEntryIdentityWithRev()` 纳入该条公开 Key 修订号（其它条目不受影响）。
+> 新增 `test-recheck-round4`（33）。**口径更正**：此前「776 项」漏计 `mimo-parse`（21）与
+> line-endings 增量，实际为 **23 组 831 项**（22 个 `node` 组 654 + line-endings 33 +
+> peak-marker 144）。新包 `E41967…`（旧 `E4861F38…` 作废）。
+>
+> **方向 6 实施：`usage_status` 只读模型工具（2026-10-18 获明确授权）**（[实施记录](docs/direction6-0.9.0.md)）：
+> - **T0 契约重新核验**（从 `app.asar` 直读 `@deepseek-ai/dsh-tools` 真实实现，**不沿用**补证推断）：
+>   `ctx.tools.register(def)` 返回**精确 disposer**；def 形如
+>   `{name, description, parameters, output:{schema, render}, execute(args, exec)}`；
+>   `execute` 返回值必须是 lossless JSON 且符合 `output.schema`；schema 只支持
+>   `type/oneOf/properties/required/additionalProperties/items/enum/const` + 注解；
+>   `run_code` 是保留名。**不 import** 宿主包，按契约手写定义。
+> - **T1 投影**（`plans/usage-tool.js`，纯函数）：白名单逐字段重建（**不透传** wire）；
+>   Key/Cookie/URL/路径/账号/上游原文一律不出；`0` 有效、负数保留、缺失为 `null`；
+>   Codex 百分比显式 `percentMode:'remaining'`；退场 id → `unknown + retired-channel`
+>   （不取数、不复活）；未知 id 是**参数错误**。
+> - **T2 编排**（`plans/usage-tool-register.js` + `index.js`）：查询范围 = 白名单 ∩ 已启用 ∩ 用户请求
+>   （**停用渠道显式点名也不取数、不发凭据**）；只取需要的渠道；30 秒**成功**缓存 +
+>   single-flight + 按配置摘要分代；单次 8 秒预算（超时不 reject，标 `missing`）；
+>   缺 `tools` 服务时**静默跳过**且不影响胶囊与路由。
+> - **T3 策略**（`plans/usage-policy.js`）：五个 `.volatile()` 字段，`quotaPolicyEnabled`
+>   **默认 false**，两个阈值默认 **0 = 未配置**；未启用/无关注渠道/无有效阈值 → 不说话；
+>   `error/unknown/unavailable/unlimited/stale` 一律不参与；提示文本明写「不构成强制停工」。
+>   （D6-H 整改后不再有「默认 20%」；详见下方 D6 条目。）
+> - **实现中真实发现并修掉的三个问题**：① 注册发生在 `apply` 时（配置未读到），早期把启用集合
+>   当同步值求值 → **首次调用永远查不到渠道**（回归 `R11`/`R12`）；② 空查询集合仍会打上游；
+>   ③ 显式查询未与「已启用」求交集，停用渠道仍被取数（`E12b` 抓出）。
+>
+> **方向 6 首次复核整改（D6-A～D6-H）**（[复核报告](docs/review-direction6-v0.9.0.md)、
+> [实施记录](docs/direction6-0.9.0.md)）：首次复核判定「框架有、尚不通过」，八组问题已逐组修复。
+> - **D6-A 请求范围**：`fetchCustomPlans` 新增 `onlyIds`，在**任何凭据解析/DNS/请求之前**缩小条目；
+>   `describe` 不再解析凭据，身份解析单独由 `identify(ids)` 按本次请求完成。
+> - **D6-B 缓存身份**：缓存键 = `id + 配置代次 + 凭据身份`（Host 内部短哈希）；
+>   账号/会话型渠道（deepseek/codex/workbuddy/workbuddy-ai）**完全不缓存**；collect 返回前校验代次。
+> - **D6-C 真实语义**：`percentSemanticsOf()` 声明口径（只有 codex 是 remaining；OpenCode 的
+>   `usagePercent` 是已用 → 换算成剩余）；WorkBuddy 读 `creditsTotal`；DeepSeek 带回实际币种；
+>   越界置 null 不钳位；`disabled`/`not-found`/`missing`/`no-credential`/`retired-channel` 可辨。
+> - **D6-D**：只缓存 `ok`/`unlimited`，失败可立即重试；成功采集写 `fetchedAt`，命中不刷新。
+> - **D6-E**：deadline 从 `execute` 入口创建并贯穿 describe/identify/取数，组合 `exec.signal`；
+>   `onChannel` 逐渠道回传（慢渠道不抹掉快渠道）；卸载清空缓存与在途任务。
+> - **D6-F**：`resetsAt` 严格校验并规范化 ISO，`resetInSec` 限区间，非法置 null。
+> - **D6-G**：策略进入工具结果 `policy` 字段与 `render`，并注册宿主**公开**
+>   `systemPrompt.section`（配置变化重建、卸载清理）。**「必须改宿主」的原判断不成立。**
+> - **D6-H**：阈值默认 **0 = 未配置**（不再补 20%）；金额判据必须绑定币种；积分不与金额比较。
+> 方向 6 十二组共 **509 项**（`test-usage-tool` 108 / `-register` 70 / `-host` 41 /
+> `test-usage-policy` 85 / `test-usage-integration` 31（**真实 provider**）/ `recheck-y1y4` 41 /
+> `recheck-z1z3` 25 / `mixed-currency-ui` 5 / `recheck-q1q3` 30 / `recheck-f1f2` 32 / `usage-tool-contract-host` 9）。
+> 全量 **33 组 1328 项**（33 个 Node 组 1133 + 行尾 51 + 几何 144），另契约 7 项。
+> 新包 `5A9DE120…`（旧 `411C577C…` 作废）。
+> **真机冒烟（2026-10-19）**：`usage_status` 已装入本机 desktop profile 并**被模型实际调用成功**，
+> 返回值与 GUI 胶囊一致（DeepSeek 18.03 CNY / Codex 31%、54% / WorkBuddy 6017 / WorkBuddy AI 349 /
+> MiMo 为 `api` 语义错误）。首装时曾因 `OUTPUT_SCHEMA` 使用 **type 数组**（宿主只支持单一 `type`
+> 字符串）导致 `register()` 抛错、被吞成 `registered:false`，工具**静默消失**（GUI 与路由都正常）；
+> 已改用 `oneOf` 表达可空字段，并补 `test-usage-tool-contract-host`（9 项，含宿主校验器副本）守门。
+> **仍未验证**：`systemPrompt` 策略段落是否真的进入提示词、策略 UI（未实现）、Android 可用性。
+> 未经独立复核，**不**声称方向 6 已通过。
+
+> **2026-10-18 0.9.0**：① 移除 `kimi-code` / `glm-zhipu` / `glm-zai` 三个内置渠道的胶囊、
+> 详情、设置与排序入口，并**停止后台取数**（注册表是唯一取数来源）；旧配置字段与共享模型凭据
+> 原样保留，不清理 profile。Kimi parser / ratio-pool / Cookie 月限按用户决定**不修**。
+> ② 设置页最下方（统一保存/放弃之前）新增「自定义余额渠道」：名称、HTTPS 余额 URL、API Key
+> （可留空复用**明确选定**的模型凭据引用）、结果 JSON 键路径，可选币种与固定扣减键。
+> 只做 `GET` + Bearer + JSON，不做厂商特例；不跟随重定向，拒绝环回/私网/云元数据目标，
+> DNS 解析结果必须全部公网，响应体上限 256 KiB、单条 10 s / 整批 20 s、并发 3、最多 12 条。
+> Key 存放于 `role('secret')` 的 `customKeys` dict（**不是**数组元素），设置页按
+> `['customKeys', id]` 路径 set/unset，输入框从不回填已有 Key。
+> ③ 失败回退沿用阈值 8：暂时错误灰化保留上次成功值，鉴权/配置错误立即提示；
+> 每条带 `gen`（身份字段 + Key 指纹），改 URL/Key/引用/路径/币种或停用/删除即作废旧值与在途响应。
+> 详见 [v0.9.0 发布说明](docs/release-notes-v0.9.0.md)。
+> ④ 顺带修正既有缺陷：无 `configEditor` 的部署里 volatile 字段是 `{get()}` 包装，0.8.x 的
+> `cfg.enabled === false` 判断恒不成立（全局与渠道开关实际不生效），已填的 Key/Cookie/阈值也被
+> 当成非字符串/非数字。整改版用 `unpackConfig()` 在交给 provider 前**统一解包所有字段**（R7）。
+> 测试：新增 `test-review-fixes`（40）、`test-custom-race`（39）、`test-config-unwrap`（22）、
+> `test-recheck-fixes`（25）、`test-recheck-round3`（29）、`test-recheck-round4`（33）；
+> 全量 **33 组 1328 项通过**（另契约 7 项）。**本地回归不等于真机验证。**
 
 > **2026-10-15 0.8.2 说明**：主方向为 DSHA WorkBuddy「fetch failed」修复（宿主
 > dsh-web-mobile compress.js × gzip 中间件踩踏，消费侧两处绕过：status 请求声明
@@ -71,8 +236,10 @@ DeepSeek Harness（DSH）的**侧栏用量/余额插件**：在 Web/桌面端左
 ```
 index.js          Host 半：导出 Config schema、注册 /api/plan-usage 路由、编排各渠道取数
 client.js         Browser 半：侧栏胶囊 + 「内置插件」里的设置页（单文件，零构建）
-plans/index.js    渠道注册表（新增渠道只需在此登记）
+plans/index.js    渠道注册表（新增渠道只需在此登记；0.9.0 起导出 RETIRED_PLAN_IDS）
 plans/<渠道>.js   每渠道一个模块，统一接口 { id, name, fields, schema, source, fetch }
+plans/custom-balance.js  [0.9.0] 通用自定义余额：JSON 键路径、数值语义、URL/DNS 安全、
+                  请求（GET+Bearer、不跟随重定向、响应体上限）、错误分类、整批调度、状态摘要
 plans/util.js     共用工具：curlJson（原生 fetch / Python / curl 三后端自适应）、窗口归一化、凭据解析
 plans/peak-phase.js  DeepSeek 峰谷计价相位纯函数（峰窗口/周末/假日表，0.8.0）
 plans/http-fetch.py  兜底取数脚本（Windows 沙箱内 curl 的 TLS 不可用时的 Python/OpenSSL 方案）
@@ -84,9 +251,39 @@ tools/test-footer-row.mjs      浏览器半回归测试：胶囊独占侧栏底�
 tools/test-degrade-refresh.mjs 浏览器半回归测试：失败降级/取整/强刷/峰谷条/充值按钮/MiMo（0.8.0）
 tools/test-peak-phase.mjs      plans/peak-phase.js 单元测试（0.8.0）
 tools/test-mimo-parse.mjs      plans/mimo.js 纯函数单元测试（0.8.0）
+tools/test-custom-balance.mjs        [0.9.0] 自定义余额纯函数：路径/数值/扣减/URL/状态/代次
+tools/test-custom-balance-fetch.mjs  [0.9.0] 自定义余额网络层：请求形态/凭据/错误/并发/预算
+tools/test-custom-settings.mjs       [0.9.0] 设置页自定义区 + 渠道退场 + Key 路径写入
+tools/test-custom-render.mjs         [0.9.0] 胶囊/详情/灰化→第8次错误/恢复/代次作废/停用删除
+tools/test-custom-security.mjs       [0.9.0] 秘密哨兵/重定向/DNS/上限/迟到响应
+tools/test-host-custom.mjs           [0.9.0] 真实 apply() 路由端到端（退场不取数、秘密不外泄）
+tools/test-review-fixes.mjs          [0.9.0 整改] R1/R2/R5 + 连接期绑定（含真实 TLS 往返）
+tools/test-custom-race.mjs           [0.9.0 整改] R3/R4/R6 客户端时序与保存事务
+tools/test-config-unwrap.mjs         [0.9.0 整改] R7：真实 Config → apply → provider
+tools/test-recheck-fixes.mjs         [0.9.0 复核] V1 端口 origin / V3 单条预算 / V4 冷启并发 / V5 截断响应
+tools/test-recheck-round3.mjs        [0.9.0 复核] W1 配置证明 / W2 幂等 Key 恢复 / W3 按渠道保留基线
+tools/test-recheck-round4.mjs        [0.9.0 复核] X1 双端规范化 / X2 公开修订进入请求身份
+tools/test-usage-tool.mjs            [方向6/T1] 投影与脱敏（白名单/数值语义/退场/参数）
+tools/test-usage-tool-register.mjs   [方向6/T2] 注册层：契约形状/缓存/single-flight/预算
+tools/test-usage-tool-host.mjs       [方向6/T2] **真实 apply**：注册、dispose、开关隔离、环回拒绝
+tools/test-usage-policy.mjs          [方向6/T3] 策略：默认关闭/显式关注/保守判定/措辞约束
+tools/test-custom-round3.mjs         [0.9.1] 第三/四轮复核：来源删除不复活、观察器身份、单条自定义边界
+tools/test-custom-round5.mjs         [0.9.1] 第五轮复核：双卡误写误删、默认折叠、账号选择不白屏
+tools/test-workbuddy-gateway.mjs     [0.9.1] WorkBuddy2API 网关：根路径/鉴权/口径/账号筛选/积分包/超时
+plans/usage-tool.js                  [方向6/T1] usage_status 投影（纯函数，无 IO）
+plans/usage-tool-register.js         [方向6/T2] 工具注册/缓存/预算（不 import 宿主包）
+plans/usage-policy.js                [方向6/T3] 可选收尾策略（默认关闭）
 ```
 
-**已接入渠道**：OpenCode Go、GLM Z.AI、GLM 智谱、Kimi Code、DeepSeek（账号余额优先/API Key 回退）、OpenAI Codex、小米 MiMo（控制台 Cookie → API 余额，0.8.0）。
+**已接入渠道**（0.9.1 起）：OpenCode Go、DeepSeek（账号余额优先/API Key 回退）、OpenAI Codex、
+小米 MiMo（控制台 Cookie → API 余额）、WorkBuddy（**2026-10-21 起改读 WorkBuddy2API 网关**，
+见 `plans/workbuddy.js` 的 `fetchFromGateway`），以及用户自建的
+**自定义余额渠道**（0.9.0，任意 HTTPS GET+Bearer+JSON，见第 6 节第 14 条）。
+
+**已退场渠道**：`kimi-code`、`glm-zhipu`、`glm-zai`（0.9.0），以及
+`workbuddy-ai`（0.9.1，用户决定全部改走国内网关，不再区分国际版）。
+它们的模块文件仍留在 `plans/` 作为历史资料，但 `workbuddy-ai` **已不在 `PLANS` 且进 `RETIRED_PLAN_IDS`**；
+不要把它们的 schema 字段或 UI 加回来，除非用户明确要求恢复。
 
 ## 4. 开发流程
 
@@ -199,14 +396,51 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
 13. **小米 MiMo 渠道**（0.8.0）：控制台 Cookie 鉴权（非 API Key，需 userId + serviceToken），
    只查 `GET /api/v1/balance` 显示账户余额（用户明确：不做套餐积分额度）；
    `util.js` 的 `parseResult` 已放行 `{code:0}` 成功信封（code 非 0/非 200 才是错误）
+14. **自定义余额渠道**（0.9.0）：用户在设置页最下方自建「厂商名称 + HTTPS 余额 URL + API Key
+   / 模型凭据引用 + JSON 键路径（可选扣减键、币种）」，每条一条胶囊行与一个详情分区。
+   实现要点：
+   - 取数在 `plans/custom-balance.js`，**只用原生 fetch / `node:https`**（不回落 Python/curl，
+     否则会绕过 URL/重定向限制）；有已核验地址时走 `node:https` + 固定 `lookup`
+     （见第 7 节「连接目标绑定」），`redirect` 不跟随，DNS 结果必须全部公网，
+     响应体 ≤256 KiB，单条 10 s / 整批 20 s、并发 3、最多 12 条；
+   - **Key 不进 `customBalances`**：它在 `customKeys`（`z.dict(z.string().role('secret'))`）。
+     这是刻意的：DSH 的 settings 投影会把 secret 从 `value` 里剥掉，浏览器拿不到已有 Key，
+     若 Key 在数组元素里，客户端回写整个数组会把其它条目的 Key 抹掉。设置页因此用
+     `form.mutate([{op:'set'|'unset', path:['customKeys', id]}])` 精确写入，且输入框永不回填；
+   - `role('secret')` 的剥除与 `mutate` 的数组/路径寻址语义，是按 `dsh-settings` 的
+     `redactSecrets` / `applyPathOp` 与 `dsh-api-settings-controller` 的 `namespaceView`
+     源码核对的（remote `describe` 一律 `redactSecrets: true`）；
+   - 每条 wire 结果带 `gen`（身份字段 + Key 的 SHA-256 前 12 位），代次一变客户端就作废旧值
+     与失败计数，防「旧账户余额配新 URL」；
+   - 暂时错误（网络/429/5xx/结构）灰化保留旧值、连续 8 次转纯错误；鉴权（401/403）、
+     配置（坏 URL/坏路径）、缺 Key 一律**立即提示**，不用旧值掩盖。
 
 ## 7. 已知限制
 
 - 0.8.1 的 Host 已通过可选 `configEditor` 重读配置（2 秒内复用）；缺少该服务的旧版/移植端回退启动快照，修改凭据和 Host 开关后仍需重启引擎。显示层过滤与排序订阅表单。
-- WorkBuddy 积分依赖同一 profile 中已启用的 WorkBuddy Connect 及有效登录副本、可访问的计费上游。源码/模拟检查通过不等同所有 DSHA 设备真机验证。
+  （0.9.0 起 `cfgValue()` 能正确解包 volatile 包装，因此**开关本身**在没有 configEditor 的
+  部署里也生效；但「改完不重启就换 Key」仍要求 configEditor。）
+- **国内 WorkBuddy**（0.9.1 起）不再依赖 WorkBuddy Connect：改为读「设置 → 模型」里 `workbuddy`
+  网关配置，访问 `<origin>/status` 根路径并复用该来源的 Bearer Key。因此它依赖**模型配置里
+  确实存在该 provider**，且该网关在运行。国际版 `workbuddy-ai` 已退场。
+  源码/模拟检查通过不等同所有 DSHA 设备真机验证。
 - 原生 fetch **不读系统代理设置**（Node/undici 默认行为）。必须走代理出网的环境里首次请求会先
   失败一次（最多 10 秒），随后自动落到会读代理的 Python shim 并被记住——功能不受影响，只是首次稍慢。
   若要让 fetch 直接支持代理，可给 Host 进程加 `NODE_USE_ENV_PROXY=1`（Node 24+）。
+- **自定义余额渠道**（0.9.0）：
+  - 只支持 `GET` + `Authorization: Bearer` + JSON；**没有** Cookie / OAuth / 签名 / GraphQL /
+    网页抓取 / 套餐窗口，也没有厂商特例。
+  - **OpenRouter 类响应未经真机核验**：本轮抓取官方文档被本机网络策略拦下（域名解析到
+    非公网地址），因此只声明「支持直接返回剩余值的接口」与「可用可选扣减键表达
+    累计额度 − 累计用量」，不声称已验证该厂商兼容。累计充值不会自动被当成余额。
+  - **连接目标绑定（已整改，不再是 best-effort）**：先 `resolveValidatedAddresses()` 把域名解析成
+    **全部**公网 IP（任一是私网/环回/链路本地/云元数据即整体拒绝），再用 `node:https` +
+    `makeLookup()` 把 `lookup` 钉死在这份地址上——检查的 IP 就是连接的 IP，DNS 重绑定窗口被消除。
+    `servername` 仍是真实域名（TLS SNI 与证书校验按域名），**从不关闭**证书校验，不跟随重定向。
+    拿不到 `node:https` 时返回 `unbound` 并**保守拒绝**（不发凭据），不会静默降级。
+    残余风险：若运行时的 `node:https` 行为被宿主改写，绑定即失效——本项目不作此假设，但不声称绝对。
+  - 没有低余额告警阈值（不继承 DeepSeek 的 10 元）；需要时另开需求。
+  - `/api/plan-usage/custom-status` 是 0.9.0 新增的只读路由（只回布尔），扩大了对外接口面。
 
 ## 8. 发布
 
@@ -351,16 +585,45 @@ $token = (("protocol=https`nhost=github.com`n`n" | git credential fill) -replace
     改为按 connect 的 `classifyUpstreamError` 类别分流（session_dead/hard_credit 语义，其余暂时），
     并给条目加 `transient:true`；客户端 `settle()` 显式信任该标记。阈值 5 → 8，
     两端超时 30/30s → 35/40s。workbuddy 26 → 27、degrade-refresh 42 → 43。
+15. 0.9.0（2026-10-18，**仅本地构建**：未提交、未打标签、未推送、未发布）：
+   三渠道退场（`kimi-code` / `glm-zhipu` / `glm-zai`，双端注册表 + 设置 + 排序 + 后台取数）+
+    通用自定义余额渠道（`plans/custom-balance.js`，设置页最下方可多条增删改启停排序，
+    与内置渠道共用整页草稿；Key 走 `customKeys` secret dict 的路径写入）。
+    实现期间抓到并修掉的真实问题：① `orderedIds()` 把退场 id 留在排序数组里，箭头点了「没动」；
+    ② 自定义条的鉴权错误在胶囊里只显示笼统「获取失败」，没给出「鉴权失败」这一可操作提示；
+    ③ `redirect:'error'` 的错误原因藏在 `err.cause` 里，只看顶层消息会误报成「网络不可达」；
+    ④ 超时只靠 `AbortSignal` 时，不理会 signal 的 transport 会把整批拖死（改为请求层 race）。
+    另修正既有缺陷：volatile 字段是 `{get()}` 包装，0.8.x 的 `cfg.enabled === false` 判断
+    在没有 configEditor 的部署里恒不成立。回归 19 组 632 项通过；**不等于真机验证**。
+    随后按独立审查整改 R1–R7 与连接目标安全（见本节开头与
+    [整改记录](docs/remediation-v0.9.0.md)）：预算贯穿全流程、代次改用实际凭据、配置变化即时作废、
+    错误行保留身份、显式 Key 也受目标绑定、保存改为「先校验后一次 mutate」、统一解包 volatile，
+    并把 SSRF 防护从 best-effort 升级为 `node:https` 连接期 IP 绑定。整改后 21 组 732 项通过。
+    随后第二轮复核（V1–V5）又修了端口 origin、已渲染数据作废、单条预算、
+    HTTPS 冷启动并发与截断响应；第三轮复核（W1–W3）改为 Host 出配置证明
+    （`data.cfg.digest` + 非密 `customKeyRev`）、按渠道保留基线与失败计数；
+    第四轮复核（X1–X2）统一了双端摘要的字段规范化，并让公开 Key 修订进入请求身份；
+    **方向 6 已实施**（`usage_status` 只读模型工具 + 默认关闭的收尾策略）。
+    方向 6 首次复核后又整改 D6-A～D6-H。全量 **33 组 1328 项通过**。
 
 ## 11. 未来方向（roadmap）
 
 完整记录在 **[docs/roadmap.md](docs/roadmap.md)**，排新版本时从那里取。当前待做：
 
-1. **方向 5：Agent 协作的更新/安装流程（0.8.6 计划，设计已定）**：插件不能自我替换
-   （`pluginManager.installBundle` 在 `hmr` 存在时拒绝已安装包；自卸载会中断调用链），
-   改为「插件检测 + 生成带 sha256/安装目录的提示词 → 用户复制给会话 Agent → Agent 按
-   [docs/agent-update.md](docs/agent-update.md) 执行 → 提示重启」。协议文档与
-   `tools/verify-install.mjs` 已落库，剩余工作量见 roadmap 方向 5。**永不自动重启 DSH**。
+1. **方向 5：Agent 协作更新/安装（独立排期，不并入当前 0.9.0）**：插件不能自我替换，
+   保留「只读检测 → 用户复制提示词 → 外部 Agent 安装」方向。规划中的协议文档与
+   `tools/verify-install.mjs` 在当前检出均缺失，不得假定已交付；校验来源、安装一致性与
+   恢复方案尚需补证。**永不自动重启 DSH**。详见 roadmap 方向 5。
+
+   **0.9.0 最新规划（2026-10-18）**：新增方向8，移除 `kimi-code` / `glm-zhipu` /
+   `glm-zai` 三个内置渠道的显示，建议同步退出后台取数、设置和排序；兼容旧配置，不删除模型凭据。
+   Kimi parser 修复仍暂缓，不再要求保留原胶囊显示，也不作为方向6的前置条件。
+   设置页底部新增通用自定义余额（名称、URL、Key/明确模型凭据引用、JSON键），做好失败回退和
+   胶囊/卡片；只做普通GET/Bearer/JSON余额，不做特殊渠道适配。配置身份变化必须隔离旧值与旧请求。
+   细节与C0–C5验收见 [新增设计](docs/custom-balance-v0.9.0.md)；OpenRouter式累计额扣减、币种、
+   秘密托管与安全出网须先冻结，不能把累计充值当余额。该主线不依赖tools服务。
+   当前仅更新文档；后续实施需另获授权。总范围见 [计划](docs/build-plan-v0.9.0.md)及
+   [交接](docs/handoff-v0.9.0.md)。**0.8.5 仅本地定档，不推送、不发布。**
 
 2. **Host 端 `/api/plan-usage` 结果缓存 + 请求合并**（⚠️ 配套方案，roadmap 方向 4 里负面效果
    与风险写得很全，动手前必读）：按渠道独立内存缓存（TTL 30s 起步）+ single-flight +
@@ -374,4 +637,4 @@ $token = (("protocol=https`nhost=github.com`n`n" | git credential fill) -replace
 
 ---
 
-*文档更新时间：2026-10-18*
+*文档更新时间：2026-10-24（当前权威状态：[docs/release-status-v0.9.0-20261024.md](docs/release-status-v0.9.0-20261024.md)；`0.9.1` 为过程标签，已并入 0.9.0）*
