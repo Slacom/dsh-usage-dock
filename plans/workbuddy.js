@@ -62,9 +62,11 @@ const cnPlan = {
   schema: {
     workbuddyEnabled: z.boolean().default(true),
     /**
-     * [2026-10-21 用户需求] 账号选择：JSON 数组，存**选中的账号 uid**。
-     * 空数组 = 全部账号（默认，保持既有行为）；选了 N 个就只合计这 N 个。
-     * 用字符串而不是数组字段，避免与 DSH 设置表单的数组投影纠缠。
+     * **[legacy 字段，已不生效]** 旧版"按账号勾选"的选择值（JSON 数组，存当时的账号 uid）。
+     *
+     * [2026-10-25] 客户端端点 `GET /v1/credits` **没有稳定账号 ID**，用户已同意取消按账号筛选：
+     * 取数侧不再读取该字段、也不再据此改变口径；**字段与已保存的值原样保留**（不迁移、不清除），
+     * 只为兼容旧配置与回滚。保留字符串类型以避免与 DSH 设置表单的数组投影纠缠。
      */
     workbuddyAccounts: z.string().default('[]'),
   },
@@ -368,6 +370,25 @@ function makeFetchPlan(plan, path) {
 
 const GATEWAY_PROVIDER = 'workbuddy'
 
+/**
+ * [2026-10-25 客户端 Key 接口] 反代新增的**客户端**积分端点。
+ *
+ * 与管理员面 `/status` / `/panel/api/packages` 的区别（合约只读结构见
+ * `.diagnostics/wb-client-credits-20261025/schema-probe.json`，无真实值）：
+ *   - 根：`{ ok, time, request_id, total_credits, accounts: [] }`；
+ *   - 每 account：`nickname, realm, credits, credits_total, credits_expiring,
+ *     credits_earliest_expiry, credits_earliest_remaining, cooling, disabled, tokens`；
+ *   - **没有 uid/id，也没有 packages**；
+ *   - 根 `total_credits` 是**跨区合计**（cn + global），不能当国内余额。
+ *
+ * 因此运行期只打这一个端点：不探 `/status`、不探 `/panel/api/packages`，
+ * 也不为旧管理员接口做任何自动回退。
+ */
+export const GATEWAY_CREDITS_PATH = '/v1/credits'
+
+/** 业务口径：只统计国内域（用户 2026-10-25 确认：继续只算 cn）。 */
+const GATEWAY_REALM = 'cn'
+
 /** 仅允许本机回环主机（本次明确选择的网关）。 */
 export function isLoopbackHost(hostname) {
   if (typeof hostname !== 'string' || hostname.length === 0) return false
@@ -442,6 +463,147 @@ export function creditsFromGatewayStatus(body, realm, selectedUids) {
     total += row.remain
   }
   return { ok: true, total, accounts: picked }
+}
+
+/**
+ * [2026-10-25 客户端 Key 接口] 解析 `GET /v1/credits` 的**纯**函数（无 IO）。
+ *
+ * 硬规则（父审三点，逐条对应实现）：
+ *   1. **有限负数保留**：只要 `credits` 是有限数就纳入（与旧口径一致），
+ *      只有缺失 / 非数字 / NaN / Infinity 才算"该账号不可用"，**绝不造 0**。
+ *   2. **realm 严格 `=== 'cn'`**：缺失或未知 realm 一律不纳入（旧 `/status`
+ *      路径那种"realm 缺失默认算国内"的宽松口径**不适用于**新端点）。
+ *   3. 合计**只累加**未停用账号的 `credits`；冷却中的仍计入（与旧口径一致）。
+ *      **不看**根 `total_credits`（跨区合计），也不看 `credits_total`（累计额度）。
+ *
+ * @returns {{ok:true,total:number,accounts:Array}|{ok:false,reason:string}}
+ */
+export function creditsFromClientCredits(body, realm) {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return { ok: false, reason: 'shape' }
+  if (body.ok !== true) return { ok: false, reason: 'not-ok' }
+  if (!Array.isArray(body.accounts)) return { ok: false, reason: 'shape' }
+  const want = typeof realm === 'string' && realm.length > 0 ? realm : GATEWAY_REALM
+  const picked = []
+  let matched = 0
+  for (const account of body.accounts) {
+    if (account === null || typeof account !== 'object') continue
+    // ② realm 严格等于 'cn'：缺失/未知一律不纳入（global 坏值也不影响国内采样）。
+    if (account.realm !== want) continue
+    matched += 1
+    const disabled = account.disabled === true
+    const remain = typeof account.credits === 'number' && Number.isFinite(account.credits) ? account.credits : null
+    /**
+     * [2026-10-25 父审修正] 未停用的国内账号若 `credits` 缺失/非法（非数字、NaN、Infinity），
+     * **保守判失败**，不猜 0、也不把"剩下的那部分"当成完整合计交给模型。
+     * 已停用账号的这个字段不参与合计，坏值不应妨碍其它国内账号独立采样。
+     */
+    if (remain === null) {
+      if (!disabled) return { ok: false, reason: 'bad-cn-credits' }
+      continue
+    }
+    /**
+     * ③ 到期摘要：真实合约只证明 `credits_earliest_remaining` 与
+     * `credits_earliest_expiry` 是"最早到期的**那一部分**"；
+     * `credits_expiring` 的统计窗口未知，**不使用**（不称"马上到期/7 天/全部在最早日到期"）。
+     */
+    const earliestRemaining = typeof account.credits_earliest_remaining === 'number'
+      && Number.isFinite(account.credits_earliest_remaining)
+      && account.credits_earliest_remaining > 0
+      ? account.credits_earliest_remaining
+      : null
+    const earliestExpiry = typeof account.credits_earliest_expiry === 'string'
+      && account.credits_earliest_expiry.length > 0
+      && Number.isFinite(Date.parse(account.credits_earliest_expiry))
+      ? account.credits_earliest_expiry
+      : null
+    picked.push({
+      remain,
+      // 两个都给且有效才出"最早到期部分"行；缺一个就不造到期条。
+      earliestRemaining: earliestRemaining !== null && earliestExpiry !== null ? earliestRemaining : null,
+      earliestExpiry: earliestRemaining !== null && earliestExpiry !== null ? earliestExpiry : null,
+      cooling: account.cooling === true,
+      disabled,
+    })
+  }
+  if (matched === 0) return { ok: false, reason: 'no-cn-account' }
+  if (picked.length === 0) return { ok: false, reason: 'no-credits' }
+  let total = 0
+  for (const row of picked) {
+    if (row.disabled) continue
+    total += row.remain
+  }
+  /**
+   * [2026-10-25 父审边界②] 两个都接近 `Number.MAX_VALUE` 的有限值相加会溢出成 `Infinity`：
+   * 一旦合计不再是有限数，就**固定失败**，绝不把 `Infinity` 当余额交给模型/界面。
+   */
+  if (!Number.isFinite(total)) return { ok: false, reason: 'bad-total' }
+  return { ok: true, total, accounts: picked }
+}
+
+/** 解析失败 → 固定分类文案（**不透传**上游正文/原始 id）。 */
+const CLIENT_CREDITS_REASON_TEXT = {
+  shape: '客户端积分响应结构不合法（缺 accounts 数组）',
+  'not-ok': '客户端积分端点返回未成功状态（ok != true）',
+  'no-cn-account': '客户端积分响应里没有国内（cn）账号',
+  'no-credits': '国内账号都没有可用的积分数值',
+  'bad-cn-credits': '国内账号的积分数值缺失或非法（无法确认真实余额）',
+  'bad-total': '国内积分合计超出可表示范围（数值异常，已停止给出余额）',
+}
+
+/**
+ * [2026-10-25] 新端点 → 既有积分 wire（保持 ✦ 积分显示与白名单不变）。
+ *
+ * 明细只做**诚实的摘要**：
+ *   - 只列**可用（未停用）**的国内账号一行"剩余"，`size` 留空 —— `credits_total` 是
+ *     **累计额度**，不能伪装成一个真实积分包；停用账号既不进合计、也不作为可用余额展示；
+ *   - 只有 `credits_earliest_remaining > 0` 且 `credits_earliest_expiry` 可解析时，
+ *     才额外给一行「其中最早到期部分」，金额是该**部分**（不是整个账号剩余）；
+ *     `credits_expiring` 统计窗口未证实，**不参与**任何金额或标签。
+ */
+function clientCreditsWire(plan, body) {
+  const parsed = creditsFromClientCredits(body, GATEWAY_REALM)
+  if (parsed.ok !== true) {
+    return Object.assign(planBase(plan), {
+      error: 'exec',
+      message: plan.name + '：' + (CLIENT_CREDITS_REASON_TEXT[parsed.reason] || '客户端积分响应不可用'),
+    })
+  }
+  const accounts = []
+  for (const row of parsed.accounts) {
+    // [2026-10-25 父审边界①] 停用账号不出现在可用明细里（否则会被读成"可用余额"）。
+    if (row.disabled) continue
+    accounts.push({
+      variant: plan.name,
+      packageName: null,
+      remain: row.remain,
+      size: null,
+      endTimeMs: null,
+    })
+    /**
+     * [2026-10-25 父审修正] 只按 `credits_earliest_remaining` + `credits_earliest_expiry`
+     * 表达"其中最早到期部分"；`credits_expiring` 统计窗口未知，**不参与**。
+     * 金额是该**部分**（不是整个账号剩余），日期非法/缺失时不出这一行。
+     */
+    if (row.earliestRemaining !== null && row.earliestExpiry !== null) {
+      accounts.push({
+        variant: plan.name,
+        packageName: '其中最早到期部分',
+        remain: row.earliestRemaining,
+        size: null,
+        endTimeMs: Date.parse(row.earliestExpiry) || null,
+        subsetOfAccount: true,
+      })
+    }
+  }
+  return Object.assign(planBase(plan), {
+    creditsTotal: parsed.total,
+    creditsUnlimited: false,
+    creditsAccounts: accounts,
+    variants: [{ label: plan.name, total: parsed.total, unlimited: false }],
+    // 作用域说明（客户端可用于文案；不参与合计）
+    creditsScope: GATEWAY_REALM,
+    isAvailable: true,
+  })
 }
 
 /** 把网关响应映射成原有积分 wire（保持 ✦ 积分显示与白名单不变）。 */
@@ -599,9 +761,26 @@ async function resolveGatewaySource(ctx, budgetMs) {
       message: '网关没有可用的 API Key（' + source.apiKeyEnv + '），请到「设置 → 模型」补全',
     }
   }
-  // 状态路径固定取 origin 根下的 /status（不是 /v1/status）。
-  const statusUrl = new URL('/status', base.origin).href
-  return { ok: true, statusUrl, origin: base.origin, key, ref: source.apiKeyEnv }
+  /**
+   * [2026-10-25 客户端 Key] 只取**客户端**端点 `GET /v1/credits`。
+   *
+   * 拼接规则：provider 的 `baseURL` 可能已经带 `/v1`（反代常见形态），
+   * 那时不能重复拼成 `/v1/v1/credits`。
+   */
+  const creditsUrl = creditsUrlOf(base)
+  return { ok: true, creditsUrl, origin: base.origin, key, ref: source.apiKeyEnv }
+}
+
+/** `baseURL` → `origin + /v1/credits`（**单一明确路径**，不做多路径试探）。 */
+export function creditsUrlOf(base) {
+  /**
+   * [2026-10-25 父审修正] 只用「origin 根下 /v1/credits」这**一条**已验证路径。
+   *
+   * `baseURL` 带不带 `/v1` 都得到同一个 URL（`origin + /v1/credits`），
+   * 因此既不重复拼接、也不对任意挂载前缀做自行扩展。
+   * 与来源指纹（`providerSourceFingerprint(..., GATEWAY_CREDITS_PATH)`）用的是同一路径。
+   */
+  return new URL(GATEWAY_CREDITS_PATH, base.origin).href
 }
 
 
@@ -616,14 +795,9 @@ async function resolveGatewaySource(ctx, budgetMs) {
  *     本网关 /status 只有 ~1.3 KB，正落在这个区间。
  */
 /**
- * [R6-03] 明细是「锦上添花」，必须比合计**短得多**。
- *
- * 工具整体只有 8 秒预算；明细若也用 12 秒主超时，一旦它挂住就会把
- * 已经拿到的合计一起拖没（审核实测 8010ms 返回空列表）。
- * 所以明细单独限时，超时就只交付合计。
+ * [R6-03] 主取数预算（明细端点已不再请求，故只保留一个超时）。
  */
 const GATEWAY_TIMEOUT_MS = 12000
-const GATEWAY_PACKAGES_TIMEOUT_MS = 2500
 
 /**
  * [2026-10-21 真机问题 v2] 网关请求：**在超时窗口内读完正文**，成功路径绝不 abort。
@@ -749,16 +923,34 @@ async function fetchJsonWithTimeout(url, key, timeoutMs, parentSignal) {
   }
 }
 /**
+ * [2026-10-25 客户端 Key 端点] 账号列表：**已不再提供**。
  *
- * 返回 `{ accounts: [{ id, label, realm, remain, size, disabled, cooling }], error? }`。
- * `id` 是账号 uid（仅作选择键，不含凭据）；`label` 优先昵称。
+ * 新端点没有稳定账号 ID（也没有 packages），用户已同意不再支持"按账号勾选"。
+ * 因此这里返回**固定元数据**：零凭据解析、零网关请求、零缓存；
+ * 设置页也不再 GET 它，Host 路由保留只为兼容旧前端并明确说明不支持。
  */
-export async function listWorkbuddyAccounts(ctx, fetchImpl) {
+export async function listWorkbuddyAccounts() {
+  return {
+    accounts: [],
+    supported: false,
+    message: '当前通过客户端接口 GET /v1/credits 读取积分（仅统计国内 cn），'
+      + '该接口不提供稳定账号 ID，暂不支持按账号筛选；已保存的旧选择保留但不再生效。',
+  }
+}
+
+/**
+ * **历史实现**（仅供历史回归测试）：从管理员 `/status` 读账号维度。
+ *
+ * 运行期不再调用（不探 `/status`），也不代表新端点行为；保留它是为了让
+ * 旧口径的解析/脱敏回归仍有覆盖。
+ */
+export async function listWorkbuddyAccountsLegacy(ctx, fetchImpl) {
   const source = await resolveGatewaySource(ctx)
   if (source.ok !== true) return { accounts: [], message: source.message }
+  const statusUrl = new URL('/status', source.origin).href
   let body = null
   try {
-    const got = await fetchJsonWithTimeout(source.statusUrl, source.key, GATEWAY_TIMEOUT_MS)
+    const got = await fetchJsonWithTimeout(statusUrl, source.key, GATEWAY_TIMEOUT_MS)
     // 宿主/移植端的 fetch 包装未必有 `ok`，以 status 为准。
     const status = typeof got.response.status === 'number' ? got.response.status : 0
     const okFlag = typeof got.response.ok === 'boolean'
@@ -846,15 +1038,11 @@ export function selectedAccountsFingerprint(raw) {
 }
 
 /**
- * [2026-10-21 用户新网关] 明细端点的**能力记忆**。
+ * [2026-10-25] `/panel/api/packages` 的**能力记忆已删除**。
  *
- * 用户把 WorkBuddy 反代地址换成另一台主机后，`/status` 正常但
- * `/panel/api/packages` 返回 404（该反代没有暴露面板接口）。
- * 这种情况下每 30 秒白打一次 404 没有意义，因此按 origin 记住
- * 「该网关不提供明细」，10 分钟后再试一次（万一对方后续加上了）。
+ * 改用客户端端点后不再请求面板接口，因此不需要"记住 404/401 别再打"。
+ * `creditPackagesOf` 作为**纯函数**保留，仅供历史测试回归旧口径。
  */
-const packagesUnsupportedUntil = new Map()
-const PACKAGES_RETRY_MS = 10 * 60 * 1000
 
 /**
  * [R9-03 / 根因 C] 公开错误 DTO 只允许**固定分类**。
@@ -872,12 +1060,15 @@ function transportCodeOf(err) {
 }
 /** 国内 WorkBuddy：从 WorkBuddy2API 网关读积分。 */
 export async function fetchFromGateway(ctx, plan, cfg, options) {
-  // [2026-10-21] 账号选择：cfg 里的 JSON 数组；空 = 全部账号。
-  const selected = parseAccountSelection(cfg !== null && cfg !== undefined ? cfg.workbuddyAccounts : '')
+  /**
+   * [2026-10-25] **不再读取 `cfg.workbuddyAccounts` 做筛选**：
+   * 客户端端点没有稳定账号 ID，用户已同意不再支持按账号勾选。
+   * 字段仍保留在 schema 里（不清除旧值），但这里不解析、也不据此改口径。
+   */
   /**
    * [R6-03] 从入口开始就用**同一份剩余预算**，而不是每个请求各拿 12 秒。
    *
-   * 工具整体只有 8 秒；如果这里不看剩余时间，凭据解析 + /status + 明细
+   * 工具整体只有 8 秒；如果这里不看剩余时间，凭据解析 + 取数
    * 很容易累计超过它，结果**已经拿到的合计**也被判成 missing。
    */
   const remainingOf = options !== null && options !== undefined && typeof options.remaining === 'function'
@@ -933,7 +1124,7 @@ export async function fetchFromGateway(ctx, plan, cfg, options) {
   let parsedBody = null
   let parseFailed = false
   try {
-    const got = await fetchJsonWithTimeout(source.statusUrl, source.key, capTimeout(GATEWAY_TIMEOUT_MS), parentSignal)
+    const got = await fetchJsonWithTimeout(source.creditsUrl, source.key, capTimeout(GATEWAY_TIMEOUT_MS), parentSignal)
     response = got.response
     parsedBody = got.body
     parseFailed = got.body === null
@@ -970,7 +1161,8 @@ export async function fetchFromGateway(ctx, plan, cfg, options) {
   if (status === 404) {
     return Object.assign(planBase(plan), {
       error: 'api',
-      message: plan.name + ' 网关没有 /status 端点（HTTP 404）：请确认网关版本支持状态查询',
+      message: plan.name + ' 网关没有 ' + GATEWAY_CREDITS_PATH + ' 端点（HTTP 404）：'
+        + '该反代版本不支持客户端积分接口，请升级网关',
     })
   }
   if (!okFlag) {
@@ -996,49 +1188,18 @@ export async function fetchFromGateway(ctx, plan, cfg, options) {
       error: 'exec',
       transient: false,
       // 固定分类 + HTTP 状态，不含任何上游内容。
-      message: plan.name + ' 网关状态响应无法解析（HTTP ' + status + '，shape=invalid-json）',
+      message: plan.name + ' 客户端积分响应无法解析（HTTP ' + status + '，shape=invalid-json）',
     })
   }
   /**
-   * [2026-10-21 用户需求] 详情要能看到**具体积分包与到期日**。
+   * [2026-10-25] **不再请求** `/panel/api/packages`。
    *
-   * 网关把明细放在另一个端点 `/panel/api/packages`（面板「积分构成」页用的就是它），
-   * 结构：accounts[].packages[] = { name, size, remain, used, expires_at(epoch ms), ... }。
-   *
-   * [R6-03] 明细属于**锦上添花**，必须显著短于合计的超时：
-   * 它挂住时只交付合计，绝不把已经成功的结果一起抹掉。
+   * 新端点没有 packages 概念（合约：每账号只有 credits/credits_expiring/最早到期摘要），
+   * 用客户端 Key 去探测管理员面板接口既无用也不礼貌；明细改由
+   * `clientCreditsWire` 给出"剩余 + 即将到期部分"的诚实摘要。
+   * 根 `ok !== true` / 结构不合法 / 无国内账号，都在纯解析里判失败。
    */
-  let packages = null
-  /**
-   * [R7-03] 预算耗尽时**直接跳过可选明细**，不再外发请求。
-   * 合计已经拿到，这里跳过不影响主结果。
-   */
-  if (cancelled()) return gatewayWire(plan, body, 'cn', null, selected)
-  const pkgBudget = capTimeout(GATEWAY_PACKAGES_TIMEOUT_MS)
-  const pkgMemoUntil = packagesUnsupportedUntil.get(source.origin) || 0
-  if (pkgBudget > 0 && Date.now() >= pkgMemoUntil) try {
-    const pkgUrl = new URL('/panel/api/packages', source.origin).href
-    const pkgGot = await fetchJsonWithTimeout(
-      pkgUrl,
-      source.key,
-      pkgBudget,
-      parentSignal,
-    )
-    const pkgStatus = typeof pkgGot.response.status === 'number' ? pkgGot.response.status : 0
-    const pkgOk = typeof pkgGot.response.ok === 'boolean'
-      ? pkgGot.response.ok
-      : (pkgStatus >= 200 && pkgStatus < 300)
-    if (pkgOk && pkgGot.body !== null) {
-      packages = pkgGot.body
-      packagesUnsupportedUntil.delete(source.origin)
-    } else if (pkgStatus === 404) {
-      // 该网关没有面板接口：记住，别每轮都打。
-      packagesUnsupportedUntil.set(source.origin, Date.now() + PACKAGES_RETRY_MS)
-    }
-  } catch (err) {
-    packages = null
-  }
-  return gatewayWire(plan, body, 'cn', packages, selected)
+  return clientCreditsWire(plan, body)
 }
 /**
  * 国内版渠道（默认导出，保持既有 import 兼容）。

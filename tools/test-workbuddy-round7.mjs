@@ -12,7 +12,10 @@
 import { readFileSync } from 'node:fs'
 import {
   fetchFromGateway,
+  // [2026-10-25 契约变更] 账号列表路由已改为固定"不支持"元数据（零 I/O）；
+  // 旧的 `/status` 账号维度实现改名 *Legacy，仅由历史回归继续覆盖。
   listWorkbuddyAccounts,
+  listWorkbuddyAccountsLegacy,
 } from '../plans/workbuddy.js'
 
 let passCount = 0
@@ -47,7 +50,12 @@ function makeCtx() {
   }
 }
 
-const STATUS = { accounts: [{ credits: 42, credits_total: 100, realm: 'cn', disabled: false }] }
+const STATUS = {
+  // [2026-10-25 契约变更] 客户端端点根必须 ok:true；total_credits 是跨区合计（故意给大值）。
+  ok: true,
+  total_credits: 9999,
+  accounts: [{ credits: 42, credits_total: 100, realm: 'cn', disabled: false }],
+}
 
 // ===========================================================================
 // R7-02 — 账号列表错误不得回显上游正文
@@ -63,7 +71,9 @@ const STATUS = { accounts: [{ credits: 42, credits_total: 100, realm: 'cn', disa
   })
   let out
   try {
-    out = await listWorkbuddyAccounts(makeCtx())
+    // [2026-10-25] 这段守的是"账号列表错误不回显上游正文"的历史口径，改由 Legacy 实现承接；
+    // 新路由的零 I/O 与固定文案在 tools/test-workbuddy-client-credits.mjs 覆盖。
+    out = await listWorkbuddyAccountsLegacy(makeCtx())
   } finally {
     globalThis.fetch = originalFetch
   }
@@ -136,7 +146,12 @@ const STATUS = { accounts: [{ credits: 42, credits_total: 100, realm: 'cn', disa
 }
 
 // ===========================================================================
-// 用户新网关：/status 可用但 /panel/api/packages 404 → 合计照常交付
+// [2026-10-25 有意契约变更] 新端点没有 packages：**不再请求** `/panel/api/packages`
+//
+// 原用例守的是"面板 404 不能拖垮合计"。等价的新守卫：
+//   - 只发一个请求，且是 `/v1/credits`；
+//   - 详情仍由"剩余 + 其中最早到期部分"摘要给出（不空、不伪造积分包）；
+//   - 合计照常交付，404 之类不会把整条渠道判失败。
 // ===========================================================================
 {
   const originalFetch = globalThis.fetch
@@ -155,12 +170,34 @@ const STATUS = { accounts: [{ credits: 42, credits_total: 100, realm: 'cn', disa
   } finally {
     globalThis.fetch = originalFetch
   }
-  check('G-新网关a 明细 404 时合计仍然交付', out.error === undefined && out.creditsTotal === 42,
-    { err: out.error, total: out.creditsTotal })
-  check('G-新网关b 明细不可用时退回账号汇总一行，详情不空',
-    Array.isArray(out.creditsAccounts) && out.creditsAccounts.length === 1,
-    out.creditsAccounts && out.creditsAccounts.length)
-  check('G-新网关c 没有把 404 当成整条渠道失败', out.isAvailable === true)
+  check('G-新网关a 合计照常交付（只一次 /v1/credits）',
+    out.error === undefined && out.creditsTotal === 42 && calls.length === 1
+    && /\/v1\/credits$/.test(calls[0]), { err: out.error, total: out.creditsTotal, calls })
+  check('G-新网关b 不再探测 /panel/api/packages', calls.every((u) => u.indexOf('/panel/') === -1), calls)
+  check('G-新网关c 详情仍有摘要行（不空、不伪造积分包）',
+    Array.isArray(out.creditsAccounts) && out.creditsAccounts.length >= 1
+    && out.creditsAccounts.every((r) => r.packageName === null || r.packageName === '其中最早到期部分'),
+    out.creditsAccounts)
+  check('G-新网关d 没有把任何 404 当成整条渠道失败', out.isAvailable === true)
+}
+
+// ===========================================================================
+// [2026-10-25] 账号列表路由不再发网络/凭据：零 I/O 固定元数据
+// ===========================================================================
+{
+  const originalFetch = globalThis.fetch
+  let calls = 0
+  globalThis.fetch = async () => { calls++; throw new Error('must not fetch') }
+  let out
+  try {
+    out = await listWorkbuddyAccounts()
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+  check('G-账号列表a 不发任何网关请求', calls === 0, calls)
+  check('G-账号列表b 明确标注 supported=false 且给出原因',
+    out.supported === false && Array.isArray(out.accounts) && out.accounts.length === 0
+    && /\/v1\/credits/.test(String(out.message || '')), out)
 }
 // ===========================================================================
 // R7-01 的票据归属已改由 tools/test-workbuddy-round8.mjs 的行为回归覆盖

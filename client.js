@@ -133,7 +133,7 @@ var PLANS = [
   //（与 Codex 渠道同款模式），本插件零凭据；未安装/未登录由 host 返回语义提示。
   // [0.8.3] 拆成两个独立渠道：国内版与国际版积分不通用，各自开关/排序
   //（用户 2026-10-17 要求，与 DeepSeek/MiMo 等渠道完全同权）。
-  { id: 'workbuddy', name: 'WorkBuddy', noCredential: true, creditMode: true, credentialNote: '读取「设置 → 模型」中 workbuddy 网关配置（复用该网关的 API Key），访问该网关的 /status 查看积分；不需要在此安装或登录 WorkBuddy Connect。', fields: { enabled: 'workbuddyEnabled' } },
+  { id: 'workbuddy', name: 'WorkBuddy', noCredential: true, creditMode: true, credentialNote: '读取「设置 → 模型」中 workbuddy 网关配置并复用它的 API Key，通过该网关的客户端接口 GET /v1/credits 读取积分，只统计国内（cn）积分；该接口没有稳定的账号 ID，因此暂不支持按账号筛选。不需要在此安装或登录 WorkBuddy Connect。', fields: { enabled: 'workbuddyEnabled' } },
 
 ]
 
@@ -680,6 +680,23 @@ var balRowStyleStatic = {
 function formatCredit(value) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '—'
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value)
+}
+
+/** 到期部分使用实际时间戳的本地日历日期；缺失/非法日期只显示“最近到期”。 */
+function workbuddyAccountLabel(account) {
+  var name = account.packageName || '套餐'
+  // 兼容旧 Host 的文字标签；普通套餐名和非到期行保持原样。
+  if (account.subsetOfAccount !== true && name !== '其中最早到期部分') return name
+  var stamp = account.endTimeMs
+  if (typeof stamp !== 'number' || !Number.isFinite(stamp)) return '最近到期'
+  var expiryDate = new Date(stamp)
+  if (!Number.isFinite(expiryDate.getTime())) return '最近到期'
+  var year = expiryDate.getFullYear()
+  if (year < 0 || year > 9999) return '最近到期'
+  // 不截取 UTC ISO 字符串，避免本地午夜的到期日显示成前一天。
+  return '最近到期 ' + ('0000' + year).slice(-4)
+    + '-' + ('0' + (expiryDate.getMonth() + 1)).slice(-2)
+    + '-' + ('0' + expiryDate.getDate()).slice(-2)
 }
 
 // [0.8.3] 符号与数字间的统一薄空格（U+2009）。
@@ -2095,8 +2112,14 @@ function PlanUsageBadge(props) {
           for (var ai = 0; ai < plan.creditsAccounts.length; ai++) {
             var account = plan.creditsAccounts[ai]
             if (account.remain === null || (account.remain === 0 && account.packageName !== 'enterprise')) continue
+            // 大号总积分已显示：只略过完全重复的普通汇总，保留到期部分和独立明细。
+            if (plan.id === 'workbuddy' && plan.creditsUnlimited !== true
+              && account.subsetOfAccount !== true && !account.packageName
+              && account.size == null && account.endTimeMs == null
+              && Number.isFinite(plan.creditsTotal) && account.remain === plan.creditsTotal) continue
             wbRows.push(h('div', { key: 'a' + ai, style: sectionNoteStyle },
-              (account.variant ? account.variant + ' · ' : '') + (account.packageName || '套餐')
+              (account.variant ? account.variant + ' · ' : '')
+              + (plan.id === 'workbuddy' ? workbuddyAccountLabel(account) : (account.packageName || '套餐'))
               + '：' + formatCredit(account.remain)
               + (typeof account.size === 'number' && account.size > 0 ? ' / ' + formatCredit(account.size) : '')))
           }
@@ -4601,32 +4624,13 @@ function PlanUsageSettingsPage(props) {
    * 折叠只影响展示，不需要触发额外重渲染；用 state 会造成不必要的整页重排。
    */
   /**
-   * [2026-10-21 用户需求] WorkBuddy 账号选择：设置页列出网关账号，勾选要合计的账号。
+   * [2026-10-25 客户端 Key 端点] **不再拉取账号列表**。
    *
-   * 只读列表来自 Host 的 `/api/plan-usage/workbuddy-accounts`（不含凭据）；
-   * 选择结果存进字符串字段 `workbuddyAccounts`（JSON 数组，空 = 全部）。
+   * 新端点 `GET /v1/credits` 没有稳定账号 ID、也没有 packages，用户已同意
+   * 不再支持"按账号勾选"；这里因此不再请求 `/api/plan-usage/workbuddy-accounts`，
+   * 也不持有账号 state（避免旧 404/401 反复探测，或暗示筛选仍然生效）。
+   * 已保存的 `workbuddyAccounts` 字段保留原值、不清除、不迁移。
    */
-  var wbAccountsHook = React.useState({ accounts: [], message: '', loaded: false })
-  var wbAccounts = wbAccountsHook[0]
-  var setWbAccounts = wbAccountsHook[1]
-  React.useEffect(function () {
-    var alive = true
-    fetch('/api/plan-usage/workbuddy-accounts', { headers: { accept: 'application/json' } })
-      .then(function (r) { return r.json() })
-      .then(function (body) {
-        if (!alive) return
-        var data = body !== null && body !== undefined && body.data !== undefined ? body.data : {}
-        setWbAccounts({
-          accounts: Array.isArray(data.accounts) ? data.accounts : [],
-          message: typeof data.message === 'string' ? data.message : '',
-          loaded: true,
-        })
-      })
-      .catch(function () {
-        if (alive) setWbAccounts({ accounts: [], message: '读取账号列表失败', loaded: true })
-      })
-    return function () { alive = false }
-  }, [])
   var collapsedHook = React.useState({})
   var customCollapsed = collapsedHook[0]
   var setCustomCollapsed = collapsedHook[1]
@@ -5558,74 +5562,32 @@ function PlanUsageSettingsPage(props) {
       meta.credentialNote || "请先在对应的登录插件中完成登录。"))
   }
   /**
-   * [2026-10-21 用户需求] WorkBuddy 账号选择：勾选后只合计选中账号的积分。
-   * 不勾任何账号 = 全部（保持既有行为）。纯显示偏好，不改凭据、不额外取数。
+   * [2026-10-25 客户端 Key 端点] 账号筛选：**已不再支持**。
+   *
+   * 新接口 `GET /v1/credits` 没有稳定账号 ID（也没有 packages），用户已同意
+   * 取消"按账号勾选"。这里只给固定说明：不请求账号列表、不写任何字段；
+   * 若旧配置里保存过勾选，明确告知"已保留但不再生效"，不冒充已应用。
    */
   if (enabled && meta.id === 'workbuddy') {
-    /**
-     * [2026-10-21 真机] 整块**必须容错**：账号列表只是附加信息，
-     * 任何异常都不能把整页设置带成白屏（真机已出现过一次白屏）。
-     */
+    var legacySelectionNote = ''
     try {
-    var selectedIds = []
-    try {
-      var rawSel = settingText(current, 'workbuddyAccounts')
-      var parsedSel = rawSel.length > 0 ? JSON.parse(rawSel) : []
-      if (Array.isArray(parsedSel)) selectedIds = parsedSel
-    } catch (err) { selectedIds = [] }
-    var boxStyle = { display: 'flex', flexDirection: 'column', gap: 4, paddingTop: 2 }
-    var accList = wbAccounts !== null && wbAccounts !== undefined && Array.isArray(wbAccounts.accounts)
-      ? wbAccounts.accounts
-      : []
-    var accMessage = wbAccounts !== null && wbAccounts !== undefined && typeof wbAccounts.message === 'string'
-      ? wbAccounts.message
-      : ''
-    var accLoaded = wbAccounts !== null && wbAccounts !== undefined && wbAccounts.loaded === true
-    var items = [h("p", { key: 'hint', style: settingsHintStyle },
-      selectedIds.length === 0
-        ? '账号合计：全部账号（未选择 = 全部）。勾选可只统计部分账号。'
-        : '账号合计：已选 ' + selectedIds.length + ' 个账号。')]
-    if (accMessage.length > 0) {
-      items.push(h("p", { key: 'msg', style: settingsHintStyle }, accMessage))
-    }
-    if (!accLoaded) {
-      items.push(h("p", { key: 'loading', style: settingsHintStyle }, '正在读取账号列表…'))
-    } else if (accList.length === 0) {
-      items.push(h("p", { key: 'empty', style: settingsHintStyle }, '没有可用账号（或网关未配置/未启动）。'))
-    } else {
-      for (var ai = 0; ai < accList.length; ai++) {
-        items.push((function (account) {
-          var checked = selectedIds.indexOf(account.id) !== -1
-          var label = String(account.label === undefined || account.label === null ? account.id : account.label)
-            + (account.disabled ? '（已停用）' : (account.cooling ? '（冷却中）' : ''))
-            + (account.remain === null || account.remain === undefined ? '' : '  ·  剩余 ' + account.remain)
-          return h('label', {
-            key: 'acc-' + account.id,
-            style: Object.assign({}, settingsRowStyle, { fontSize: 12, cursor: (!writable || saving) ? 'default' : 'pointer' }),
-          },
-            h('input', {
-              type: 'checkbox',
-              'data-workbuddy-account': account.id,
-              checked: checked,
-              disabled: !writable || saving,
-              onChange: function (e) {
-                var next = selectedIds.slice()
-                var at = next.indexOf(account.id)
-                if (e.target.checked) { if (at === -1) next.push(account.id) }
-                else if (at !== -1) next.splice(at, 1)
-                change('workbuddyAccounts', JSON.stringify(next))
-              },
-            }),
-            h('span', {}, label),
-          )
-        })(accList[ai]))
+      var rawSelText = settingText(current, 'workbuddyAccounts')
+      var legacySel = rawSelText.length > 0 ? JSON.parse(rawSelText) : []
+      if (Array.isArray(legacySel) && legacySel.length > 0) {
+        legacySelectionNote = '（旧版保存过 ' + legacySel.length + ' 个账号选择，已原样保留但不再生效）'
       }
-    }
-    children.push(h('div', { key: 'wb-accounts', style: boxStyle }, items))
-    } catch (err) {
-      children.push(h("p", { key: 'wb-accounts-failed', style: settingsHintStyle },
-        '账号选择暂不可用（' + (err && err.message ? err.message : String(err)) + '）'))
-    }
+    } catch (err) { legacySelectionNote = '' }
+    children.push(h('div', {
+      key: 'wb-accounts',
+      style: { display: 'flex', flexDirection: 'column', gap: 4, paddingTop: 2 },
+    },
+      h("p", { key: 'mode', style: settingsHintStyle, 'data-wb-mode': 'client-credits' },
+        '数据源：客户端接口 GET /v1/credits，且只统计国内（cn）积分。'),
+      h("p", { key: 'no-account-filter', style: settingsHintStyle, 'data-wb-account-filter': 'unsupported' },
+        '该接口不提供稳定的账号 ID，暂不支持按账号筛选；这里显示的是全部国内账号的合计。' + legacySelectionNote),
+      h("p", { key: 'detail-note', style: settingsHintStyle, 'data-wb-detail': 'summary-only' },
+        '详情只展示“剩余”与“最近到期”；有效到期日按本地日期显示，没有日期时只显示名称，不会伪造积分包明细。'),
+    ))
   }
   /**
    * [2026-10-23] 卡片底部：每个**活跃**内置渠道都有「关注额度策略」+ 自己的两档阈值。

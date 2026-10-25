@@ -128,7 +128,12 @@ function makeCtx() {
     },
   }
 }
-const STATUS = { accounts: [{ credits: 42, credits_total: 100, realm: 'cn', disabled: false }] }
+const STATUS = {
+  // [2026-10-25 契约变更] 客户端端点：根必须 ok:true，total_credits 为跨区合计（故意给大值）。
+  ok: true,
+  total_credits: 9999,
+  accounts: [{ credits: 42, credits_total: 100, realm: 'cn', disabled: false }],
+}
 
 {
   const originalFetch = globalThis.fetch

@@ -69,6 +69,46 @@ const REAL_STATUS = {
   model_locks: null,
 }
 
+/**
+ * [2026-10-25 合约变更] 运行期改用**客户端端点** `GET /v1/credits`。
+ *
+ * 该端点：根带 `ok`/`total_credits`（跨区合计！），账号没有 uid/id、没有 packages。
+ * 这里刻意把 global 账号与跨区合计做得比 cn 大，用来守住"绝不把根合计当国内余额"。
+ * 数字与昵称都是合成假值。
+ */
+const CLIENT_CREDITS = {
+  ok: true,
+  time: 'SYNTHETIC-TIME',
+  request_id: 'DUMMY-REQUEST-ID',
+  total_credits: 13799,
+  accounts: [
+    {
+      nickname: 'DUMMY-CN',
+      realm: 'cn',
+      credits: 5799,
+      credits_total: 6600,
+      credits_expiring: 4,
+      credits_earliest_expiry: '2026-11-17T18:55:03+08:00',
+      credits_earliest_remaining: 299,
+      cooling: false,
+      disabled: false,
+      tokens: {},
+    },
+    {
+      nickname: 'DUMMY-GLOBAL',
+      realm: 'global',
+      credits: 8000,
+      credits_total: 9000,
+      credits_expiring: 5000,
+      credits_earliest_expiry: '2026-12-01T00:00:00+08:00',
+      credits_earliest_remaining: 4000,
+      cooling: false,
+      disabled: false,
+      tokens: {},
+    },
+  ],
+}
+
 // ===========================================================================
 // G1 — 实测结构上的积分口径
 // ===========================================================================
@@ -176,7 +216,7 @@ async function runCase(opts) {
     const h = init && init.headers ? init.headers : {}
     calls.push({ url: String(url), auth: h.Authorization || h.authorization || null, redirect: init && init.redirect })
     if (opts.throwOnFetch === true) throw new Error('ECONNREFUSED')
-    const payload = opts.body === undefined ? REAL_STATUS : opts.body
+    const payload = opts.body === undefined ? CLIENT_CREDITS : opts.body
     return {
       ok: opts.status === undefined || opts.status < 400,
       status: opts.status === undefined ? 200 : opts.status,
@@ -196,22 +236,27 @@ async function runCase(opts) {
 {
   const { out, calls } = await runCase({})
   /**
-   * [2026-10-21] 现在会多打一条 `/panel/api/packages`（积分包明细）。
-   * 首个请求仍必须是 origin 根下的 `/status`，且**不是** `/v1/status`。
+   * [2026-10-25 有意契约变更] 运行期只请求**客户端端点**：
+   *  - 只有一个请求，URL 是 origin 根下的 `/v1/credits`（`baseURL` 已带 `/v1` 不重复拼）；
+   *  - **不再**请求 `/status`，也**不再**请求 `/panel/api/packages`（新接口没有 packages，
+   *    也不该用客户端 Key 去探测管理员面板）。
+   * 其余守卫（Bearer 复用、不跟随重定向、wire 结构）保持原样。
    */
-  check('G5a 首个请求打到 origin 根下的 /status（不是 /v1/status）',
-    calls.length >= 1 && calls[0].url === 'http://localhost:7863/status'
-    && !/\/v1\/status/.test(calls[0].url), calls.map((c) => c.url))
-  check('G5f 明细请求打到 /panel/api/packages 且同样带 Bearer',
-    calls.length === 2 && calls[1].url === 'http://localhost:7863/panel/api/packages'
-    && calls[1].auth === 'Bearer sk-gateway', calls.map((c) => c.url))
+  check('G5a 唯一请求打到 origin 根下的 /v1/credits（不探 /status）',
+    calls.length === 1 && calls[0].url === 'http://localhost:7863/v1/credits'
+    && calls.every((c) => !/\/status|\/panel\//.test(c.url)), calls.map((c) => c.url))
+  check('G5f 不再请求 /panel/api/packages（无管理员面探测）',
+    calls.every((c) => c.url.indexOf('/panel/') === -1), calls.map((c) => c.url))
   check('G5b 复用网关 Bearer Key', calls[0].auth === 'Bearer sk-gateway', calls[0].auth)
   check('G5c 不跟随重定向', calls[0].redirect === 'error', calls[0].redirect)
-  check('G5d 积分取剩余值并落到 creditsTotal',
+  check('G5d 只合计 cn 的 credits（绝不取根跨区合计）',
     out.creditsTotal === 5799 && out.creditsUnlimited === false, { total: out.creditsTotal })
-  check('G5e wire 结构保持（variants/明细仍在）',
-    Array.isArray(out.variants) && out.variants.length === 1 && Array.isArray(out.creditsAccounts),
-    { variants: out.variants, n: out.creditsAccounts && out.creditsAccounts.length })
+  check('G5e wire 结构保持 + 明细为"剩余 + 其中最早到期部分"',
+    Array.isArray(out.variants) && out.variants.length === 1
+    && Array.isArray(out.creditsAccounts)
+    && out.creditsAccounts.some((r) => r.remain === 5799 && r.endTimeMs === null)
+    && out.creditsAccounts.some((r) => r.packageName === '其中最早到期部分' && r.remain === 299),
+    { variants: out.variants, rows: out.creditsAccounts })
 }
 
 // ===========================================================================
@@ -225,7 +270,7 @@ async function runCase(opts) {
 
   const c404 = await runCase({ status: 404 })
   check('G6b 404 → 端点/版本不匹配（不再提示未安装 Connect）',
-    c404.out.error === 'api' && /\/status/.test(c404.out.message || '')
+    c404.out.error === 'api' && /\/v1\/credits/.test(c404.out.message || '')
     && !/未安装 dsh-workbuddy-connect/.test(c404.out.message || ''), c404.out.message)
 
   const c429 = await runCase({ status: 429 })
@@ -374,7 +419,7 @@ async function runCase(opts) {
           abortedDuringBody = true
           throw new Error('This operation was aborted')
         }
-        return JSON.stringify(REAL_STATUS)
+        return JSON.stringify(CLIENT_CREDITS)
       },
     }
   }
@@ -417,7 +462,7 @@ async function runCase(opts) {
     const mkOnce = () => {
       if (consumed > 0) throw new Error('body stream already consumed')
       consumed++
-      return JSON.stringify(REAL_STATUS)
+      return JSON.stringify(CLIENT_CREDITS)
     }
     return {
       ok: true,

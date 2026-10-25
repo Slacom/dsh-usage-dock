@@ -15,7 +15,7 @@ DeepSeek Harness（DSH）的侧栏套餐用量插件：在左侧栏底部显示�
 | DeepSeek | DSH 账号余额优先，开放平台 API Key 回退 | 余额（含赠金）；账号模式附峰谷时间条 |
 | OpenAI Codex | 已安装的 `dsh-codex-connect` | 5 小时 / 周（账户实际返回的窗口） |
 | Xiaomi MiMo | 开放平台控制台 Cookie | 总余额、现金及赠送余额 |
-| WorkBuddy | 「设置 → 模型」里的 WorkBuddy2API 网关（复用该来源 Bearer Key） | 积分合计与明细，可按账号筛选 |
+| WorkBuddy | 「设置 → 模型」里的 WorkBuddy2API 网关（复用该来源的 Bearer Key，走客户端接口 `/v1/credits`） | 国内（cn）积分合计，附「其中最早到期部分」摘要 |
 | **自定义余额渠道** | 你选择的模型来源 + 该来源下的余额接口路径 | 该接口返回的余额（币种来自条目或可信采样） |
 
 - 每 **30 秒**刷新；展开面板、窗口聚焦、页面重新可见时立即刷新。
@@ -90,8 +90,12 @@ dsh plugin --profile web add dsh-usage-dock
   **代码及接口契约检查不代表所有 Android 机型均已真机测试。**
 - 设置页的长说明与「连接与凭据」默认折叠，展开不影响已填内容；窄屏下策略窗口表按行换行。
 
-WorkBuddy 渠道读取的是「设置 → 模型」中的 WorkBuddy2API 网关（`/status` 根路径），
-复用该来源的 Bearer Key，不读取、复制或解密任何认证文件。国际版 `workbuddy-ai` 已退场，
+WorkBuddy 渠道读取的是「设置 → 模型」中的 WorkBuddy2API 网关，走该网关**客户端 Key 可用**的
+积分接口 `GET <origin>/v1/credits`（`baseURL` 自带 `/v1` 也不会重复拼接），复用该来源的 Bearer Key，
+不读取、复制或解密任何认证文件。它**只统计国内（cn）账号**的积分：根响应里的 `total_credits`
+是跨区合计（含 global），插件不会拿它当国内余额。
+该接口没有稳定的账号 ID、也没有积分包明细，因此**不支持按账号筛选**（旧版保存的勾选原样保留但不再生效），
+详情保留「最近到期」及不重复的明细，省略与大号总积分相同的普通汇总行；有效到期时间按本地日期显示为 YYYY-MM-DD，无日期时不编造。国际版 `workbuddy-ai` 已退场，
 其旧配置与共享凭据保留在 profile 中但不再取数、不再显示。
 
 ## 设置
@@ -107,7 +111,7 @@ Host 存在 `configEditor` 时读取最新配置（2 秒内复用）；缺少该
 | DeepSeek | `deepseekApiKey`；账号服务可用时无需 Key；`deepseekWarnThreshold` |
 | OpenAI Codex | 在 Codex Connect 中登录，无需在本插件填 Key |
 | Xiaomi MiMo | `mimoCookie`（含 userId / serviceToken）、`mimoWarnThreshold` |
-| WorkBuddy | 网关位于「设置 → 模型」；可选 `workbuddyAccounts` 只合计部分账号 |
+| WorkBuddy | 网关位于「设置 → 模型」；只统计国内 cn，不支持按账号筛选（`workbuddyAccounts` 为旧字段，保留但不生效） |
 | 自定义余额 | `customBalances`（来源 + 路径 + 币种等公开元数据）；凭据用该来源在「设置 → 模型」里已有的配置，本插件不另存（`customKeys` 仅旧条目兼容保留） |
 
 保存会先校验再一次性提交，只写真正改动的字段；凭据沿用 DSH 的 secret 路径写入，

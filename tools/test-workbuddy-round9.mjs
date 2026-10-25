@@ -10,7 +10,8 @@
  * 用法：node tools/test-workbuddy-round9.mjs
  */
 import { readFileSync } from 'node:fs'
-import { fetchFromGateway, listWorkbuddyAccounts } from '../plans/workbuddy.js'
+// [2026-10-25 契约变更] 账号列表路由改为固定"不支持"元数据；历史 `/status` 维度实现改名 *Legacy。
+import { fetchFromGateway, listWorkbuddyAccountsLegacy } from '../plans/workbuddy.js'
 
 let passCount = 0
 let failCount = 0
@@ -42,7 +43,12 @@ function makeCtx() {
     },
   }
 }
-const STATUS = { accounts: [{ credits: 42, credits_total: 100, realm: 'cn', disabled: false }] }
+const STATUS = {
+  // [2026-10-25 契约变更] 客户端端点：根必须 ok:true，total_credits 为跨区合计（故意给大值）。
+  ok: true,
+  total_credits: 9999,
+  accounts: [{ credits: 42, credits_total: 100, realm: 'cn', disabled: false }],
+}
 
 // ===========================================================================
 // R9-02 / 根因 B — 正文阶段取消必须归 C
@@ -96,7 +102,7 @@ const STATUS = { accounts: [{ credits: 42, credits_total: 100, realm: 'cn', disa
   let accounts
   try {
     wire = await fetchFromGateway(makeCtx(), { id: 'workbuddy', name: 'WorkBuddy' }, {}, undefined)
-    accounts = await listWorkbuddyAccounts(makeCtx())
+    accounts = await listWorkbuddyAccountsLegacy(makeCtx())
   } finally {
     globalThis.fetch = originalFetch
   }

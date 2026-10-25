@@ -60,6 +60,10 @@ function makeCtx(opts) {
 }
 
 const STATUS = {
+  // [2026-10-25 合约变更] 运行期改读客户端端点 `GET /v1/credits`：根必须 `ok:true`，
+  // 且 `total_credits` 是**跨区合计**——这里故意给大值，守住"绝不把它当国内余额"。
+  ok: true,
+  total_credits: 9999,
   accounts: [{ credits: 42, credits_total: 100, realm: 'cn', disabled: false }],
 }
 
@@ -245,6 +249,7 @@ function okResponse(payload) {
 // ===========================================================================
 {
   const host = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+const plans = readFileSync(new URL('../plans/workbuddy.js', import.meta.url), 'utf8')
   check('R6-01f identify 与 GUI 共用 credentialFingerprint（不再用无盐 shortHash 采样）',
     host.indexOf('credentialFingerprint(resolved.value)') !== -1
     && host.indexOf('shortHash(resolved.value)') === -1)
@@ -252,13 +257,19 @@ function okResponse(payload) {
     /if \(prev === undefined\) return/.test(host))
   check('R6-01h 凭据指纹不再进入观察身份（避免自废票据）',
     host.indexOf("parts.push('cred='") === -1)
-  check('R6-02i WorkBuddy 身份含真实来源与账号选择',
+  /**
+   * [2026-10-25 有意契约变更] 客户端端点没有稳定账号 ID，`workbuddyAccounts` 不再生效：
+   * Host 身份改为「真实来源（/v1/credits）+ 统计范围 cn」，并**不再**拼 `acct=`。
+   */
+  check('R6-02i WorkBuddy 身份含真实来源与 cn 范围（不再含账号选择）',
     /id === 'workbuddy'/.test(host)
     && host.indexOf("parts.push('src=' + src)") !== -1
-    && host.indexOf("parts.push('acct=' + selectedAccountsFingerprint(") !== -1)
-  check('R6-02j 账号选择指纹只有一份实现（import 自 plans/workbuddy.js）',
-    host.indexOf('selectedAccountsFingerprint') !== -1
-    && !/const selectedAccountsFingerprint = \(raw\)/.test(host))
+    && host.indexOf('GATEWAY_CREDITS_PATH') !== -1
+    && host.indexOf("parts.push('scope=' + 'cn')") !== -1
+    && host.indexOf("parts.push('acct=' + selectedAccountsFingerprint(") === -1)
+  check('R6-02j 账号指纹只保留在 plans 里供历史测试，Host 不再调用它',
+    !/selectedAccountsFingerprint\(/.test(host)
+    && /export function selectedAccountsFingerprint\(raw\)/.test(plans))
 }
 console.log('\n' + (passCount + failCount) + ' 项：' + passCount + ' 通过, ' + failCount + ' 失败')
 process.exit(failCount === 0 ? 0 : 1)

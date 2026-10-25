@@ -300,11 +300,19 @@ async function openAndExpand(mounted, label) {
   const tree = await runtime.settle({ form })
   const text = textOf(tree)
   check('D7a 设置页整体渲染成功（不白屏）', typeof text === 'string' && text.length > 0)
-  check('D7b WorkBuddy 卡片内出现账号合计提示', text.indexOf('账号合计') !== -1)
-  check('D7c 账号名出现在账号选择里', text.indexOf('Slacom') !== -1)
-  const box = elementsOf(tree).find((el) => el.type === 'input' && el.props && el.props['data-workbuddy-account'] === 'U-1')
-  check('D7d 账号复选框存在且绑定 uid', box !== undefined)
-  check('D7e 账户复选框不是禁用状态（可写部署）', box !== undefined && box.props.disabled === false)
+  /**
+   * [2026-10-25 有意契约变更] 客户端接口没有稳定账号 ID，用户已同意取消按账号勾选：
+   * 卡片里改成"仅国内 cn / 暂不支持按账号筛选"的固定说明，并且不再渲染任何账号勾选框。
+   * 原 D7b/D7c/D7d/D7e 守的是"账号列表把设置页带白屏"，这里换成等价的稳定性断言。
+   */
+  check('D7b WorkBuddy 卡片出现"仅国内 cn + 不支持按账号筛选"说明',
+    text.indexOf('只统计国内（cn）') !== -1 && text.indexOf('暂不支持按账号筛选') !== -1)
+  check('D7c 不再把账号昵称渲染进设置页', text.indexOf('Slacom') === -1)
+  const box = elementsOf(tree).find((el) => el.type === 'input' && el.props && el.props['data-workbuddy-account'] !== undefined)
+  check('D7d 不再渲染账号复选框', box === undefined)
+  check('D7e 说明区带稳定标记（client-credits / 不支持筛选）',
+    elementsOf(tree).some((el) => el.props && el.props['data-wb-mode'] === 'client-credits')
+    && elementsOf(tree).some((el) => el.props && el.props['data-wb-account-filter'] === 'unsupported'))
   client.restore()
 }
 console.log('\n' + (passCount + failCount) + ' 项：' + passCount + ' 通过, ' + failCount + ' 失败')

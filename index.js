@@ -27,7 +27,12 @@ import { randomUUID, createHash } from 'node:crypto'
 import z from '@deepseek-ai/schemastery'
 import { PLANS, planSchemaFields, percentSemanticsOf } from './plans/index.js'
 import { peakPhaseAt, peakSegments } from './plans/peak-phase.js'
-import { setWebBase, listWorkbuddyAccounts, selectedAccountsFingerprint } from './plans/workbuddy.js'
+/**
+ * [2026-10-25 客户端 Key 端点] WorkBuddy 只读客户端积分接口 + 账号列表（固定"不支持"元数据）。
+ * 旧的 `selectedAccountsFingerprint` 已不参与观察身份（无稳定账号 ID，筛选不再生效），
+ * 但仍留在 plans/workbuddy.js 里供历史测试。
+ */
+import { setWebBase, listWorkbuddyAccounts, GATEWAY_CREDITS_PATH } from './plans/workbuddy.js'
 import { execError, isSentinelApiKey } from './plans/util.js'
 import {
   customSchemaFields,
@@ -502,9 +507,16 @@ export function apply(ctx, config) {
          * `recordSampledCredential()` 的「已知 A → 已知 B」分支撤销投影与在途票据。
          */
         if (id === 'workbuddy') {
-          const src = providerSourceFingerprint(ctx, 'workbuddy', '/status')
+          /**
+           * [2026-10-25 客户端 Key 端点] 端点从管理员 `/status` 换成客户端 `/v1/credits`，
+           * 并把**统计范围 cn** 显式写进身份。
+           *
+           * 不再拼 `acct=`：新端点没有稳定账号 ID，`workbuddyAccounts` 已不生效，
+           * 若继续把它放进身份，等于向观察链暗示"仍在按账号筛选"。
+           */
+          const src = providerSourceFingerprint(ctx, 'workbuddy', GATEWAY_CREDITS_PATH)
           parts.push('src=' + src)
-          parts.push('acct=' + selectedAccountsFingerprint(cfgNow.workbuddyAccounts))
+          parts.push('scope=' + 'cn')
         }
       } else {
         /**
@@ -1206,10 +1218,11 @@ export function apply(ctx, config) {
   }), 'plan-usage: custom status route')
 
   /**
-   * [2026-10-21 用户需求] WorkBuddy 账号列表（设置页「选择要合计哪些账号」）。
+   * [2026-10-25 客户端 Key 端点] WorkBuddy 账号列表路由：**保留兼容，但已不支持筛选**。
    *
-   * 只读网关 /status 的账号维度，**不返回**任何凭据；uid 仅作为选择键，
-   * 昵称已脱敏为可读标签。取数失败时返回空列表 + 可操作原因，不抛错。
+   * 新客户端接口没有稳定账号 ID，`listWorkbuddyAccounts` 现在只返回固定元数据
+   * （`supported:false` + 说明），**零凭据解析、零网关请求、零缓存**；
+   * 设置页也已不再调用本路由（避免旧 404/401 反复探测）。
    */
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
