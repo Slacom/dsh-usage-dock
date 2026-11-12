@@ -448,6 +448,10 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
   `dsh-codex-subscription` 上打**本地只读 service 补丁**才拿得到订阅额度，该补丁**不在本包发布内容里**。
   没打补丁时该来源显示「接口暂不可用（需适配）」；`Codex Connect` 来源不受影响、照常可用。
   该补丁还需按第三方包的版本重新核对（本包只消费它的只读接口约定）。
+- **第三方插件升级/重装会覆盖 Codex Subscription 的补丁**（0.10.1）：升级后运行
+  `node tools/patch-codex-subscription.mjs`（默认只检查，`--apply` 才写；另有 `--revert` 从最近备份恢复）。
+  出现「不可适配 / 需要生成清单」即表示未打补丁；hunk 清单与第三方版本**绑定**，换版本需重新生成
+  `tools/patches/codex-subscription-<version>.json`，不要指望模糊匹配。
 - **MiMo 的 `usage_status` 读的是显示快照**（0.10.0）：胶囊 / 详情 / 工具 / 额度策略共用同一份
   本机显示会话快照（`getHost().routeDisplay.peek()`，缺失才回退 `display.peek()`），
   因此需要「记住登录」链路才有数值；没有该链路时显示占位/读取中，而不是旧的手工 Cookie 值。
