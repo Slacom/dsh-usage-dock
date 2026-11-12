@@ -2,6 +2,26 @@
 
 供本项目后续会话、接手主代理及子代理恢复协作规则；以用户最新明确指令和[项目规范](AGENTS.md)为准。这里不保存凭据、金额、认证URL或临时许可。
 
+## 2026-11-12 13:17：**0.10.0 已正式发布**（主干 / tag / GitHub Release / npm 全部完成）
+
+1. **发布物**：commit **`0a56d32`**（151 文件，含 `plans/mimo-auth/**` 与 `plans/codex-sources.js` 首次入库）；
+   tag **`v0.10.0`**；GitHub Release id **`442523103`**（`/releases/latest` 已确认 = v0.10.0）；
+   npm **`dsh-usage-dock@0.10.0`**，40 文件 / 462 kB，线上 `dist.shasum` = **`34ec08d7724a1b33717c43d3861301fec4b7733d`**（与本地 dry-run 一致），`dist-tags.latest = 0.10.0`。
+2. **发布流程中踩到的两个环境坑**（下次注意）：① 本机 git 配了 `http(s).proxy=127.0.0.1:10909`，用户关掉 VPN 后该端口无监听 ⇒ `git push` 报 `Failed to connect … via 127.0.0.1`；
+   **解法**：`git -c http.proxy= -c https.proxy= push`（单次禁用代理，不改全局；直连 GitHub 实测可达），GitHub API 用 `Invoke-RestMethod -NoProxy`。
+   ② PowerShell here-string 传中文会被编码搞坏 ⇒ 改为**写 UTF-8 文件再读取**发 Release 正文。
+3. **发版前安全终审**（Max）：`docs/review-0.10.0-security-20261112.md`，五面全「已核」，**Pass**；
+   其 N1（GUI 路由与提示词仍走旧 Cookie 取数）**已修**（`index.js:1232-1234` 复用 `mimoWireWithDisplay`，全文件恰好两处调用），窄复核再 Pass。
+4. **测试基线**：98 套件 / 93 exit 0 / 0 挂起；非 0 的 5 条均为**非产品缺陷**——
+   ⑤ `mimo-display-e2e`、⑥ `mimo-remembered-client-e2e`、⑦ `recheck-round3`（三条：mock 夹具能力不足/派生字段）、
+   `test-workbuddy-contract`（本机未装第三方包）、`test-mimo-remembered-session`（全量并发时偶发，单独跑 21/21 稳定）。
+5. **清理成果**：删除退场模块（`kimi-code`/`glm-zhipu`/`glm-zai`/`glm`、`workbuddyAi`/`fetchPlanAi`）、WorkBuddy 旧 `/status` 簇
+   （`gatewayWire`/`creditsFromGatewayStatus`/`creditPackagesOf`）、`fetchStatus`/`fetchPlanWithBase`、本地探针与 poc 期测试（12 条）；
+   产品文件里 `DSH_DIAG`/`console.*`/`TODO`/`FIXME` **0 命中**。
+6. **0.10.1 待办（已知、非阻断）**：① `mimoDisplayWire` 对 `state:'verified'` 但 `freshness:'stale'` 的旧值未置 `stale:true`（会被当当前值上报）；
+   ② 三条夹具能力不足的套件（建议给 mock runtime 加 `awaitPendingFetch()` 并读 `mimoDisplayView()` 派生气对齐）；
+   ③ `plans/glm-zai` 等已删模块在历史文档中的提及（不影响运行）。
+
 ## 2026-11-12 12:00：⑦/⑤/⑥ 三条红灯的最终定性（**非产品缺陷，均属测试侧能力不足**）
 
 1. **⑦ `recheck-round3` W2a**：环境变量门控的诊断证明 —— W2a 那次渲染**没有** `gate.digest`/`settle.source` 输出，
