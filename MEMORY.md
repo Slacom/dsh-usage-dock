@@ -2,6 +2,19 @@
 
 供本项目后续会话、接手主代理及子代理恢复协作规则；以用户最新明确指令和[项目规范](AGENTS.md)为准。这里不保存凭据、金额、认证URL或临时许可。
 
+## 2026-11-12 14:36：**0.10.1 已发布**（第三方补丁工程化）
+
+1. **发布物**：commit **`454b6e7`**、tag **`v0.10.1`**、GitHub Release id **`442567445`**（`/releases/latest` = v0.10.1）；
+   npm **`dsh-usage-dock@0.10.1`**，40 文件 / 462 kB，线上 `dist.shasum` = **`a0d8f4facd26cf2827dd975d35f9b348097c9372`**（与本地 dry-run 一致），`dist-tags.latest = 0.10.1`。
+2. **内容**：`tools/patch-codex-subscription.mjs`（`--check` 只读 / `--apply` 原子替换+备份 / `--revert`，版本钉死 3.2.6、
+   base/program 哈希校验、逐条 hunk 唯一命中、失败零写入）+ `tools/patches/codex-subscription-3.2.6.json`（4 条纯插入 hunk）
+   + `tools/test-patch-codex-subscription.mjs`（11 项，临时副本）+ `docs/release-notes-v0.10.1.md`；`AGENTS.md` §7 写入恢复流程。
+3. **对真实 profile 的只读验证**：`包版本=3.2.6`、`lib/index.js=4b9498e5…`、**结论：已适配**，exit 0（零写入）。
+4. ⚠️ **重要**：`package.json` 的 `files` 不含 `tools/`，因此**补丁工具不进 npm 包**；用户要从**仓库**里跑
+   `node tools/patch-codex-subscription.mjs`。若将来希望随包分发，需把该文件与 `tools/patches/` 加入 `files`（会扩大发布面，需单独决定）。
+5. **下一步候选**：① 第三方升级到 3.2.12 时，要按新版本重新生成 hunk 清单（4 条 hunk 的上下文很可能变），再 `--apply`；
+   ② 0.10.0 遗留的三条夹具能力不足套件；③ `mimoDisplayWire` 对 `freshness:'stale'` 未置 `stale:true`。
+
 ## 2026-11-12 13:17：**0.10.0 已正式发布**（主干 / tag / GitHub Release / npm 全部完成）
 
 1. **发布物**：commit **`0a56d32`**（151 文件，含 `plans/mimo-auth/**` 与 `plans/codex-sources.js` 首次入库）；
