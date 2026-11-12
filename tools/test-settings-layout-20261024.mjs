@@ -199,24 +199,33 @@ const ON = {
 }
 
 // ===========================================================================
-// L6 — 折叠 details 不影响受控输入挂载与取值；保存中仍锁定
+// L6 — 展平的凭据区不影响受控输入挂载与取值；保存中仍锁定
 // ===========================================================================
 {
   const ctx = open(ON)
   const tree = await settle(ctx)
-  // [2026-10-24 收尾修订] 内置连接/凭据（含小米 Cookie 长教程）现在都在原生 details 里；
-  // 内容始终挂载、同一 onChange/disabled，折叠只影响观感。
+  // [2026-11-11 布局变更] 预设渠道的连接/凭据**不再折叠**：DeepSeek 的 Key 直接可见、
+  // 没有 details 祖先（内容与受控语义不变）；只有自定义余额卡保留自己的折叠结构。
   const dsCred = byAttr(tree, 'data-plan-credentials', 'deepseek')
-  const mimoCred = byAttr(tree, 'data-plan-credentials', 'mimo')
-  check('L6a 内置 API Key 在"连接与凭据"details 内（默认收起但已挂载）',
-    dsCred !== undefined && dsCred.type === 'details' && dsCred.props.open !== true
-    && contains(dsCred, byAttr(tree, 'data-plan-credential', 'deepseek')))
+  const hasDetailsAncestor = (node) => {
+    let n = node === undefined ? null : node.parentElement
+    let hops = 0
+    while (n && hops < 32) { if (n.type === 'details') return true; n = n.parentElement; hops++ }
+    return false
+  }
+  check('L6a 内置 API Key 直接可见（展平的凭据区，不再包 details）',
+    dsCred !== undefined && dsCred.type === 'div' && dsCred.props['data-plan-credentials-flat'] === '1'
+    && contains(dsCred, byAttr(tree, 'data-plan-credential', 'deepseek'))
+    && !hasDetailsAncestor(byAttr(tree, 'data-plan-credential', 'deepseek')))
   check('L6a2 Key 输入仍是受控输入且带原值',
     (() => { const el = byAttr(tree, 'data-plan-credential', 'deepseek'); return el !== undefined && el.type === 'input' && el.props.value === 'sk-layout-fixture' })())
-  check('L6b 小米 Cookie 与其长教程在同一 details 内（内容仍在树里）',
-    mimoCred !== undefined && mimoCred.type === 'details'
-    && contains(mimoCred, byAttr(tree, 'data-plan-credential', 'mimo'))
-    && textAll(mimoCred).indexOf('F12') !== -1)
+  // [2026-11-11 断言更正] 旧的 L6b 断言（MiMo Cookie 与本插件 details + F12 长教程）已过时：
+  // MiMo 的 Cookie 与登录状态由 MiMo 登录面板（`MimoAuthMount`）独占渲染，本插件**不再**
+  // 为它造第二份凭据区/教程（`tools/test-mimo-refresh-ui.mjs` 还明确断言界面不出现 F12 字样）。
+  // 因此这里改为守住「不重复、不空折叠」这一真实契约。
+  check('L6b MiMo 不再有第二份凭据折叠区（Cookie 由 MiMo 登录面板独占）',
+    byAttr(tree, 'data-plan-credentials', 'mimo') === undefined
+    && byAttr(tree, 'data-plan-card', 'mimo') !== undefined)
   check('L6b2 无凭据渠道不渲染空的凭据折叠区', byAttr(tree, 'data-plan-credentials', 'codex') === undefined)
   ctx.client.restore()
 

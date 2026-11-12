@@ -483,3 +483,80 @@ function formatNumber(value) {
 }
 
 export { ERROR_TEXT }
+
+// ===========================================================================
+// [2026-11-12 MiMo lane 对齐] 胶囊那条「显示快照」lane → 工具 wire
+// ===========================================================================
+//
+// 背景（父已核实）：胶囊的 MiMo 数值来自 `plans/mimo-auth/session-display.js` 的显示 DTO
+// （客户端 `mimoDisplayOverlay` 用它覆盖 wire），而 `usage_status` 走的是 `plans/mimo.js` 的
+// 旧 Cookie/API Key lane ⇒ 真机上工具报「上游拒绝请求（api）」而胶囊显示 ¥14.58。
+// `registerMimoAuth()` 的返回值里有 `display.peek()`（**零 IO** 的显示 DTO），本段把它折成
+// 工具能投影的 wire，于是两条 lane 看同一份事实。
+//
+// 两条硬规则：
+//   ① 快照**不适用**（未选中 / 读不到）⇒ 返回 null，调用方继续走原 provider 路径（行为不变）；
+//   ② 快照**适用**（`selected === true`）⇒ 无论成功与否都**不再碰 provider**
+//      （宁可如实说「本次没有数据」，也不回落到会打上游的旧 lane）。
+
+/** 货币码闭集：`trim + toUpperCase` 后必须匹配（ISO-4217 是 3 位，这里放宽到 2–8 位）。 */
+const MIMO_CURRENCY_PATTERN = /^[A-Z]{2,8}$/
+
+/**
+ * 显示快照 → 工具 wire（**纯函数、零 IO、字段闭集**）。
+ *
+ * 返回 `null` 表示「不适用，走原 provider 路径」；返回带 `error:'missing'` 的对象表示
+ * 「适用但本次没有数据」（不伪造 0、不默认币种、不回落 provider）。
+ *
+ * 只输出 `{ id, name, error }` 或 `{ id, name, balance, currency, fetchedAt? }` ——
+ * 快照里的 `identity` / `code` / `accountId` / `revision` 等一律**不透传**。
+ *
+ * @param {unknown} snapshot `display.peek()` 的返回（显示 DTO）
+ * @returns {{id:'mimo', name:string, error:'missing'}|{id:'mimo', name:string, balance:number, currency:string, fetchedAt?:number}|null}
+ */
+export function mimoDisplayWire(snapshot) {
+  try {
+    if (snapshot === null || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null
+    // 未选中该来源 ⇒ 这条 lane 对这轮结论**没有发言权**，交回 provider。
+    if (snapshot.selected !== true) return null
+    const name = BUILTIN_META.mimo.name
+    const missing = () => ({ id: 'mimo', name, error: 'missing' })
+    // 适用但不在 verified（holding / stopped / expired / absent / 未知）⇒ 如实缺席。
+    if (snapshot.state !== 'verified') return missing()
+    const money = snapshot.balance
+    if (money === null || typeof money !== 'object' || Array.isArray(money)) return missing()
+    const amount = money.balance
+    // 只接受**有限数且非负**：字符串（"14.58"）不是数值，绝不 Number() 猜测。
+    if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0) return missing()
+    // 币种：先规范化再校验；**只有**通过校验后才使用规范化值（缺失/非法都不默认 CNY）。
+    const currency = typeof money.currency === 'string' ? money.currency.trim().toUpperCase() : ''
+    if (!MIMO_CURRENCY_PATTERN.test(currency)) return missing()
+    const wire = { id: 'mimo', name, balance: amount, currency }
+    // 采样时间只在快照里是非负有限数时才带；否则**省略该字段**（不写 null/垃圾）。
+    const fetchedAt = snapshot.fetchedAt
+    if (typeof fetchedAt === 'number' && Number.isFinite(fetchedAt) && fetchedAt >= 0) wire.fetchedAt = fetchedAt
+    return wire
+  } catch (err) {
+    // 任何意外都按「不适用」处理：工具层绝不能被快照的形状问题带崩。
+    return null
+  }
+}
+
+/**
+ * 组合器：优先用显示快照，**不适用**时才走原 provider。
+ *
+ * @param {{peek: () => unknown}|null|undefined} source 零 IO 的显示快照句柄（可为空）
+ * @param {() => Promise<object>} fetchProvider 既有的 provider 取数（行为完全不变）
+ * @returns {Promise<object>} wire
+ */
+export async function mimoWireWithDisplay(source, fetchProvider) {
+  let snapshot = null
+  try {
+    if (source !== null && source !== undefined && typeof source.peek === 'function') snapshot = source.peek()
+  } catch (err) {
+    snapshot = null // peek 自己抛错 = 读不到 ⇒ 走原路径
+  }
+  const wire = mimoDisplayWire(snapshot)
+  if (wire !== null) return wire
+  return await fetchProvider()
+}

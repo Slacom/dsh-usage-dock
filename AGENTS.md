@@ -3,6 +3,25 @@
 > 面向接手本项目的 AI agent / 开发者。**动手前先读完本文**，尤其是第 5 节的 API 契约，
 > 那里记录的都是踩过的坑，重复踩会浪费大量时间。
 
+## 0. 协作与子代理规则（用户 2026-10-28 明确要求）
+
+持久记忆见 [MEMORY.md](MEMORY.md)，接手时一并读取。以下规则适用于本项目后续工作，不扩大任何部署、重启、联网、账号或发布许可。
+
+1. **仅等待时暂停当前回合**：主代理若没有其它独立工作、只在等子代理，可以先暂停；保持子代理继续运行，收到自动汇报后再审查整合。不要忙轮询、sleep占位、重复子代理工作或为保持运行制造无意义任务；不因此中断子代理或擅自改自动目标开关。
+2. **优先复用已有子代理**：委派前检查已有代理的模型、状态、职责和上下文。适合且可继续的代理优先用 `send_message` 续接，包括已完成但仍可继续的代理；无必要不要新建。仅在现有代理不适合、不可继续或确需独立上下文时新建，并简要说明理由；已被禁止的模型不得因“复用”再次启用。
+3. **实现按包并行，总并发不超过4个**：可将独立实现拆成 Host、客户端、测试、审查等工作包同时推进，明确文件写入边界、接口合同和验收标准，避免同文件并发覆盖。**所有正在运行的子代理及其后代合计最多4个，不含主代理**；不要为凑满4个而新建，也不能靠再次委派绕过上限。主代理统一调度、整合和独立验收。
+4. **既有模型约束保留**：用户另行明确变更前，仅用 `provider: workbuddy` / `model: cn:deepseek-v4.1-flash`，显式指定 `reasoning_effort: high` 或 `max`。不使用默认路由、GPT子代理或可能继承错误模型的 fork；复用前也要确认模型符合约束。
+5. **主代理只规划指挥，实施与验证交子代理（用户 2026-10-29 明确要求）**：主代理不亲自实现、不构建、不重复跑验证，只做最必要的验收与报告；所有具体实施、运行、测试、文档交子代理（仍 workbuddy Flash High/Max，优先复用，含后代合计 ≤4）。审核按风险取必要项，**不叠加大矩阵、不反复封存、不重复测试**；一次交付一次短审，只追阻断项。"baseline 不失败 ≠ 已修"、真实故障需可复现（一次 baseline，若要称复现再一次重复 + 一个对照）、不动生产/真实配置/凭据、不起服务不联网等安全边界不放松；只在等待时暂停。
+   **⚠️ 2026-11-05/06 用户更新**：本条关于**角色分工**的表述已由第 7 条取代（本条其余部分——不叠加大矩阵、
+   一次交付一次短审、只追阻断项、安全边界——继续有效）。
+6. **权限敏感动作由主代理代执行（用户 2026-11-01 明确要求）**：预判子代理固定权限不足的**已获当次业务授权、已审原命令**，直接交由主代理代执行原命令；子代理继续普通实现、工作区测试、准备、审查、后验和文档，不先让子代理反复失败再转主，也不反复让子代理请求其继承不了的权限。不再每次为这一“主体代执行”单独询问例外；实际新部署、联网、账号、读 cfg 等范围仍需具体许可。平台明确拒绝时停止，不自动更改权限/ACL/换命令，不把主代理代执行当作绕过审批；用户临时切换执行权限由用户本人完成，当前 approval policy 为 never 时不设置 `sandbox_permissions`。本规则仅适用于权限敏感动作，不是主代理接管所有实现和测试。
+
+7. **2026-11-05/06 用户最新分工（现行）**：**主代理负责方案与技术决策、并亲自读获准范围内的源码**；
+   **具体实施 / 脚本 / 测试 / 文档交 High 子代理**；**Max 在交付后做一次终审**。
+   （2026-11-06 的 sessionDisplay 轮把终审范围**专项限定**为 B1–B8 / N1–N5 差异——这只是**该轮**的范围，
+   **不**代表未来所有审核都只限这批编号。）
+   第 5 条中与**角色分工**冲突的部分自本条起仅作历史记录，不再约束现行协作（第 5 条其余审核纪律继续有效）。
+
 ---
 
 ## 1. 项目是什么
@@ -11,8 +30,8 @@ DeepSeek Harness（DSH）的**侧栏用量/余额插件**：在 Web/桌面端左
 用量与余额，点击可展开详情面板。fork 自 `chendefine/dsh-plugins-plan-usage`，改名 `dsh-usage-dock`
 以避免与上游混淆，并做了一系列定制（见第 6 节）。
 
-**当前版本**：0.9.0（三渠道退场 + 通用自定义余额 + `usage_status` 只读工具 + 可选额度策略 + 单列设置页。
-**0.9.1 曾是过程内的整改标签，已并入 0.9.0**，不要把它当作已单独发布过的版本）　|　
+**当前版本**：0.10.0（Codex Connect/Subscription 双来源手选 + WorkBuddy 改读客户端 `GET /v1/credits`（仅国内 cn、不再按账号筛选）+ MiMo 读数与 `usage_status` 同源 + 胶囊启动占位；承接 0.9.0 的三渠道退场 / 自定义余额 / `usage_status` / 可选额度策略 / 单列设置页。
+**0.9.1 曾是过程内的整改标签，未单独发布，内容已并入 0.10.0**，不要把它当作已发布过的版本）　|　
 **上一公开版**：0.8.4（GitHub Release + npm）　|　**更早**：0.8.5（仅本地定档）、0.8.3、0.8.2、0.8.1、0.7.2（0.8.0 未单独发布）
 
 > **审核入口（先读这条）**：当前**权威**记录是
@@ -242,6 +261,11 @@ plans/custom-balance.js  [0.9.0] 通用自定义余额：JSON 键路径、数值
                   请求（GET+Bearer、不跟随重定向、响应体上限）、错误分类、整批调度、状态摘要
 plans/util.js     共用工具：curlJson（原生 fetch / Python / curl 三后端自适应）、窗口归一化、凭据解析
 plans/peak-phase.js  DeepSeek 峰谷计价相位纯函数（峰窗口/周末/假日表，0.8.0）
+plans/codex-sources.js  [0.10.0] Codex 来源的**只读** metadata（GET /api/plan-usage/codex-sources）：
+                  只回布尔可用性与固定状态文案，不含额度、不含凭据
+plans/mimo-auth/**      [0.10.0] MiMo 本机登录/显示会话：host.js 的 registerMimoAuth() 返回
+                  { bootEpoch, getHost, dispose }，getHost() 现读 inject 里异步建的 host；
+                  只读消费 routeDisplay/display，managed 动作固定拒绝
 plans/http-fetch.py  兜底取数脚本（Windows 沙箱内 curl 的 TLS 不可用时的 Python/OpenSSL 方案）
 cordis.patch.yml  插件向 profile 贡献的配置层（insert 一个 plan-usage 条目）
 tools/test-fetch-backends.mjs  取数后端 + DeepSeek 渠道回归测试（见第 4 节）
@@ -275,15 +299,18 @@ plans/usage-tool-register.js         [方向6/T2] 工具注册/缓存/预算（�
 plans/usage-policy.js                [方向6/T3] 可选收尾策略（默认关闭）
 ```
 
-**已接入渠道**（0.9.1 起）：OpenCode Go、DeepSeek（账号余额优先/API Key 回退）、OpenAI Codex、
-小米 MiMo（控制台 Cookie → API 余额）、WorkBuddy（**2026-10-21 起改读 WorkBuddy2API 网关**，
-见 `plans/workbuddy.js` 的 `fetchFromGateway`），以及用户自建的
+**已接入渠道**（0.10.0 起）：OpenCode Go、DeepSeek（账号余额优先/API Key 回退）、
+OpenAI Codex（**0.10.0 起两个来源手选**：`Codex Connect` / `Codex Subscription`，不合并不回退；
+订阅来源需要第三方 `dsh-codex-subscription` 的本地只读补丁，见 §7）、
+小米 MiMo（**0.10.0 起以本机显示会话「记住登录」为准**，与 `usage_status` / 额度策略同源）、
+WorkBuddy（**2026-11-12 起改读客户端接口 `GET /v1/credits`，只统计国内 cn、不再按账号筛选**，
+见 `plans/workbuddy.js`），以及用户自建的
 **自定义余额渠道**（0.9.0，任意 HTTPS GET+Bearer+JSON，见第 6 节第 14 条）。
 
 **已退场渠道**：`kimi-code`、`glm-zhipu`、`glm-zai`（0.9.0），以及
 `workbuddy-ai`（0.9.1，用户决定全部改走国内网关，不再区分国际版）。
-它们的模块文件仍留在 `plans/` 作为历史资料，但 `workbuddy-ai` **已不在 `PLANS` 且进 `RETIRED_PLAN_IDS`**；
-不要把它们的 schema 字段或 UI 加回来，除非用户明确要求恢复。
+它们的模块文件**已删除**（0.10.0），仅保留 id 字符串于 `RETIRED_PLAN_IDS`；`workbuddy-ai` **已不在 `PLANS` 且进 `RETIRED_PLAN_IDS`**；
+不要把它们的 schema 字段或 UI 加回来，除非用户明确要求恢复（0.10.0 起这些模块文件已删除，只剩 `RETIRED_PLAN_IDS` 里的 id）。
 
 ## 4. 开发流程
 
@@ -417,6 +444,14 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
 
 ## 7. 已知限制
 
+- **Codex `Subscription` 来源依赖第三方本地补丁**（0.10.0）：需要在第三方包
+  `dsh-codex-subscription` 上打**本地只读 service 补丁**才拿得到订阅额度，该补丁**不在本包发布内容里**。
+  没打补丁时该来源显示「接口暂不可用（需适配）」；`Codex Connect` 来源不受影响、照常可用。
+  该补丁还需按第三方包的版本重新核对（本包只消费它的只读接口约定）。
+- **MiMo 的 `usage_status` 读的是显示快照**（0.10.0）：胶囊 / 详情 / 工具 / 额度策略共用同一份
+  本机显示会话快照（`getHost().routeDisplay.peek()`，缺失才回退 `display.peek()`），
+  因此需要「记住登录」链路才有数值；没有该链路时显示占位/读取中，而不是旧的手工 Cookie 值。
+  MiMo 也因此**不参与** 30 秒成功缓存（见 `ACCOUNT_BOUND_PLAN_IDS`）。
 - 0.8.1 的 Host 已通过可选 `configEditor` 重读配置（2 秒内复用）；缺少该服务的旧版/移植端回退启动快照，修改凭据和 Host 开关后仍需重启引擎。显示层过滤与排序订阅表单。
   （0.9.0 起 `cfgValue()` 能正确解包 volatile 包装，因此**开关本身**在没有 configEditor 的
   部署里也生效；但「改完不重启就换 Key」仍要求 configEditor。）
@@ -637,4 +672,58 @@ $token = (("protocol=https`nhost=github.com`n`n" | git credential fill) -replace
 
 ---
 
-*文档更新时间：2026-10-24（当前权威状态：[docs/release-status-v0.9.0-20261024.md](docs/release-status-v0.9.0-20261024.md)；`0.9.1` 为过程标签，已并入 0.9.0）*
+## 12. MiMo 阶段恢复入口
+
+> **2026-11-06 最新：正式 console 源码主线已接线，Max 一次独立终审 Pass（仅本地合成范围，无阻断），不是已真实可用。**
+> 详见[主线实施记录](docs/mimo-console-mainline-20261106.md)与[终审记录](docs/mimo-console-mainline-review-20261106.md)。
+> 新协议 / manager / console e2e 最近实跑分别 **29/0、17/0、54/0**；默认 `enableConsoleProtocol=false`，未真实登录/扫码/账号请求、未持久化、未新部署或改版本。
+> 用户先许主本轮接管，再明确许一个全新 Flash 单代理 workflow（仅本次默认推理等级例外）；旧 High 已停写，新任务已完成，原 Max 独立终审已结束。长期模型/分工默认规则不据此改写，详见 [MEMORY.md](MEMORY.md)。
+> `secure-transport.js` 的7类精确新用途改动已另获准；旧 session/dynamic-policy/vendor 保持。当前已装11文件与 `103258-files` 备份未动；用户此前已手动重启并验证本地 capability/start（未 begin），下方“未重启”是10:32历史时点。
+
+### 2026-11-05/06 sessionDisplay 历史阶段
+
+> 以下保留历史交付与当时协作记录，不覆盖上述最新结论。
+
+> **2026-11-06 10:32 本地磁盘试装（已执行，未重启）**：desktop profile 副本（**formal 0.9.0 基线**）已装
+> **11 文件 = 2 覆盖（`index.js`/`client.js`）+ 9 新增（`plans\mimo-auth\` 含 `vendor\`）**，
+> `INSTALL-MANIFEST.json` `complete`/`deployed=true`；备份唯一可用位
+> `…\20261106-101818-formal-0.9.0-pre-mimo-sessionDisplay\backup\20261106-103258-files`（仅 2 旧文件，空目录不是备份）；
+> `package.json` 仍 **0.9.0**（纯文件叠加）；**排除** WorkBuddy/账号端点 5 个 hunk（H1/H2/H7/H12/H14）。
+> **未重启 ⇒ 运行态未验证；DI 仍 null；QR 代码装入 ≠ 运行期二维码/扫码可用。** 回档用
+> `rollback-formal-trial.ps1`（预检）/`-Execute`，回档后用户手动重启；记录见
+> [试装记录](docs/mimo-session-display-install-trial-20261106.md)；**装后核对已 Pass**（Max：stage==target 11/11、
+> old backup 2/2、rollback 预检 exit 0 = 2 restore + 9 delete、闭包解析全，见 `<R>\INSTALL-REVIEW.md`），
+> **该 Pass 仅限磁盘已装，不代表真实运行**（未重启、DI null）。
+
+- **协作角色（现行，见 §0 第 7 条）**：**主代理负责方案与技术决策 + 读获准范围内的源码**；
+  具体实施 / 脚本 / 测试 / 文档交 **High 子代理**；**Max 在交付后做一次终审**
+  （本轮专项把终审范围限定为 B1–B8 / N1–N5 差异 —— **仅本轮限定**）。
+- **本轮交付（仅本地合成，未构建/未部署/未改版本/未发布）**：
+  - 新增 `plans/mimo-auth/session-display.js`：**独立**的本机显示会话 manager
+    （状态 `absent/holding/verified/stopped/expired`，与旧 7 状态分离）；
+  - 扩展 `plans/mimo-auth/routes.js`（同一条 owner-only 路由上的 `display*` 严格动作）
+    与 `plans/mimo-auth/host.js`（DI 三件套 + namespace，生产恒 null ⇒ fail-closed）；
+  - 扩展 `client.js`：`mimoDisplayRequest/Pick` + 单例 store/hook + `MimoDisplayPanel`
+    + 胶囊/详情 overlay（仅 `id=mimo`，不进 `lastList`/`failStreaks`/observer）
+    + 正常详情内**可见停止入口**；
+  - 测试（2026-11-06 最后实跑，全绿）：`tools/test-mimo-display-session.mjs`（**78**）、
+    `tools/test-mimo-display-client.mjs`（**39**）、`tools/test-mimo-display-e2e.mjs`（**50**，
+    真实 `createAuthHost` + 注册 handler 桥接 + 真实 client.js，经 UI 按钮走完整流程）；
+  - 文档：[设计与实现记录](docs/mimo-session-display-20261105.md)、
+    [真实协议操作单（未执行）](docs/mimo-real-protocol-operation-sheet-20261105.md)。
+- **未改**：`session.js`、`failure.js`、`index.js`、`plans/index.js`、`plans/mimo.js`、
+  `dynamic-policy.js`、`secure-transport.js`、根版本。旧单次链的销毁承诺与 7 状态语义**原样保留**。
+- **仍为未证**：真实余额 method/path/scope/audience、auth result 字段与载体、独立 expected 身份来源、
+  上游 cancel/revoke。真实链一律 **disabled**；`合成通过 ≠ 真实可用`。
+- **审核状态（2026-11-06）**：**已审核为"本地合成 Pass"** —— Max 静态差异复核 Pass
+  （B1–B8 全闭、N1–N5 落实），记录见
+  [Max 复核 §6–§7](docs/mimo-session-display-review-20261105.md)。**这不是真实链验收**：
+  生产 DI 恒 null、真实链仍 disabled。Max 另提 3 项非阻断遗留（client 未登记
+  `PENDING_EXPIRED` 码 / revision·barrier 迟到专用断言缺口 / session 单测 attempt 用 `≤14`
+  由 e2e `===14` 兜住），已在实施记录 §10.1 如实登记、本轮不修。
+- **口径提醒（本轮观察，范围外，未改）**：`client.js` 的 `FAIL_THRESHOLD` 实际为 **5**，
+  与上文 0.8.5 条目字面"阈值 5→8"不一致；本轮**不改动**该阈值，仅记录待用户决定。
+
+---
+
+*文档更新时间：2026-10-28（本次仅更新协作规则；当前权威发布状态：[docs/release-status-v0.9.0-20261024.md](docs/release-status-v0.9.0-20261024.md)；`0.9.1` 为过程标签，已并入 0.9.0）*

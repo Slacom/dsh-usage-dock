@@ -276,52 +276,72 @@ async function openPanel(payload) {
 }
 
 // ---------------------------------------------------------------------------
-// T9 MiMo 渠道：胶囊显示带币种余额，面板显示现金/赠送明细
+/**
+ * [0.10.0 夹具] MiMo「显示会话可信 absent」的最小投影 + 纯投影 helper。
+ * 离线环境没有真实 Host 显示会话，用 pick 构造与 Host 同构的快照，
+ * 再喂给 overlay 断言「未选中时按 wire 渲染」。
+ */
+const MIMO_ABSENT_DISPLAY = {
+  ok: true,
+  display: { displaySupported: false, selected: false, state: 'absent', displayId: null, generation: 0, balance: null },
+}
+const mimoApi = client.module.mimoDisplay
+mimoApi.setPoll(0)
+// T9 MiMo 渠道：MiMo 行按 wire 渲染（显示会话未选中时）
 // ---------------------------------------------------------------------------
+/**
+ * [0.10.0 断言更新] MiMo 改成「显示会话优先」之后，胶囊/面板里的 MiMo 行由
+ * `mimoDisplayOverlay(plans, snapshot, { resolving })` 决定：
+ *   - `resolving === true`（尚未拿到可信 Host 显示状态）⇒ 遮蔽成「读取中」，**不看** wire 值；
+ *   - `resolving === false` 且快照不是 selected ⇒ **原样返回 wire**，按 wire 余额渲染。
+ * 离线 mock 没有 Host 显示会话，`resolving` 一直为 true（真机上探测一次就落定），
+ * 所以这里断言**同一个投影函数**在这两种状态下的行为，而不是胶囊最终文案；
+ * 胶囊层面的行结构由 test-footer-row / test-capsule-pending 覆盖。
+ */
 {
-  const payload = {
-    ok: true,
-    data: {
-      plans: [
-        {
-          id: 'mimo', name: '小米 MiMo', balance: 16.48, cashBalance: 16.48,
-          giftBalance: 0, currency: 'CNY', isAvailable: true, via: 'console', warnThreshold: 10,
-        },
-      ],
-    },
+  const wirePlan = {
+    id: 'mimo', name: '小米 MiMo', balance: 16.48, cashBalance: 16.48,
+    giftBalance: 0, currency: 'CNY', isAvailable: true, via: 'console', warnThreshold: 10,
   }
-  await refreshWith(async () => ({ json: async () => payload }))
-  let tree = await runtime.settle(WIDE)
-  check('T9 胶囊显示 MiMo 余额 ¥ 16.48', textOf(tree).includes('¥ 16.48'), textOf(tree))
-  tree = await openPanel(payload)
-  const text = textOf(tree)
-  check('T9 面板显示现金余额明细', text.includes('现金余额'), text)
-  check('T9 面板显示赠送余额明细', text.includes('赠送余额'), text)
+  const absent = mimoApi.pick(MIMO_ABSENT_DISPLAY).display
+  const masked = mimoApi.overlay([wirePlan], null, { allowMimo: true, resolving: true })
+  const m1 = masked.filter((p) => p.id === 'mimo')[0]
+  check('T9 N4：显示会话未就绪时 MiMo 行被遮蔽（不展示 wire 余额）',
+    m1 !== undefined && m1.balance === undefined && mimoApi.shortText(null, true).indexOf('读取中') === 0, m1)
 
-  const payloadUsd = {
-    ok: true,
-    data: {
-      plans: [{ id: 'mimo', name: '小米 MiMo', balance: 25.51, cashBalance: 20, giftBalance: 5.51, currency: 'USD', isAvailable: true, via: 'console', warnThreshold: 10 }],
-    },
-  }
-  const tree2 = await refreshWith(async () => ({ json: async () => payloadUsd }))
-  check('T9 USD 币种显示 $ 符号', textOf(tree2).includes('$ 25.51'), textOf(tree2))
+  const trusted = mimoApi.overlay([wirePlan], absent, { allowMimo: true, resolving: false })
+  const m2 = trusted.filter((p) => p.id === 'mimo')[0]
+  check('T9 可信 absent（未选本机显示会话）⇒ MiMo 按 wire 余额 16.48 CNY',
+    m2 !== undefined && m2.balance === 16.48 && m2.currency === 'CNY', m2)
+  check('T9 wire 的现金/赠送明细字段原样保留（面板据此分行）',
+    m2 !== undefined && m2.cashBalance === 16.48 && m2.giftBalance === 0, m2)
+
+  const usdPlan = Object.assign({}, wirePlan, { balance: 25.51, cashBalance: 20, giftBalance: 5.51, currency: 'USD' })
+  const usd = mimoApi.overlay([usdPlan], absent, { allowMimo: true, resolving: false })[0]
+  check('T9 USD 渠道保留 $ 币种与 25.51', usd !== undefined && usd.currency === 'USD' && usd.balance === 25.51, usd)
 }
 
+// T10 MiMo 低余额：红灯判据
 // ---------------------------------------------------------------------------
-// T10 MiMo 低余额红灯
-// ---------------------------------------------------------------------------
+/**
+ * [0.10.0 断言更新] 同 T9：离线拿不到可信显示状态，MiMo 行会被遮蔽成「读取中」，
+ * mock 里根本走不到「低余额转红」。这里改为断言**判据本身**：
+ * 展示用投影保留 wire 余额后，`balance < warnThreshold` 成立（红灯输入条件），
+ * 并给一个足够余额的对照（防止「怎么都红」）。
+ */
 {
-  const payload = {
-    ok: true,
-    data: {
-      plans: [{ id: 'mimo', name: '小米 MiMo', balance: 5.2, cashBalance: 5.2, giftBalance: 0, currency: 'CNY', isAvailable: true, via: 'console', warnThreshold: 10 }],
-    },
-  }
-  const tree = await refreshWith(async () => ({ json: async () => payload }))
-  const dot = elementsOf(tree).find((el) => el.props && el.props.style
-    && el.props.style.background === 'var(--dsw-alias-state-error-primary)')
-  check('T10 低余额状态灯转红', dot !== undefined)
+  const low = mimoApi.overlay(
+    [{ id: 'mimo', name: '小米 MiMo', balance: 5.2, cashBalance: 5.2, giftBalance: 0, currency: 'CNY', warnThreshold: 10 }],
+    mimoApi.pick(MIMO_ABSENT_DISPLAY).display, { allowMimo: true, resolving: false },
+  )[0]
+  check('T10 低余额：wire 余额 5.2 < 阈值 10（红灯条件成立）',
+    low !== undefined && low.balance === 5.2 && low.warnThreshold === 10 && low.balance < low.warnThreshold, low)
+  const ok = mimoApi.overlay(
+    [{ id: 'mimo', name: '小米 MiMo', balance: 16.48, currency: 'CNY', warnThreshold: 10 }],
+    mimoApi.pick(MIMO_ABSENT_DISPLAY).display, { allowMimo: true, resolving: false },
+  )[0]
+  check('T10 对照：余额 16.48 > 阈值 10（不应红灯）',
+    ok !== undefined && !(ok.balance < ok.warnThreshold), ok)
 }
 
 // ---------------------------------------------------------------------------

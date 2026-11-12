@@ -1,6 +1,6 @@
 # dsh-usage-dock 0.9.1 当前状态（供独立审核）
 
-> 更新：2026-10-22（Asia/Shanghai）；最新A操作归属修复见[本地交付记录](fix-custom-operation-v0.9.1-20261022.md)。以下逐轮清单保留为历史索引，以最新修复与冻结验收结论为准。
+> 更新：2026-10-22（Asia/Shanghai）；2026-10-30 追加 §3.10「旧账号选择过滤」运行期回归。最新A操作归属修复见[本地交付记录](fix-custom-operation-v0.9.1-20261022.md)。以下逐轮清单保留为历史索引，以最新修复与冻结验收结论为准。
 > 本文只做**状态同步与索引**，不重复论证细节。详细过程见
 > [0.9.0 构建与整改记录](quota-policy-build-v0.9.0.md)。
 > **本文不含任何真实凭据。** 涉及真实网关的段落只写结构与口径，不写 key 值。
@@ -64,7 +64,7 @@
 | 需求 | 状态 |
 | --- | --- |
 | 去除 WorkBuddy AI 渠道卡片 | 已实现（id 进 `RETIRED_PLAN_IDS`，不再取数/渲染） |
-| WorkBuddy 卡片内可选账号、只合计选中账号 | 已实现（新字段 + 新路由 + 勾选 UI） |
+| WorkBuddy 卡片内可选账号、只合计选中账号 | **已撤销**：2026-10-25 客户端接口没有稳定账号 ID，改为全部 cn 账号合计；见 §3.10 |
 | 详情显示具体积分包与到期 | 已实现（`/panel/api/packages` → 复用现有明细渲染） |
 
 ### 3.5 第六轮复核（`recheck-v0.9.1-round6-20261021.md`）
@@ -120,6 +120,17 @@ WorkBuddy 反代换主机后：`/status` 正常，**`/panel/api/packages` 返回
 | C / P2 公开异常 | malformed JSON 三出口固定分类 | 新增 `transportCodeOf`，主 wire / 账号列表 / 外层兜底三处只给固定分类，不透传 exception 原文 |
 
 **未闭环**：根因 A 的三条交错时序仍只有源码契约 + 单点行为覆盖，尚未在真实 apply 下重建完整门闩矩阵。
+
+### 3.10 2026-10-30 运行期回归：旧账号选择过滤（待并入 0.9.1）
+
+桌面 profile 实际仍加载 0.9.0：`fetchFromGateway` 继续按 `workbuddyAccounts` 里的旧 `uid` 过滤账号，
+而新客户端积分响应的 `accounts[]` 已不带 `uid`，于是侧栏解析成 `no-account`、设置页账号列表为空
+（设置页曾同时显示一次瞬时「HTTP 502」，不是根因）。网关 `/status`、`/v1/status`、`/v1/credits`
+实测均 200，cn 账号 `credits` 正常。
+
+已用 `workbuddyAccounts: '[]'` 临时恢复运行；代码层 0.9.1-dev 已不再读取该字段。
+完整证据、即时处置与合并修复/回归清单见
+[WorkBuddy 账号筛选回归记录](incident-20261030-workbuddy-account-filter.md)。
 
 ---
 
@@ -179,7 +190,8 @@ WorkBuddy 反代换主机后：`/status` 正常，**`/panel/api/packages` 返回
    若用户要「排除冷却」或「可用/总数分开显示」，需要改。
 2. **积分包明细与 `/status` 合计有差额**：实测 5779 vs 5782（差 3 分），
    属上游自身两套统计口径。当前**合计以 `/status` 为准**，明细只作展示。
-3. **账号选择存于配置字符串**（`workbuddyAccounts`），跨设备不同步。
+3. **账号选择已取消（0.9.1 起不生效）**：`workbuddyAccounts` 仅保留旧值兼容，不再参与取数与设置页；
+   0.9.0 旧逻辑的回归见 §3.10。
 4. **`credits_earliest_remaining`（分段到期）与 `model_locks` 未进 UI**。
 5. 版本号仍为 0.9.0，`package.json` 未改。
 

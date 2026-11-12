@@ -10,6 +10,7 @@
  * 用法见 tools/test-collapsed-pill.mjs 与 tools/test-footer-row.mjs。
  */
 import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 export function createRuntime(options) {
   // [0.8.2] waapi:true 时给每个元素挂 animate 记录器（默认关闭——
@@ -38,6 +39,14 @@ export function createRuntime(options) {
   }
 
   const React = {
+    /**
+     * [0.10.0 夹具补全] `client.js` 的 `MimoAuthMount` 用 `React.Fragment` 包两个子面板。
+     * 之前 mock 里没有 Fragment ⇒ `h(undefined, …)` 会让整棵子树在断言里「消失」——
+     * 那是夹具缺口，不是产品缺陷（真实 React 里 Fragment 就是直接渲染 children）。
+     */
+    Fragment: function Fragment(props) {
+      return props === null || props === undefined ? null : props.children
+    },
     createElement(type, props) {
       // 与 React 一致：children 保留 null/false 占位（渲染时忽略），不打平数组实参。
       const out = Object.assign({}, props)
@@ -121,7 +130,8 @@ export function createRuntime(options) {
     const queued = pending
     pending = []
     for (const fn of queued) fn()
-    wireDomChain(tree, tree.parentElement)
+    // 组件可能合法返回 null（例如全局禁用时的胶囊）：此时没有可挂的父链，不能先读 parentElement。
+    wireDomChain(tree, tree === null || tree === undefined ? undefined : tree.parentElement)
     return tree
   }
 
@@ -193,7 +203,12 @@ export function fakeNode(computed, parent) {
 /** 安装假的 window / getComputedStyle / fetch / 定时器，并加载真实的 client.js。 */
 export function loadClient(runtime, options) {
   const opts = options || {}
-  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  // [2026-11-10] 默认加载工作区 client.js；`DSH_CLIENT_UNDER_TEST=<path>` 可让同一批
+  // 离线浏览器半测试跑在**已冻结的 stage 候选**上（部署前先证明"要装的那份字节"是绿的）。
+  const sourceTarget = process.env.DSH_CLIENT_UNDER_TEST
+    ? resolve(process.env.DSH_CLIENT_UNDER_TEST)
+    : new URL('../client.js', import.meta.url)
+  const source = readFileSync(sourceTarget, 'utf8')
   let exportedModule = null
 
   // [local patch 0.8.0] 极简事件目标：0.8.0 起 client.js 会在 window/document 上
@@ -274,6 +289,16 @@ export function loadClient(runtime, options) {
       }
     }
     /**
+     * [2026-11-11 Codex 双来源] 来源的只读 metadata（`GET /api/plan-usage/codex-sources`）。
+     * 默认夹具：connect 可用 / subscription 未启用（= 机器上装了 Connect 而没装
+     * Subscription 的常见状态）。测试用 `opts.codexSources` 注入别的组合，
+     * `opts.codexSourcesError === true` 模拟「取不到状态」。
+     */
+    if (String(url).includes('codex-sources')) {
+      if (opts.codexSourcesError === true) throw new Error('codex-sources unreachable')
+      return { json: async () => (opts.codexSources !== undefined ? opts.codexSources : DEFAULT_CODEX_SOURCES) }
+    }
+    /**
      * [2026-10-23] 额度窗口能力（设置页按渠道/窗口配阈值时读取的**只读 metadata**）。
      *
      * 默认返回空 `channels`：没有样本就是"未知"，设置页只显示已保存的窗口配置。
@@ -322,6 +347,22 @@ export function loadClient(runtime, options) {
       delete globalThis.fetch
     },
   }
+}
+
+/**
+ * [2026-11-11 Codex 双来源] `GET /api/plan-usage/codex-sources` 的默认夹具：
+ * Connect 可用、Subscription 未启用（= 机器上有 Connect 适配、没装 Subscription 的常见状态）。
+ * 这是一个**纯 metadata** 响应：不含额度、不含凭据，也不代表任何真实探测结果。
+ */
+export const DEFAULT_CODEX_SOURCES = {
+  ok: true,
+  data: {
+    sources: [
+      { id: 'connect', label: 'Codex Connect', enabled: true, compatible: true },
+      { id: 'subscription', label: 'Codex Subscription', enabled: false, compatible: true },
+    ],
+    selected: 'connect',
+  },
 }
 
 /** 真机截图里的同一组数据：DeepSeek ¥7.38 / Codex 33% 72%。 */

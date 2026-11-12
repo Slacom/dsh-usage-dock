@@ -16,9 +16,6 @@
  * 用法：node tools/test-workbuddy-gateway.mjs
  */
 import {
-  creditsFromGatewayStatus,
-  creditPackagesOf,
-  parseAccountSelection,
   isLoopbackHost,
   fetchFromGateway,
 } from '../plans/workbuddy.js'
@@ -107,61 +104,6 @@ const CLIENT_CREDITS = {
       tokens: {},
     },
   ],
-}
-
-// ===========================================================================
-// G1 — 实测结构上的积分口径
-// ===========================================================================
-{
-  const r = creditsFromGatewayStatus(REAL_STATUS, 'cn')
-  check('G1a 单账号：取 accounts[].credits 作为剩余', r.ok === true && r.total === 5799, r)
-  check('G1b 不把 credits_total（累计额度）当余额', r.ok === true && r.total !== 6600, r && r.total)
-  check('G1c 只产出一条账号明细', r.ok === true && r.accounts.length === 1)
-  check('G1d 记录最早到期时间与其余额',
-    r.accounts[0].earliestExpiry === '2026-11-17T18:55:03+08:00'
-    && r.accounts[0].earliestRemaining === 299, r.accounts[0])
-  check('G1e 不在结果里保留 uid/nickname 等身份字段',
-    r.accounts[0].uid === undefined && r.accounts[0].nickname === undefined, Object.keys(r.accounts[0]))
-}
-
-// ===========================================================================
-// G2 — 多账号池 + 域过滤 + 停用账号
-// ===========================================================================
-{
-  const multi = {
-    accounts: [
-      { credits: 100, credits_total: 200, realm: 'cn', disabled: false },
-      { credits: 50.5, credits_total: 100, realm: 'cn', cooling: true, disabled: false },
-      { credits: 999, credits_total: 1000, realm: 'cn', disabled: true },
-      { credits: 777, credits_total: 800, realm: 'global', disabled: false },
-    ],
-  }
-  const r = creditsFromGatewayStatus(multi, 'cn')
-  check('G2a 多国内账号求和（排除停用、计入冷却）', r.ok === true && r.total === 150.5, r && r.total)
-  check('G2b 国际池不混进国内积分', r.ok === true && r.accounts.length === 3, r && r.accounts.length)
-  check('G2c 冷却账号仍计入剩余（积分还在）',
-    r.accounts.some((a) => a.cooling === true))
-
-  const onlyGlobal = { accounts: [{ credits: 5, realm: 'global', disabled: false }] }
-  const g = creditsFromGatewayStatus(onlyGlobal, 'cn')
-  check('G2d 只有国际账号时视为无可用国内账号', g.ok === false && g.reason === 'no-account', g)
-}
-
-// ===========================================================================
-// G3 — 缺值与真实 0 的区别
-// ===========================================================================
-{
-  const zero = { accounts: [{ credits: 0, credits_total: 100, realm: 'cn', disabled: false }] }
-  const z = creditsFromGatewayStatus(zero, 'cn')
-  check('G3a 真实 0 是有效值（不是"缺值"）', z.ok === true && z.total === 0, z)
-
-  const missing = { accounts: [{ credits_total: 100, realm: 'cn', disabled: false }] }
-  const m = creditsFromGatewayStatus(missing, 'cn')
-  check('G3b 缺 credits 字段的账号被跳过（不猜成 0）', m.ok === false && m.reason === 'no-account', m)
-
-  const badShape = { foo: 1 }
-  check('G3c 无 accounts 数组 → 结构不可解析', creditsFromGatewayStatus(badShape, 'cn').ok === false)
-  check('G3d null 响应 → 结构不可解析', creditsFromGatewayStatus(null, 'cn').ok === false)
 }
 
 // ===========================================================================
@@ -314,69 +256,9 @@ async function runCase(opts) {
 }
 
 // ===========================================================================
-// G9 — [用户需求] 账号选择：只合计选中的账号
-// ===========================================================================
-{
-  const pool = {
-    accounts: [
-      { uid: 'U-A', credits: 100, credits_total: 200, realm: 'cn', disabled: false },
-      { uid: 'U-B', credits: 50, credits_total: 100, realm: 'cn', disabled: false },
-      { uid: 'U-C', credits: 7, credits_total: 10, realm: 'cn', disabled: false },
-    ],
-  }
-  check('G9a 不选账号 = 全部合计', creditsFromGatewayStatus(pool, 'cn', []).total === 157,
-    creditsFromGatewayStatus(pool, 'cn', []).total)
-  check('G9b 只选 A = 只算 A', creditsFromGatewayStatus(pool, 'cn', ['U-A']).total === 100,
-    creditsFromGatewayStatus(pool, 'cn', ['U-A']).total)
-  check('G9c 选 A+B = 合两者', creditsFromGatewayStatus(pool, 'cn', ['U-A', 'U-B']).total === 150,
-    creditsFromGatewayStatus(pool, 'cn', ['U-A', 'U-B']).total)
-  check('G9d 选中项与账号明细条数一致', creditsFromGatewayStatus(pool, 'cn', ['U-A', 'U-C']).accounts.length === 2)
-  check('G9e 选了不存在的账号 → 没有可用账号（不静默回退成全量）',
-    creditsFromGatewayStatus(pool, 'cn', ['U-Z']).ok === false,
-    creditsFromGatewayStatus(pool, 'cn', ['U-Z']))
-
-  check('G9f 空字符串解析为「全部」', parseAccountSelection('').length === 0)
-  check('G9g 非法 JSON 解析为「全部」（不崩）', parseAccountSelection('{oops').length === 0)
-  check('G9h 去重并忽略非字符串', parseAccountSelection('["A","A",1,null,"B"]').join(',') === 'A,B',
-    parseAccountSelection('["A","A",1,null,"B"]'))
-}
-
-// ===========================================================================
 // G10 — [用户需求] 详情显示具体积分包与到期
 // ===========================================================================
 {
-  const packages = {
-    accounts: [{
-      uid: 'U-A', nickname: 'x', realm: 'cn', remain: 300, size: 500,
-      packages: [
-        { name: '包甲', size: 100, remain: 0, expires_at: 1795000000000 },   // 已用完 → 不列
-        { name: '包乙', size: 100, remain: 40, expires_at: 1797000000000 },
-        { name: '包丙', size: 200, remain: 260, expires_at: 1796000000000 },
-        { name: '无到期包', size: 50, remain: 10, expires_at: null },
-      ],
-    }],
-  }
-  const rows = creditPackagesOf(packages, 'cn', [])
-  check('G10a 已用完的包不列出', rows.length === 3 && rows.every((r) => r.remain > 0), rows)
-  check('G10b 先到期的排前面', rows[0].packageName === '包丙' && rows[1].packageName === '包乙',
-    rows.map((r) => r.packageName))
-  check('G10c 带上到期时间（epoch ms）', rows[0].endTimeMs === 1796000000000, rows[0])
-  check('G10d 缺到期时间的排最后且为 null',
-    rows[2].packageName === '无到期包' && rows[2].endTimeMs === null, rows[2])
-  check('G10e 不输出 uid/nickname/package_code 等身份字段',
-    rows[0].uid === undefined && rows[0].nickname === undefined && rows[0].packageCode === undefined,
-    Object.keys(rows[0]))
-  check('G10f 无 packages 结构时返回空（退回账号汇总）',
-    creditPackagesOf({ accounts: [{ uid: 'U', realm: 'cn', remain: 1 }] }, 'cn', []).length === 0)
-  check('G10g 选择账号后明细同步过滤',
-    creditPackagesOf({
-      accounts: [
-        { uid: 'A', realm: 'cn', packages: [{ name: 'a', remain: 1, size: 1, expires_at: 1 }] },
-        { uid: 'B', realm: 'cn', packages: [{ name: 'b', remain: 1, size: 1, expires_at: 1 }] },
-      ],
-    }, 'cn', ['B']).map((r) => r.packageName).join(',') === 'b')
-}
-// ===========================================================================
 // G11 — [真机回归] 成功路径不得被自己的超时逻辑打断
 // ===========================================================================
 {
@@ -482,3 +364,4 @@ async function runCase(opts) {
 }
 console.log('\n' + (passCount + failCount) + ' 项：' + passCount + ' 通过, ' + failCount + ' 失败')
 process.exit(failCount === 0 ? 0 : 1)
+}

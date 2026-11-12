@@ -51,12 +51,23 @@ import {
   providerSourceFingerprint,
   credentialFingerprint,
 } from './plans/custom-balance.js'
+// [2026-11-11 Codex 双来源] 来源归一 / 启用探测 / 运行期身份 / 只读状态路由：
+// 全部来自 `plans/codex-sources.js`（纯观察，零 I/O），与取数层共用同一套规则。
+import {
+  codexSourceOf,
+  codexRuntimeIdentityOf,
+  getCodexSourceState,
+  normalizeCodexSource,
+  CODEX_SOURCE_CONNECT,
+  CODEX_SOURCE_SUBSCRIPTION,
+} from './plans/codex-sources.js'
 import { registerUsageTool } from './plans/usage-tool-register.js'
 // [A01] `projectUsage` 是发布观察时把 wire 投影成白名单渠道的唯一入口。
 // 漏了这个导入会让**每一次成功采集**都抛 ReferenceError，被外层 catch 吞掉，
 // 于是提示词永远只剩「暂无额度数据」。`node --check` 抓不到未绑定的运行时名字。
-import { projectUsage } from './plans/usage-tool.js'
+import { projectUsage, mimoWireWithDisplay } from './plans/usage-tool.js'
 import { quotaPolicySchemaFields } from './plans/usage-policy.js'
+import { registerMimoAuth } from './plans/mimo-auth/host.js'
 import { createQuotaObserver, promoteOwnTicket } from './plans/quota-observer.js'
 import { createRouteObserver } from './plans/quota-route.js'
 import { buildQuotaView } from './plans/quota-view.js'
@@ -70,9 +81,17 @@ export const name = 'plan-usage'
  *
  * 这些渠道的实际身份（登录态、外部 token 所属账户）Host 侧**无法可靠读取**，
  * 因此工具缓存**不收录**它们：宁可每次重取，也不拿旧账户余额回答新账户的问题。
- * 其余渠道（OpenCode / MiMo）的凭据就在配置里，可以按哈希隔离缓存。
+ * 其余渠道（OpenCode / 自定义条目）的凭据就在配置里，可以按哈希隔离缓存。
+ *
+ * [2026-11-12 MiMo lane 对齐] **MiMo 也归入这里**：模型的 `usage_status` 现在优先读
+ * `mimo-auth` 的显示快照（与胶囊同一条 lane），而那份数值来自**控制台会话 / 记住登录**
+ * （`plans/mimo-auth/session-display.js` 的 `verified` 状态），不是配置里的 Cookie 原文。
+ * 会话切换、记住登录失效、控制台侧换账号，都可能**不改配置**却换掉余额 —— 若仍按配置哈希
+ * 缓存 30 秒，工具会把上一账号/上一会话的余额当成当前值回答。所以：不进缓存、不共享在途
+ * 结果、也不冻结凭据（身份一致性改由 `identityOfChannel()` 的 `cookie=` 指纹 + 票据校验兜住，
+ * 与 deepseek 等账号型渠道同一套机制）。
  */
-const ACCOUNT_BOUND_PLAN_IDS = new Set(['deepseek', 'codex', 'workbuddy', 'workbuddy-ai'])
+const ACCOUNT_BOUND_PLAN_IDS = new Set(['deepseek', 'codex', 'workbuddy', 'workbuddy-ai', 'mimo'])
 
 /** [D6-G] systemPrompt 段落的排序位：排在工具说明之后、SDK 之前。 */
 const POLICY_CONTEXT_ORDER = 300
@@ -274,11 +293,79 @@ function orderPlansByPlanOrder(list, planOrder) {
   })
   return decorated.map((d) => d.row)
 }
+
+/**
+ * [终审 N2 整改] 兜底错误 wire 补上 codex 来源身份。
+ *
+ * `execError(plan)`（取数被异常打断）与作废行一样是「没有数值的 codex 行」：不带
+ * `codexSource` 时客户端按默认 `connect` 处理，订阅态下这行会被渲染层过滤掉 ——
+ * 用户看不到「本来源失败」，只看到整行消失。只对 codex 生效，其它渠道原样返回。
+ */
+function withConfiguredCodexSource(wire, cfgNow) {
+  if (wire === null || typeof wire !== 'object' || wire.id !== 'codex') return wire
+  if (wire.codexSource !== undefined) return wire
+  return Object.assign(wire, { codexSource: codexSourceOf(cfgNow) })
+}
+
 export function apply(ctx, config) {
   // DSH 托管的配置；config-reload 时会以新对象重新进入 apply 之前的读取路径。
   // [local patch 0.8.1] 路由内改用 liveConfig()（每次请求重读），快照只作兜底。
   const cfg = config != null && typeof config === 'object' ? config : {}
   const liveConfig = createLiveConfig(ctx, cfg)
+  // [MiMo G1] Optional owner-only auth capability; main plugin never hard-injects connection.
+  let mimoAuthStatus = { supported: false, code: 'E_MIMO_AUTH_UNAVAILABLE' }
+  /**
+   * [remembered 2026-11-07] 「记住登录」managed 模式的**启用闸门**：
+   * `global enabled && mimoEnabled`（默认 `!== false` 视为开）。
+   * 探测时机：Host 在配置事件（boot / config-reload）时**立即**调用本回调重新探测；
+   * 另有 ≤1s 的本地 probe 兜底（本地读，不走上游网络、不解密）。检测到 false 即
+   * 撤销在途操作（不是"0ms 可观察"——这里是"配置事件即时 + ≤1s 兜底"，如实表述）。
+   * 必须用 **freshStrict**（无 2 秒成功缓存）：`liveConfig()` 在 ≤1s 窗口内可能仍返回
+   * 旧的 `true`，那会违背 fail-closed。
+   * 代码级开关 `enableRememberedAccount` 在本仓库保持默认 false（现有本地保护），
+   * 由安装 overlay 在**本调用的 options 里**显式加 `enableRememberedAccount: true`。
+   */
+  const mimoAuthHost = registerMimoAuth(ctx, (status) => { mimoAuthStatus = status }, {
+    isEnabled: async () => {
+      try {
+        const live = (await liveConfig.freshStrict()) ?? cfg
+        if (cfgValue(live, 'enabled') === false) return false
+        if (cfgValue(live, 'mimoEnabled') === false) return false
+        return true
+      } catch { return false }
+    },
+  })
+
+  /**
+   * [2026-11-12 MiMo lane 对齐 · 第二层修正] **零 IO** 的显示快照 peek（与胶囊同一条 lane）。
+   *
+   * 三层来源，缺一不可：
+   *   ① `registerMimoAuth()` 的返回值**只有** `{ bootEpoch, dispose, getHost }` —— 真正的 host 是
+   *      `ctx.inject(['connection','webServer'], …)` 里**异步**创建、只存在于闭包 `child` 的，
+   *      必须经 `getHost()` 每次现读（inject 未完成时为 `null`，之后会自动接上）；
+   *   ② host 上优先用 `routeDisplay`：它才是**路由实际使用**的那份（managed「记住登录」模式 =
+   *      `remembered.displaySnapshot()`）；`display` 是旧 legacy manager，managed 下是 `absent`；
+   *   ③ 两者都缺 ⇒ `null`（=「不适用」，回落 provider）。
+   *
+   * 任何异常/缺失都退化成 `null`；`routeDisplay.peek()` 抛错**不**偷偷回退 legacy（保持批次 D 语义）。
+   * 只读消费，绝不用于变更动作（managed 下 start/read/grant/… 固定拒绝）。
+   */
+  const mimoDisplayPeek = () => {
+    try {
+      const h = mimoAuthHost !== null && mimoAuthHost !== undefined && typeof mimoAuthHost.getHost === 'function'
+        ? mimoAuthHost.getHost()
+        : null
+      if (h === null || h === undefined) return null
+      if (h.routeDisplay !== null && h.routeDisplay !== undefined && typeof h.routeDisplay.peek === 'function') {
+        return h.routeDisplay.peek()
+      }
+      if (h.display !== null && h.display !== undefined && typeof h.display.peek === 'function') return h.display.peek()
+      return null
+    } catch (err) {
+      return null
+    }
+  }
+  const mimoDisplaySource = { peek: mimoDisplayPeek }
 
   // [额度自动感知] 观察容器与路由观察器提升到 apply 作用域：
   // **GUI 路由与模型工具共用同一份状态与失败计数**（交接文档 §3.1）。
@@ -518,6 +605,23 @@ export function apply(ctx, config) {
           parts.push('src=' + src)
           parts.push('scope=' + 'cn')
         }
+        /**
+         * [2026-11-11 Codex 双来源] 选中来源 + **实际可用服务**的实例/修订摘要。
+         *
+         * 为什么必须进身份：codex 的两条来源读的是**完全不同的**第三方通道
+         * （旧 Connect 公开 SDK / 新的只读 service）。切来源、来源被停用（服务消失）、
+         * 服务被替换（重装/热重载）、订阅账号被切换（revision 前进）—— 这些都不改变
+         * 上面的 `on=` 开关，若不进身份，epoch 不会推进，旧来源的采样会继续驱动
+         * 胶囊与提示词（用户看到的「Connect 数值冒充 Subscription」）。
+         *
+         * 只拼**不可逆的本地摘要**（来源枚举 + `c<0|1|?>/s<实例序号@revision|0|?>`）：
+         * 不含账号 ID、不含记录路径、不含令牌；序号来自本进程的 WeakMap，
+         * 仅用于区分「还是不是同一个 service 对象」。
+         */
+        if (id === 'codex') {
+          parts.push('csrc=' + codexSourceOf(cfgNow))
+          parts.push('crt=' + codexRuntimeIdentityOf(ctx))
+        }
       } else {
         /**
          * 自定义条目：该条目自己的公开身份 + **该条目的** secret 与公开修订号。
@@ -733,6 +837,18 @@ export function apply(ctx, config) {
       message: '本次采集已作废，等待最新额度',
       effectiveStatus: meta !== undefined ? meta.status : 'pending',
       failCount: meta !== undefined ? meta.failCount : 0,
+    }
+    /**
+     * [终审 N2 整改] 作废行必须**保留来源身份**。
+     *
+     * 客户端渲染层会滤掉「wire 来源 ≠ 已保存来源」的行；这条行若不带 `codexSource`，
+     * 订阅态下它会被当成另一来源的结果而**整行消失**（用户看不到「本次采集已作废」）。
+     * 只从源 wire 上已有的 `codexSource` 取值，且必须落在来源闭集里 —— 不在别的渠道
+     * 上凭空造这个字段，也不写 `undefined`（那会污染闭集判断）。
+     */
+    const revokedRawSource = typeof wire.codexSource === 'string' ? wire.codexSource.trim().toLowerCase() : ''
+    if (revokedRawSource === CODEX_SOURCE_CONNECT || revokedRawSource === CODEX_SOURCE_SUBSCRIPTION) {
+      revoked.codexSource = normalizeCodexSource(revokedRawSource)
     }
     revokedResponses.add(revoked)
     return revoked
@@ -1086,7 +1202,7 @@ export function apply(ctx, config) {
         customOnly = customOnly.map(guiObservationWire)
         // [A04] 仅自定义分支同样要附统一状态（与主分支一致）。
         attachEffectiveStatus(customOnly)
-        json(res, 200, { ok: true, data: { plans: customOnly, cfg: proof } })
+        json(res, 200, { ok: true, data: { plans: customOnly, cfg: proof, mimoAuth: mimoAuthStatus } })
         return
       }
       // shell 服务只用于 Python/curl 兜底后端；原生 fetch 后端（0.6.2 起首选）
@@ -1108,9 +1224,16 @@ export function apply(ctx, config) {
         ownTicket(plan.id, ticket, opSeq)
         pendingTickets.set(plan.id, ticket)
         return Promise.resolve()
-          .then(() => plan.fetch(ctx, shell, cfgNow))
+          /**
+           * [0.10.0 N1] GUI 路由与 `usage_status` 用**同一套** MiMo 分流：
+           * 显示快照适用（routeDisplay/display 给得出值）时零请求、直接用快照；
+           * 不适用时回落 provider。复用同一个 helper，不复制分支、不加新请求。
+           */
+          .then(() => (plan.id === 'mimo'
+            ? mimoWireWithDisplay(mimoDisplaySource, () => plan.fetch(ctx, shell, cfgNow))
+            : plan.fetch(ctx, shell, cfgNow)))
           .then((wire) => ({ wire, ticket }))
-          .catch(() => ({ wire: execError(plan), ticket }))
+          .catch(() => ({ wire: withConfiguredCodexSource(execError(plan), cfgNow), ticket }))
       }))
       // [R3-04] 复用同一个 memo，绝不在这里再起一次 fetchCustomPlans。
       const [builtInPairs, custom] = await Promise.all([builtInTask, runCustomTask()])
@@ -1158,7 +1281,7 @@ export function apply(ctx, config) {
           if (segs !== null && segs.length > 0) plan.peakSegs = segs
         }
       }
-      json(res, 200, { ok: true, data: { plans, cfg: proof } })
+      json(res, 200, { ok: true, data: { plans, cfg: proof, mimoAuth: mimoAuthStatus } })
     },
   }), 'plan-usage: usage route')
 
@@ -1240,6 +1363,56 @@ export function apply(ctx, config) {
       }
     },
   }), 'plan-usage: workbuddy accounts route')
+
+
+  /**
+   * [2026-11-11 Codex 双来源] 只读的**来源状态**查询（设置页两行来源用）。
+   *
+   * 合同（闭集，客户端按此渲染，多一个字段都不给）：
+   *   `{ ok:true, data:{ sources:[{id:'connect'|'subscription', label, enabled, compatible}],
+   *                       selected:'connect'|'subscription' } }`
+   *
+   * 硬边界：
+   *   - **纯 metadata**：零额度读取、零 credential record 读取、零 import、零网络。
+   *     只读 `ctx.get(...)` 的公开服务对象与 loader 条目的公开元信息；
+   *   - 两行**始终**都在（未安装/未开启都是 `enabled:false`，界面统一显示「未启用」）；
+   *   - 「已安装且已激活，但没装只读接口补丁」= `enabled:true, compatible:false`
+   *     （界面显示「接口不兼容/需要适配」），**不**冒充「未启用」；
+   *   - 状态**无法证明**（`ctx.get` 抛错）⇒ `ok:false` 整体失败，**不**发布一份假的
+   *     `enabled:false`（那会把「不知道」说成「未启用」）；
+   *   - 不返回 runtime entries、不返回配置、不返回账号/路径/令牌；
+   *   - GET-only，只读，不落任何状态。
+   */
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/api/plan-usage/codex-sources',
+    handler: async (req, res) => {
+      if (req.method !== 'GET') {
+        json(res, 405, { ok: false, error: 'method', message: 'method not allowed' })
+        return
+      }
+      try {
+        /**
+         * 用**当前**配置算 `selected`（与 GUI 主路由一致地先解包 volatile）。
+         * 读不到配置时不猜来源：直接拒绝，避免把上一份配置的 selected 当当前值。
+         */
+        let cfgNow = null
+        try { cfgNow = unpackConfig(await liveConfig()) } catch (err) { cfgNow = null }
+        if (cfgNow === null || cfgNow === undefined) {
+          json(res, 200, { ok: false, error: 'status', message: '无法确认当前配置' })
+          return
+        }
+        const state = getCodexSourceState(ctx, { cfg: cfgNow })
+        if (state.unknown === true) {
+          json(res, 200, { ok: false, error: 'status', message: '无法确认 Codex 来源状态' })
+          return
+        }
+        json(res, 200, { ok: true, data: { sources: state.sources, selected: state.selected } })
+      } catch (err) {
+        json(res, 200, { ok: false, error: 'status', message: '无法读取 Codex 来源状态' })
+      }
+    },
+  }), 'plan-usage: codex sources route')
 
 
   /**
@@ -1854,10 +2027,18 @@ export function apply(ctx, config) {
             frozenCredential: frozenOf(plan.id),
           })
           tasks.push((async () => {
+            const fetchOnce = () => plan.fetch(ctx, shell, cfgNow, planOptions)
             const wire = await withinDeadline(
               Promise.resolve()
-                .then(() => plan.fetch(ctx, shell, cfgNow, planOptions))
-                .catch(() => execError(plan)),
+                /**
+                 * [2026-11-12 MiMo lane 对齐] MiMo 先看**显示快照**（与胶囊同一条 lane）：
+                 * 快照适用时连 provider 都不进（零 import、零构造、零请求）；不适用
+                 * （未选中 / 读不到）才走原来的 `plans/mimo.js` 路径，行为完全不变。
+                 */
+                .then(() => (plan.id === 'mimo'
+                  ? mimoWireWithDisplay(mimoDisplaySource, fetchOnce)
+                  : fetchOnce()))
+                .catch(() => withConfiguredCodexSource(execError(plan), cfgNow)),
               deadline,
             )
             emit(wire, planTicket)

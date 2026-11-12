@@ -42,6 +42,9 @@
 
 import z from '@deepseek-ai/schemastery'
 import { createHash, randomUUID } from 'node:crypto'
+// [2026-11-11 Codex 双来源] 归一规则只有一份（`plans/codex-sources.js`），
+// 与 codex 取数层、Host 观察身份、状态路由共用。
+import { codexSourceOf, CODEX_SOURCE_SUBSCRIPTION } from './codex-sources.js'
 
 // ===========================================================================
 // 冻结的上限（C0）。改这些值要同步改文档与测试。
@@ -1489,7 +1492,7 @@ export function unwrapVolatile(value) {
  * 这里一次性解包**所有**顶层字段（含嵌套数组里的元素），并且：
  *   - 只解包一层 volatile 包装，不深挖包装内部（schemastery 的包装是浅的）；
  *   - `customKeys` 这类 dict 解包后仍是普通对象，值本身是字符串，不做二次处理；
- *   - 未知字段原样保留（旧配置的 glm/kimi 键因此不会丢）。
+ *   - 未知字段原样保留（旧配置的 glm/kimi 键因此不会丢；对应模块文件已删除，仅保留 id）。
  */
 export function unpackConfig(config) {
   if (config === null || typeof config !== 'object' || Array.isArray(config)) return {}
@@ -1729,14 +1732,26 @@ function digest16(text) {
 /**
  * 配置摘要：Host 与客户端用**同一套规则**计算，因此可以直接比较。
  *
- * 输入可以是整份配置（含 `customBalances` / `customKeyRev`）或 `{ customBalances, customKeyRev }`
- * 形状的普通对象。顺序敏感（条目顺序影响显示顺序，改顺序确实是一次配置变化）。
+ * 输入可以是整份配置（含 `customBalances` / `customKeyRev` / `codexSource`）或
+ * `{ customBalances, customKeyRev }` 形状的普通对象。顺序敏感（条目顺序影响显示顺序，
+ * 改顺序确实是一次配置变化）。
+ *
+ * [2026-11-11 Codex 双来源] `codexSource` 必须进入摘要，否则切来源后旧来源的 wire
+ * 仍满足「配置证明一致」，客户端会把 Connect 的数值当成 Subscription 的显示。
+ * 合同（客户端 `configDigestOfClient` 必须逐字同构）：
+ *   - **仅**当规范化后的来源是 `'subscription'` 时，在 `parts` 的**第一个位置**
+ *     追加 `'builtin:codex-source' + '\u0002' + 'subscription'`；
+ *   - `connect` / 缺失 / 未知值**不追加**任何组件 ⇒ 缺省 connect 的摘要与旧版**逐字一致**，
+ *     既有 custom 摘要 fixture 不受影响。
  */
 export function configDigestOf(cfg) {
   const list = unwrapVolatile(cfg != null ? cfg.customBalances : undefined)
   const revs = unwrapVolatile(cfg != null ? cfg.customKeyRev : undefined)
   const rows = Array.isArray(list) ? list : []
   const parts = []
+  if (codexSourceOf(cfg) === CODEX_SOURCE_SUBSCRIPTION) {
+    parts.push('builtin:codex-source' + '\u0002' + CODEX_SOURCE_SUBSCRIPTION)
+  }
   const seen = new Set()
   for (const row of rows) {
     if (row === null || typeof row !== 'object') continue

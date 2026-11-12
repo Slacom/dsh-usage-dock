@@ -11,7 +11,7 @@
  * 用法：node tools/test-line-endings.mjs
  */
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 
 /** 需要守护的文件（仓库里所有会被工具改写的源码/文档）。 */
@@ -121,6 +121,9 @@ function record(name, ok, note) {
 
 let failures = 0
 for (const file of FILES) {
+  // [0.10.0] 0.10.0 清理里删掉了退场模块与只测旧路的套件：git 清单仍会列出它们，
+  // 干活区里已不存在时应记为 SKIP（而不是 ENOENT 崩掉整个行尾守卫）。
+  if (!existsSync(file)) { console.log('[SKIP] ' + file + ' （文件已删除）'); continue }
   let head
   try {
     head = headBytes(file)

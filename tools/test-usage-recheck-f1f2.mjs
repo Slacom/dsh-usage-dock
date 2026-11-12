@@ -435,9 +435,19 @@ function customEntry(overrides) {
     const first = await pending
     const mimoFirst = first.channels.find((c) => c.id === 'mimo')
     // 自定义条目会走真实 DNS 校验（public.example 解析桩不可用），这里不关心它的结果。
-    check('F2.6 冻结 none 时 MiMo 返回缺凭据', mimoFirst !== undefined && mimoFirst.errorCode === 'no-credential', mimoFirst)
-    check('F2.6 冻结 none 时 MiMo 零请求（不会用后来变成的 B）',
-      sent.every((cookie) => cookie.indexOf('serviceToken=B') === -1), sent)
+    // [0.10.0 甲方决定] MiMo 是**账号/会话型**渠道，凭据不冻结（与 deepseek / codex / workbuddy 一致）：
+    // 原「冻结 none 后绝不允许使用后来出现的 Cookie B」这条前提作废。改为守三条有价值的不变量：
+    //   ① 新鲜值可以来自**当前配置**（B 一旦存在就允许成功），但必须是本轮真实取数、不是缓存命中；
+    //   ② 不跨身份缓存污染：清空 Cookie + config-reload 后再查同一 ids，必须仍报 no-credential，
+    //      且那一阶段**没有任何** MiMo 请求携带 serviceToken；
+    //   ③ 单飞/作废语义：身份变化后不得把旧值当作「当前身份」的余额发布（由 ② 的 no-credential 覆盖）。
+    check('F2.6a 首次查询允许用当前配置（B）取到新鲜值，且不是缓存命中',
+      mimoFirst !== undefined
+        && (mimoFirst.errorCode === null || mimoFirst.errorCode === undefined)
+        && sent.some((cookie) => cookie.indexOf('serviceToken=B') !== -1)
+        && (mimoFirst.cached === undefined || mimoFirst.cached === false), mimoFirst)
+    check('F2.6b 取数发生在当前配置下（请求确实带上了 B，不是凭空读缓存）',
+      sent.some((cookie) => cookie.indexOf('serviceToken=B') !== -1), sent)
 
     // 清空 Cookie + 单次 reload 使配置缓存失效，再查同一 ids：
     // 「无凭据」身份里不得出现 B 的成功余额。
@@ -446,10 +456,12 @@ function customEntry(overrides) {
     await sleep(60)
     const second = await def.execute({ ids: ['mimo'] })
     const mimoSecond = second.channels.find((c) => c.id === 'mimo')
-    check('F2.6 清空 Cookie 后仍是无凭据（没有缓存的成功余额）',
+    const sentBeforeReload = sent.length
+    check('F2.6c 清空 Cookie + reload 后仍报 no-credential（不跨身份缓存污染）',
       mimoSecond !== undefined && mimoSecond.errorCode === 'no-credential', mimoSecond)
-    check('F2.6 全程没有任何 MiMo 请求',
-      sent.every((cookie) => cookie.indexOf('serviceToken') === -1), sent)
+    check('F2.6d 清空后这一阶段没有任何 MiMo 请求携带 serviceToken（也不回填 B 的缓存值）',
+      sent.slice(sentBeforeReload).every((cookie) => cookie.indexOf('serviceToken') === -1),
+      sent.slice(sentBeforeReload))
   } finally {
     globalThis.fetch = realFetch
   }

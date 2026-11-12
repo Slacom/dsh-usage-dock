@@ -1,5 +1,10 @@
 // Real client renderer + synthetic wire only. No gateway/profile/credential access.
 import {createRuntime,loadClient,textOf} from './mock-react.mjs'
+// [A3 修复] 胶囊的 30s 轮询是真实 setTimeout 链：每个 case 虽在 finally 里 restore()，
+// 已排上的长定时器仍让进程不退出（实测 120s 仍 Running）。这里把 ≥1s 的定时器吞掉
+// （返回假 id、不保留句柄），0ms 调度照常；断言全部依赖 settle，不依赖长定时器。
+const realSetTimeout=globalThis.setTimeout
+globalThis.setTimeout=(fn,ms,...rest)=>(typeof ms==='number'&&ms>=1000?0:realSetTimeout(fn,ms,...rest))
 let passed=0,failed=0
 function check(name,ok){if(ok){passed++;console.log('[PASS] '+name)}else{failed++;console.log('[FAIL] '+name)}}
 async function detail(account){

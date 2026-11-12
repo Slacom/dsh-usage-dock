@@ -196,10 +196,13 @@ const SettingsPage = client.SettingsPage
   check('C2a 自定义区存在且固定在页面内', customIndex !== -1)
   check('C2b 自定义区在统一保存/放弃按钮之前', customIndex !== -1 && footer !== undefined && footerIndex > customIndex,
     { customIndex, footerIndex })
-  // 自定义区必须在「最后一个内置渠道卡片」之后：用 MiMo 的 Cookie 输入框位置作参照。
-  const builtInIndex = elementsOf(tree).findIndex((el) => el.props && el.props.placeholder
-    && el.props.placeholder.indexOf('小米开放平台控制台 Cookie') !== -1)
-  check('C2c 自定义区在内置渠道之后', builtInIndex !== -1 && customIndex > builtInIndex,
+  // [0.10.0 断言更新] 原来拿 MiMo 的「手工 Cookie 输入框」当「最后一个内置卡片」的参照。
+  // MiMo 改成登录/状态面板后该输入框已不存在（见 test-mimo-auth-client 的 C1b 说明），
+  // 所以改用卡片级标记 data-plan-card（每个内置卡片都带，值为渠道 id）取**最后一个**内置卡片。
+  const builtInIndex = elementsOf(tree).reduce((last, el, idx) => (
+    el.props && typeof el.props['data-plan-card'] === 'string' ? idx : last
+  ), -1)
+  check('C2c 自定义区在最后一个内置渠道卡片之后', builtInIndex !== -1 && customIndex > builtInIndex,
     { builtInIndex, customIndex })
   const text = textAll(tree)
   check('C2d 文案说明只做普通 HTTPS 余额接口', /普通 HTTPS 余额接口/.test(text))

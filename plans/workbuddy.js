@@ -52,8 +52,6 @@ import { planBase, execError } from './util.js'
 const STATUS_TIMEOUT_MS = 35000
 
 const CN_PATH = '/plugins/dsh-workbuddy-connect/status'
-const AI_PATH = '/plugins/dsh-workbuddy-connect/ai/status'
-
 /** 国内版 WorkBuddy 渠道定义。 */
 const cnPlan = {
   id: 'workbuddy',
@@ -77,62 +75,7 @@ const cnPlan = {
 }
 
 /** 国际版 WorkBuddy AI 渠道定义（0.8.3 拆出，独立开关/排序）。 */
-const aiPlan = {
-  id: 'workbuddy-ai',
-  name: 'WorkBuddy AI',
-  fields: { enabled: 'workbuddyAiEnabled' },
-  schema: {
-    workbuddyAiEnabled: z.boolean().default(true),
-  },
-  source: {
-    provider: 'dsh-workbuddy-connect',
-    endpoint: AI_PATH,
-  },
-}
-
 /** 读取一个 status 端点；404 → { notFound }，网络失败 → { err }。 */
-async function fetchStatus(base, path) {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), STATUS_TIMEOUT_MS)
-  try {
-    const res = await fetch(base + path, {
-      // [0.8.2] 显式声明 accept-encoding: identity。
-      //
-      // 背景（宿主 bug 绕过，非本插件问题）：DSHA 的内置插件 dsh-web-mobile
-      // @3.0.5 用 compress.js 改写 ServerResponse.prototype 做响应压缩，会把
-      // 「可延迟」的响应头攒起来晚一拍提交；而 dsh-host-webserver 的 gzip
-      // 中间件（threshold=1024）在 res.end 代理里看到 headersSent 仍为 false，
-      // 会自己再调一次 res.writeHead(statusCode)。该重入落到 compress.js 的
-      // patchedWriteHead 时，它先 flush 把攒着的头提交掉（headersSent 变 true），
-      // 紧接着下面的 guard 又因这个 true 去调原生 writeHead()，抛
-      // ERR_HTTP_HEADERS_SENT；webServer 兜底 catch 视 headersSent 为真而
-      // res.destroy()，客户端只看到 fetch failed。
-      //
-      // 触发条件是「响应体 < 1 KiB 且带显式 Content-Length」：ai/status 的 52 B
-      // signed-out、update 的 72 B 都中招，而 cn/status（3.5 KB）正常。声明
-      // identity 后无编码可协商，gzip 中间件不进入该重入分支，问题消失。
-      //
-      // 注：/root/dsha-web-mobile 是受完整性保护的内置插件目录，直接改它的
-      // compress.js 会在 App 重启时被还原（实测 07:59:55 被重写回官方版本），
-      // 因此只能在消费侧绕过。
-      headers: { accept: 'application/json', 'accept-encoding': 'identity' },
-      signal: controller.signal,
-    })
-    // 404 = workbuddy-connect 未安装（或旧版本无该端点）。
-    if (res.status === 404) return { notFound: true }
-    // 403 = 端点只信任回环请求；Host 进程内 fetch 天然是回环，异常部署才会出现。
-    if (res.status === 403) {
-      return { err: new Error('status route rejected this request (not loopback?)') }
-    }
-    const body = await res.json()
-    return { body }
-  } catch (err) {
-    return { err }
-  } finally {
-    clearTimeout(timer)
-  }
-}
-
 /**
  * [0.8.5] 把 workbuddy-connect 的 `creditsError` 文本分类，决定**能不能保留旧值**。
  *
@@ -244,80 +187,6 @@ function creditsOf(body) {
  * @param plan    - 渠道定义（cnPlan / aiPlan）。
  * @param path    - 该渠道的 status 端点路径。
  */
-async function fetchPlanWithBase(base, plan, path) {
-  const r = await fetchStatus(base, path)
-  // 未安装：端点 404（workbuddy-connect 没装或版本过旧）。
-  if (r.notFound === true) {
-    return Object.assign(planBase(plan), {
-      error: 'not-installed',
-      message: '未安装 dsh-workbuddy-connect（WorkBuddy 积分来自该插件）',
-    })
-  }
-  // 传输层失败：fetch 本身抛异常（连接被 reset / 超时 / 拒绝）。
-  if (r.err !== undefined) {
-    const msg = r.err && r.err.message ? r.err.message : String(r.err)
-    return Object.assign(planBase(plan), {
-      error: 'exec',
-      message: plan.name + ' 状态读取失败（' + msg + '）',
-    })
-  }
-  const body = r.body
-  if (body === null || typeof body !== 'object') {
-    return Object.assign(planBase(plan), {
-      error: 'exec',
-      message: plan.name + ' 状态读取失败（响应结构无效）',
-    })
-  }
-  // 未登录：该版本不显示（不是错误）。
-  if (body.status === 'signed-out') {
-    return Object.assign(planBase(plan), {
-      error: 'signed-out',
-      message: '未登录 ' + plan.name + '：请在 dsh-workbuddy-connect 中登录该版本',
-    })
-  }
-  // [0.8.5] creditsError 按类别分流：只有登录失效/硬拒绝才立即报错，
-  // 限流、5xx、超时、结构变化一律记为暂时失败（exec），客户端会保留旧值并灰化，
-  // 连续 FAIL_THRESHOLD 轮才显示「获取失败」——用户要求尽量少看到失败。
-  if (body.creditsError !== undefined) {
-    const detail = typeof body.creditsError === 'string' ? body.creditsError : '积分读取失败'
-    const verdict = classifyCreditsError(detail)
-    return Object.assign(planBase(plan), {
-      error: verdict.error,
-      message: plan.name + '：' + detail,
-      // 给客户端与调试用：明确标记这是一次「可重试」的失败。
-      transient: verdict.transient || undefined,
-      // [A08] 把**结构化语义**带出去（不进入模型文本）：
-      // 观察器据此区分「确定失效」与「暂时失败」，不必再从 error 名猜。
-      authKind: verdict.authKind,
-    })
-  }
-  const credits = creditsOf(body)
-  if (credits === null) {
-    // 结构解析失败往往是上游改版/半截响应，同样按暂时失败处理（不立即报错）。
-    return Object.assign(planBase(plan), {
-      error: 'exec',
-      message: plan.name + '：积分响应结构无法解析',
-    })
-  }
-  // 单版本渠道：主行 = 该版本合计；明细只含该版本套餐。
-  const accounts = []
-  for (const account of credits.accounts) {
-    accounts.push(Object.assign({ variant: plan.name }, account))
-  }
-  return Object.assign(planBase(plan), {
-    creditsTotal: credits.unlimited ? null : credits.total,
-    creditsUnlimited: credits.unlimited === true,
-    creditsAccounts: accounts,
-    // variants 保留单条，客户端据此显示「版本名 + 数值」大号行。
-    variants: [{
-      label: plan.name,
-      total: credits.unlimited ? null : credits.total,
-      unlimited: credits.unlimited === true,
-    }],
-    isAvailable: true,
-  })
-}
-
 /** 统一 plan 接口：签名与其他渠道一致（ctx/shell/cfg），base 由 apply 闭包注入。 */
 let injectedBase = null
 
@@ -327,23 +196,6 @@ export function setWebBase(base) {
 }
 
 /** 生成某个渠道的 fetchPlan（共享注入的 base 与错误兜底逻辑）。 */
-function makeFetchPlan(plan, path) {
-  return async function fetchPlan() {
-    if (injectedBase === null) {
-      return Object.assign(planBase(plan), {
-        error: 'unavailable',
-        message: plan.name + ' 状态不可用（本插件的 web 服务未就绪，无法读取 workbuddy-connect 状态）',
-      })
-    }
-    try {
-      return await fetchPlanWithBase(injectedBase, plan, path)
-    } catch (err) {
-      const msg = err && err.message ? err.message : String(err)
-      return Object.assign(execError(plan), { message: plan.name + ' 积分请求异常：' + msg })
-    }
-  }
-}
-
 
 // ===========================================================================
 // [2026-10-21] 国内 WorkBuddy 改读 WorkBuddy2API 网关（内置渠道，非自定义）
@@ -406,65 +258,6 @@ export function isLoopbackHost(hostname) {
  * @param {string} realm 只统计该域（'cn'），空则全部
  * @returns {{ok:true, total:number, accounts:Array}|{ok:false, reason:string}}
  */
-export function parseAccountSelection(raw) {
-  if (typeof raw !== 'string' || raw.trim().length === 0) return []
-  let list
-  try { list = JSON.parse(raw) } catch (err) { return [] }
-  if (!Array.isArray(list)) return []
-  const out = []
-  for (const item of list) {
-    if (typeof item === 'string' && item.length > 0 && out.indexOf(item) === -1) out.push(item)
-  }
-  return out
-}
-
-export function creditsFromGatewayStatus(body, realm, selectedUids) {
-  if (body === null || typeof body !== 'object') return { ok: false, reason: 'shape' }
-  if (!Array.isArray(body.accounts)) return { ok: false, reason: 'shape' }
-  const want = typeof realm === 'string' && realm.length > 0 ? realm : ''
-  // [2026-10-21] 账号筛选：空 = 全部；非空 = 只统计选中项。
-  const only = Array.isArray(selectedUids) ? selectedUids : []
-  const picked = []
-  for (const account of body.accounts) {
-    if (account === null || typeof account !== 'object') continue
-    if (want.length > 0 && typeof account.realm === 'string' && account.realm !== want) continue
-      // [2026-10-21] 账号筛选：空 = 全部；非空 = 只统计选中项。
-      if (only.length > 0 && (typeof account.uid !== 'string' || only.indexOf(account.uid) === -1)) continue
-    const remain = typeof account.credits === 'number' && Number.isFinite(account.credits)
-      ? account.credits
-      : null
-    if (remain === null) continue
-    picked.push({
-      // 只保留公开可展示字段；uid/nickname 等身份信息不进 wire。
-      remain,
-      size: typeof account.credits_total === 'number' && Number.isFinite(account.credits_total)
-        ? account.credits_total
-        : null,
-      cooling: account.cooling === true,
-      disabled: account.disabled === true,
-      inFlight: typeof account.in_flight === 'number' ? account.in_flight : 0,
-      earliestExpiry: typeof account.credits_earliest_expiry === 'string'
-        ? account.credits_earliest_expiry
-        : null,
-      earliestRemaining: typeof account.credits_earliest_remaining === 'number'
-        ? account.credits_earliest_remaining
-        : null,
-    })
-  }
-  if (picked.length === 0) return { ok: false, reason: 'no-account' }
-  /**
-   * 合计口径：只累加**可用**账号（未停用）。
-   * 冷却中的账号仍计入剩余（积分还在，只是暂时不可调度），
-   * 这样胶囊不会因为一次冷却就跳变到 0。
-   */
-  let total = 0
-  for (const row of picked) {
-    if (row.disabled) continue
-    total += row.remain
-  }
-  return { ok: true, total, accounts: picked }
-}
-
 /**
  * [2026-10-25 客户端 Key 接口] 解析 `GET /v1/credits` 的**纯**函数（无 IO）。
  *
@@ -617,81 +410,6 @@ function clientCreditsWire(plan, body) {
  * 只输出展示所需的公开字段；不带 uid/nickname/package_code。
  * 已用完（remain<=0）的包按面板口径**不列**，避免详情被历史包淹没。
  */
-export function creditPackagesOf(body, realm, selectedUids) {
-  if (body === null || typeof body !== 'object' || !Array.isArray(body.accounts)) return []
-  const want = typeof realm === 'string' && realm.length > 0 ? realm : ''
-  // [2026-10-21] 账号筛选：空 = 全部；非空 = 只统计选中项。
-  const only = Array.isArray(selectedUids) ? selectedUids : []
-  const rows = []
-  for (const account of body.accounts) {
-    if (account === null || typeof account !== 'object') continue
-    if (want.length > 0 && typeof account.realm === 'string' && account.realm !== want) continue
-      // [2026-10-21] 账号筛选：空 = 全部；非空 = 只统计选中项。
-      if (only.length > 0 && (typeof account.uid !== 'string' || only.indexOf(account.uid) === -1)) continue
-    const packages = Array.isArray(account.packages) ? account.packages : []
-    for (const pkg of packages) {
-      if (pkg === null || typeof pkg !== 'object') continue
-      const remain = typeof pkg.remain === 'number' && Number.isFinite(pkg.remain) ? pkg.remain : null
-      if (remain === null || remain <= 0) continue
-      const size = typeof pkg.size === 'number' && Number.isFinite(pkg.size) ? pkg.size : null
-      const expiry = typeof pkg.expires_at === 'number' && Number.isFinite(pkg.expires_at)
-        ? pkg.expires_at
-        : null
-      rows.push({
-        variant: 'WorkBuddy',
-        packageName: typeof pkg.name === 'string' && pkg.name.length > 0 ? pkg.name : null,
-        remain,
-        size,
-        endTimeMs: expiry,
-      })
-    }
-  }
-  // 先到期的排前面（与面板「按到期升序、近的在前」一致）。
-  rows.sort((a, b) => {
-    if (a.endTimeMs === null && b.endTimeMs === null) return 0
-    if (a.endTimeMs === null) return 1
-    if (b.endTimeMs === null) return -1
-    return a.endTimeMs - b.endTimeMs
-  })
-  return rows
-}
-function gatewayWire(plan, body, realm, packagesBody, selectedUids) {
-  const parsed = creditsFromGatewayStatus(body, realm, selectedUids)
-  if (parsed.ok !== true) {
-    return Object.assign(planBase(plan), {
-      error: 'exec',
-      message: plan.name + '：网关状态响应里没有可用的积分字段（已确认的字段为 accounts[].credits）',
-    })
-  }
-  /**
-   * 明细优先用 `/panel/api/packages`（含每个积分包的面额/剩余/到期）；
-   * 拿不到时退回「按账号汇总」一行，保证详情不空。
-   */
-  const detail = creditPackagesOf(packagesBody, realm, selectedUids)
-  const accounts = []
-  if (detail.length > 0) {
-    for (const pkg of detail) accounts.push(pkg)
-  } else {
-    for (const row of parsed.accounts) {
-      if (row.size === null && row.remain === null) continue
-      accounts.push({
-        variant: plan.name,
-        packageName: null,
-        remain: row.remain,
-        size: row.size,
-        endTimeMs: row.earliestExpiry !== null ? Date.parse(row.earliestExpiry) || null : null,
-      })
-    }
-  }
-  return Object.assign(planBase(plan), {
-    creditsTotal: parsed.total,
-    creditsUnlimited: false,
-    creditsAccounts: accounts,
-    variants: [{ label: plan.name, total: parsed.total, unlimited: false }],
-    isAvailable: true,
-  })
-}
-
 /**
  * 从宿主有效模型配置解析网关来源（origin + 凭据引用）。
  *
@@ -782,7 +500,6 @@ export function creditsUrlOf(base) {
    */
   return new URL(GATEWAY_CREDITS_PATH, base.origin).href
 }
-
 
 /**
  * [2026-10-21 真机问题] 网关请求必须有**硬超时**与 `accept-encoding: identity`。
@@ -944,60 +661,6 @@ export async function listWorkbuddyAccounts() {
  * 运行期不再调用（不探 `/status`），也不代表新端点行为；保留它是为了让
  * 旧口径的解析/脱敏回归仍有覆盖。
  */
-export async function listWorkbuddyAccountsLegacy(ctx, fetchImpl) {
-  const source = await resolveGatewaySource(ctx)
-  if (source.ok !== true) return { accounts: [], message: source.message }
-  const statusUrl = new URL('/status', source.origin).href
-  let body = null
-  try {
-    const got = await fetchJsonWithTimeout(statusUrl, source.key, GATEWAY_TIMEOUT_MS)
-    // 宿主/移植端的 fetch 包装未必有 `ok`，以 status 为准。
-    const status = typeof got.response.status === 'number' ? got.response.status : 0
-    const okFlag = typeof got.response.ok === 'boolean'
-      ? got.response.ok
-      : (status >= 200 && status < 300)
-    if (!okFlag) return { accounts: [], message: '网关返回 HTTP ' + status }
-    body = got.body
-    if (body === null) {
-      /**
-       * [R7-02] 与主 wire 同一规范：**只给固定分类 + HTTP 状态**。
-       *
-       * `JSON.parse` 的原始 message 会带正文片段（`Unexpected token 'S', "SYNTHETIC_"...`），
-       * 拼进这里等于把上游内容回显到 GUI。账号列表是另一个公开出口，必须同样收紧。
-       */
-      return {
-        accounts: [],
-        message: '账号响应无法解析（HTTP ' + status + '，shape=invalid-json）',
-      }
-    }
-  } catch (err) {
-    // [R9-03] 固定分类，不透传异常原文。
-    return { accounts: [], message: '读取网关账号失败（' + transportCodeOf(err) + '）' }
-  }
-  if (body === null || typeof body !== 'object' || !Array.isArray(body.accounts)) {
-    return { accounts: [], message: '网关状态响应里没有账号列表' }
-  }
-  const accounts = []
-  for (const account of body.accounts) {
-    if (account === null || typeof account !== 'object') continue
-    if (typeof account.uid !== 'string' || account.uid.length === 0) continue
-    if (typeof account.realm === 'string' && account.realm !== 'cn') continue
-    const nickname = typeof account.nickname === 'string' && account.nickname.length > 0
-      ? account.nickname
-      : account.uid.slice(0, 8)
-    accounts.push({
-      id: account.uid,
-      label: nickname,
-      realm: typeof account.realm === 'string' ? account.realm : '',
-      remain: typeof account.credits === 'number' ? account.credits : null,
-      size: typeof account.credits_total === 'number' ? account.credits_total : null,
-      disabled: account.disabled === true,
-      cooling: account.cooling === true,
-    })
-  }
-  return { accounts }
-}
-
 /**
  * [R6-03] 给**非 HTTP 的异步步骤**（凭据解析）套一个硬超时。
  *
@@ -1022,21 +685,6 @@ function raceWithTimeout(promise, timeoutMs, label) {
  * 排序后拼接再取不可逆短摘要：勾选顺序不同不算变化，「换成另一组账号」一定变。
  * 只回摘要，**不**输出 uid 列表。
  */
-export function selectedAccountsFingerprint(raw) {
-  if (typeof raw !== 'string' || raw.length === 0) return 'all'
-  let parsed
-  try { parsed = JSON.parse(raw) } catch (err) { return 'all' }
-  if (!Array.isArray(parsed) || parsed.length === 0) return 'all'
-  const list = []
-  for (const item of parsed) {
-    if (typeof item === 'string' && item.length > 0 && list.indexOf(item) === -1) list.push(item)
-  }
-  if (list.length === 0) return 'all'
-  list.sort()
-  return createHash('sha256').update('dsh-usage-dock:accounts\u0000' + list.join('\u0001'))
-    .digest('hex').slice(0, 16)
-}
-
 /**
  * [2026-10-25] `/panel/api/packages` 的**能力记忆已删除**。
  *
@@ -1135,10 +783,15 @@ export async function fetchFromGateway(ctx, plan, cfg, options) {
     if (err !== null && err !== undefined && err.code === 'ECANCELLED') return cancelledResult()
     if (cancelled()) return cancelledResult()
     // [R9-03] 固定分类，不透传异常原文（可能含 Key / 上游片段）。
+    /**
+     * [2026-10-30 incident §6.3] 文案按**失败种类**分开，且不再说“状态”（现取数端点是
+     * `GET /v1/credits`，不是 `/status`）：超时/传输失败 → `网关请求失败（timeout）`，
+     * 与 5xx 的 `网关请求失败（HTTP 502）` 明确可区分，不再与“没有可用账号”共用一句兜底。
+     */
     return Object.assign(planBase(plan), {
       error: 'exec',
       transient: true,
-      message: plan.name + ' 网关状态读取失败（' + transportCodeOf(err) + '）',
+      message: plan.name + ' 网关请求失败（' + transportCodeOf(err) + '）',
     })
   }
   /**
@@ -1166,10 +819,14 @@ export async function fetchFromGateway(ctx, plan, cfg, options) {
     })
   }
   if (!okFlag) {
+    /**
+     * [2026-10-30 incident §6.3] 网关侧 HTTP 错误（含 502）单独一类，点明状态码；
+     * 不与「200 但没有 cn 账号」「cn 积分非法」共用同一句兜底文案。
+     */
     return Object.assign(planBase(plan), {
       error: 'exec',
       transient: status === 429 || status >= 500,
-      message: plan.name + ' 网关返回 HTTP ' + status,
+      message: plan.name + ' 网关请求失败（HTTP ' + status + '）',
     })
   }
   /**
@@ -1221,7 +878,6 @@ export const workbuddy = Object.assign(cnPlan, {
   },
 })
 /** 国际版渠道（0.8.3 新增，独立开关/排序）。 */
-export const workbuddyAi = Object.assign(aiPlan, { fetch: makeFetchPlan(aiPlan, AI_PATH) })
 
 /**
  * 兼容导出：[0.8.3] 拆分渠道后，旧代码/测试仍从本模块 import
@@ -1229,6 +885,5 @@ export const workbuddyAi = Object.assign(aiPlan, { fetch: makeFetchPlan(aiPlan, 
  */
 export const fetchPlan = workbuddy.fetch
 /** 国际版取数（等价 workbuddyAi.fetch）。 */
-export const fetchPlanAi = workbuddyAi.fetch
 
 export default workbuddy

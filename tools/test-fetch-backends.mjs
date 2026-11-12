@@ -405,9 +405,14 @@ function record(name, status, note) {
         // 报 not-installed / incompatible；WorkBuddy 例外：status 端点未注入
         // （测试环境无 webServer）时报 unavailable。关键是不能抛异常、不能
         // 返回 undefined。
+        // [0.10.0 断言更新] Codex 改成「Connect / Subscription 双来源手选」后，
+        // 「该来源未安装/未启用」有了独立语义错误码 `not-enabled`
+        // （见 plans/codex-sources.js 与 host 的 codex-sources 判定），
+        // 它与 not-installed 属于同一类**语义**降级，同样满足「不抛异常、
+        // 不返回 undefined」的本意，故纳入可接受集合。
         assert.ok(
           wire.error === 'no-key' || wire.error === 'incompatible' || wire.error === 'not-installed'
-            || wire.error === 'unavailable',
+            || wire.error === 'unavailable' || wire.error === 'not-enabled',
           '无凭据时应给出 no-key/incompatible/not-installed/unavailable，实际: ' + JSON.stringify(wire),
         )
       }
