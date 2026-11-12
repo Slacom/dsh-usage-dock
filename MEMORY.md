@@ -82,13 +82,13 @@
 4. **测试**：workbuddy 26 / client-credits 50 / gateway 51 / legacy-selection 33 / settings-layout 30 / footer-row 12 / codex 88 / mimo-lane 47 / usage-tool 108 全 exit 0；
    并用 `DSH_CLIENT_UNDER_TEST` 对**要部署的那份 client 字节**（`EBE20F17…`）复跑 50/30/12 全过。
 5. **实机确认（用户截图 2026-11-12 09:59）**：WorkBuddy 卡已显示新口径（「数据源：客户端接口 `GET /v1/credits`，且只统计国内（cn）积分」/「该接口不提供稳定的账号 ID，暂不支持按账号筛选」），
-   胶囊 `✦1,451` 正常；MiMo `¥14.58`、DeepSeek `¥10.97` 未受影响；Codex 因 VPN 关闭显示失败态（预期）。
+   胶囊 `✦<积分>` 正常；MiMo `¥<余额>`、DeepSeek `¥<余额>` 未受影响；Codex 因 VPN 关闭显示失败态（预期）。
 6. **下一步**：用户提出新体验需求（见下条「批次 G」）——启动首帧胶囊只有 MiMo，希望一开始就列出所有已勾选渠道。
 
 ## 2026-11-12 09:45：**MiMo `usage_status` lane 对齐实机通过**（批次 E 生效）
 
-1. **本人重启后主代调 `usage_status`**：`Xiaomi MiMo：余额 14.58 CNY` —— **与胶囊同值** ⇒ `getHost()` → `routeDisplay.peek()` 链路在真机接通，
-   「GUI / `usage_status` / 策略共用同一来源」对 MiMo 也成立。同时 DeepSeek `10.97`、WorkBuddy `1528` 与胶囊一致。
+1. **本人重启后主代调 `usage_status`**：`Xiaomi MiMo：余额 <值> CNY` —— **与胶囊同值** ⇒ `getHost()` → `routeDisplay.peek()` 链路在真机接通，
+   「GUI / `usage_status` / 策略共用同一来源」对 MiMo 也成立。同时 DeepSeek `<余额>`、WorkBuddy `<积分>` 与胶囊一致。
 2. **Codex 行**：本轮用户**关闭 VPN**，工具报「取数命令执行失败（exec）」（网络层失败映射），与 VPN 关闭一致；**不是回归**。
    开 VPN 时应恢复（今早实测 `96%/58%` 且策略段注入了同一份数值）。
 3. 至此本轮三条线全部收口：Codex 双来源（端到端）+ MiMo 排版/收尾 + MiMo usage lane 对齐。
@@ -112,7 +112,7 @@
 
 ## 2026-11-12 09:20：**批次 D 已部署**：MiMo 取错 handle 的修复（待重启验证）+ 策略段注入已实机确认
 
-1. **重启后首次实测**：`usage_status` 恢复（DeepSeek 10.98 / Codex 96%-58% / WorkBuddy 1824 与胶囊一致）⇒ 补装 `plans/usage-tool.js` 生效；
+1. **重启后首次实测**：`usage_status` 恢复（DeepSeek <余额> / Codex <两窗口百分比> / WorkBuddy <积分> 与胶囊一致）⇒ 补装 `plans/usage-tool.js` 生效；
    但 **MiMo 仍报「上游拒绝请求（api）」** ⇒ 不是数据问题，是**取错 handle**。
 2. **根因（主代理二次判断错误）**：`plans/mimo-auth/host.js:274-287` 的 `routeDisplay = managedDisplay ?? display` 才是**路由实际使用的**快照；
    `registerMimoAuth()` 返回的 `display` 是**旧 legacy manager**。managed（记住登录）模式下 legacy display 恒 `absent`（`selected:false`）
@@ -125,7 +125,7 @@
 5. **策略段注入（此前长期未验证项）已实机确认**：用户开启 Codex 额度策略后，上下文出现
    「当前额度快照：渠道：OpenAI Codex 阶段：normal 额度：rolling-5h 剩余 96% 额度：weekly 剩余 58% 来源：本次采集 采样时间：…」
    ⇒ `systemPrompt` 策略段**确实进入提示词**，且取的是 **Subscription 来源**，与胶囊逐项一致。**不要再写成「未验证」。**
-6. **下一步（等本人）**：重启 → 主调 `usage_status`，预期 MiMo = 胶囊同值（约 `14.58 CNY`）；若仍 `api` 说明 `routeDisplay` 未生效（需查 managed 模式是否真的 active）。
+6. **下一步（等本人）**：重启 → 主调 `usage_status`，预期 MiMo = 胶囊同值（约 `<余额> CNY`）；若仍 `api` 说明 `routeDisplay` 未生效（需查 managed 模式是否真的 active）。
 
 ## 2026-11-12 08:50：**事故：批次 C 漏装 `plans/usage-tool.js` 导致插件整体未加载**（已补装，待重启）
 
@@ -140,12 +140,12 @@
    已改为 `spawnSync(process.execPath, ['-e', …])` **子进程**校验；独立进程实测已装 `index.js` 可链接、导出 `Config/apply/inject/name`。
    收据 `RECEIPT-usage-tool.json`（failed，**保留原文**）+ `RECEIPT-usage-tool-postcheck.json`（`deployed-verified-by-postcheck`，含 linkBefore/linkAfter）。
 5. **新守卫（后续所有部署沿用）**：A7「新 index 命名导入 ⊆ 源模块导出」+ 装后**子进程**链接检查；selftest C20–C23 复现「同进程缓存伪影」并证明子进程法可避开。
-6. **下一步（等本人）**：重启 → 主调 `usage_status`，预期 MiMo 与胶囊同值（`14.58 CNY`），DeepSeek/Codex/WorkBuddy 不变。
+6. **下一步（等本人）**：重启 → 主调 `usage_status`，预期 MiMo 与胶囊同值（`<余额> CNY`），DeepSeek/Codex/WorkBuddy 不变。
 
 ## 2026-11-12 00:05：MiMo `usage_status` lane 对齐 **批次 C 已部署**（待重启验证）
 
 1. **为什么做**：胶囊 MiMo 数值来自 display 快照（`plans/mimo-auth/session-display.js`，客户端 `mimoDisplayOverlay` 覆盖），
-   而 `usage_status` 走 `plans/mimo.js#fetchPlan`（旧 Cookie/API Key lane）⇒ 真机上工具报「上游拒绝请求（api）」而胶囊显示 `¥14.58`。
+   而 `usage_status` 走 `plans/mimo.js#fetchPlan`（旧 Cookie/API Key lane）⇒ 真机上工具报「上游拒绝请求（api）」而胶囊显示 `¥<余额>`。
 2. **改法（Host only，不改客户端）**：`plans/usage-tool.js` 新增纯函数 `mimoDisplayWire(snapshot)` +
    组合器 `mimoWireWithDisplay(source, fetchProvider)`；`index.js` 接住 `registerMimoAuth()` 返回的 `display.peek`（零 IO），
    在 `collectPlans` 里**provider 之前**分流；`ACCOUNT_BOUND_PLAN_IDS` 加 `'mimo'`（显示值依赖会话，配置哈希不能当缓存键；副作用是 mimo 不再冻结凭据，与 deepseek/codex/workbuddy 一致）。
@@ -157,7 +157,7 @@
    `ACCOUNT_BOUND_PLAN_IDS` 含 `'mimo'`；`enableConsoleProtocol` **仍在**（MiMo 未被关）；`GATEWAY_CREDITS_PATH` 计数 **0**（WB 线未夹带）。
    本轮是 **Host-only** 改动，`client.js` 不需要动。
 5. **测试**：新 `tools/test-mimo-usage-lane.mjs` **31/31**；`test-usage-tool/-register/-host/-integration/-policy`、`test-mimo-parse`、`test-codex-sources`（staged 字节 88/0）全 exit 0。
-6. **下一步（等本人）**：重启 → 主再调 `usage_status` 应与胶囊同值（预期 MiMo ≈ `¥14.58`）；若得「本次没有该渠道的数据」说明快照当时不在 `verified`（准确信息，非故障）；
+6. **下一步（等本人）**：重启 → 主再调 `usage_status` 应与胶囊同值（预期 MiMo ≈ `¥<余额>`）；若得「本次没有该渠道的数据」说明快照当时不在 `verified`（准确信息，非故障）；
    `stopped/expired/holding` 的实机文案、"切账号后立刻换值" 的时序仍**未实机验证**。
 
 ## 2026-11-11 23:50：Codex 双来源 **端到端实机通过**（订阅来源真实取到额度）
@@ -165,9 +165,9 @@
 1. **本人截图确认**：设置页 `Codex Subscription` 行 = **可用**（已选中）｜`Codex Connect` = 未启用｜「当前来源：Codex Subscription」；
    **侧栏 Codex 行显示 `100% 59%`（绿点，成功态）** ⇒ 第三方只读 service → Host `plans/codex-sources.js` → 胶囊 的完整链路在真机走通。
 2. 这是本轮（批次 A + 批次 B）**唯一需要的实机验收项**，已达成；`100%` 是有效值（未消耗），未出现的窗口（如月窗）是按合同**不伪造**。
-3. **`usage_status` 同值核对（主代调，2026-11-11 23:44）**：DeepSeek `10.98 CNY`✓、WorkBuddy `1867`✓、
+3. **`usage_status` 同值核对（主代调，2026-11-11 23:44）**：DeepSeek `<余额> CNY`✓、WorkBuddy `<积分>`✓、
    **Codex `rolling-5h 剩余 100% / weekly 剩余 59%` = 胶囊 `100% 59%` 逐项一致**（口径 correct：remaining）⇒ GUI 与工具同源成立。
-   **MiMo 不一致**：工具报「上游拒绝请求（api）」，而胶囊显示 `¥14.58`。原因是**两条 lane**：胶囊走 MiMo 控制台/记住登录链，
+   **MiMo 不一致**：工具报「上游拒绝请求（api）」，而胶囊显示 `¥<余额>`。原因是**两条 lane**：胶囊走 MiMo 控制台/记住登录链，
    `usage_status` 仍走 `plans/mimo.js` 旧 provider（Cookie/API Key）⇒ **既有分流，非本轮引入**；要统一属独立改动。
 4. 未验证/不声称：策略段、Connect 来源（其插件当前「异常」且关闭，属另一件事）、长期稳定性、MiMo 跨重启以外的场景。
 4. **尚未做**：Git 提交/版本定档/打标签/发布（推送闸门：须用户明确确认）；工作区仍含 **WorkBuddy 10-25 未部署线**（`plans/workbuddy.js` 238+/68−、client 5 hunk、`package.json` 标签 `0.9.1-dev.wbcredits.20261025.3`）。
@@ -175,7 +175,7 @@
 ## 2026-11-11 23:40：Codex 双来源 **批次 A 已实机验证 + 批次 B 已部署**（B 待重启验证）
 
 1. **批次 A 实机证据（用户截图）**：设置页 Codex 卡出现「额度来源」两行 —— Connect = **未启用**、Subscription = **接口暂不可用（需适配）**；
-   侧栏新出现 `OpenAI Codex 获取失败`（灰点，未 fallback、未整行消失 = N2 生效）；**MiMo ¥14.58、WorkBuddy ✦1,872、DeepSeek ¥10.98 均正常**
+   侧栏新出现 `OpenAI Codex 获取失败`（灰点，未 fallback、未整行消失 = N2 生效）；**MiMo ¥<余额>、WorkBuddy ✦<积分>、DeepSeek ¥<余额> 均正常**
    ⇒ staged `index.js` 保留 MiMo 两开关正确、`plans/workbuddy.js` 未被覆盖。
    **N4② 降级点在真机不成立**：loader `disabled` 就是严格 `false`，无需放宽为 `disabled !== true`。
    ⚠️ 该两行**只在渠道勾选启用时渲染**（`client.js:9236` `enabled && meta.source !== undefined`）；用户第一次没看到是因为 Codex 复选框未勾。
