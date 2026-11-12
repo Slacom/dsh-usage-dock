@@ -285,6 +285,67 @@ function parseCodexSourcesPayload(body) {
  *   incompatible enabled:true  + compatible:false → 接口暂不可用（需适配）
  *   unknown      没拿到可信 metadata              → 状态暂不可用
  */
+/**
+ * [0.10.2] 「应用本地适配」块：Codex Subscription 未适配时，让用户**一键**打上第三方插件所需的
+ * 本地只读接口补丁（对应 Host 路由 POST /api/plan-usage/codex-subscription/apply-patch）。
+ *
+ * 关键约束：
+ *   - hooks 必须在组件**顶部无条件**调用，`active` 只影响返回值、不影响 hook 顺序（否则白屏级事故）；
+ *   - 只发**一次** POST（空 body），不重试、不轮询；
+ *   - 卸载后不再 setState（mounted ref）；
+ *   - 失败只显示固定文案，绝不回显错误码 / 堆栈 / 上游正文。
+ */
+function CodexSubscriptionPatchBlock(props) {
+  var active = props !== null && props !== undefined && props.active === true
+  var writable = props !== null && props !== undefined && props.writable === true
+  var statusHook = React.useState('idle')
+  var status = statusHook[0]
+  var setStatus = statusHook[1]
+  var aliveRef = React.useRef(true)
+  React.useEffect(function () {
+    aliveRef.current = true
+    return function () { aliveRef.current = false }
+  }, [])
+  if (active !== true) return null
+  var busy = status === 'sending'
+  var applyOnce = function () {
+    if (busy || writable !== true) return
+    setStatus('sending')
+    var doFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch : null
+    if (doFetch === null) { setStatus('failed'); return }
+    Promise.resolve()
+      .then(function () { return doFetch('/api/plan-usage/codex-subscription/apply-patch', { method: 'POST' }) })
+      .then(function (res) {
+        return res !== null && res !== undefined && typeof res.json === 'function' ? res.json() : null
+      })
+      .then(function (body) {
+        if (aliveRef.current !== true) return
+        setStatus(body !== null && body !== undefined && body.ok === true ? 'done' : 'failed')
+      }, function () {
+        if (aliveRef.current === true) setStatus('failed')
+      })
+  }
+  if (status === 'done') {
+    return h('p', { key: 'cs-patch-result', style: settingsHintStyle, 'data-cs-patch-result': 'done', 'data-codex-source-patch': 'done' },
+      '已应用，重启 DSH 后可读取订阅额度')
+  }
+  if (status === 'failed') {
+    return h('p', { key: 'cs-patch-result', style: settingsHintStyle, 'data-cs-patch-result': 'failed', 'data-codex-source-patch': 'failed' },
+      '应用失败，请稍后重试或用命令行工具')
+  }
+  return h('div', { key: 'cs-patch-block', 'data-cs-patch-block': '1', 'data-codex-source-patch': 'appliable', style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+    h('p', { style: settingsHintStyle, 'data-cs-patch-hint': '1' },
+      '检测到 Codex Subscription 未适配本插件（需要给第三方插件加一个只读接口）。'),
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+      h('button', {
+        type: 'button',
+        'data-cs-patch': 'apply',
+        disabled: busy || writable !== true,
+        style: Object.assign({}, settingsButtonStyle, (busy || writable !== true) ? settingsButtonDisabledStyle : {}),
+        onClick: applyOnce,
+      }, busy ? '应用中…' : '应用本地适配'),
+      h('span', { style: settingsHintStyle }, '应用后需重启 DSH 生效')))
+}
 function codexSourceRowState(entry) {
   if (entry === null || entry === undefined) return 'unknown'
   if (entry.enabled !== true && entry.enabled !== false) return 'unknown'
@@ -2074,7 +2135,7 @@ function PlanUsageBadge(props) {
   // `useConfigSnapshot(null)` 会给一个空对象，照空对象铺就会把所有渠道都列出来。
   plans = withPendingPlaceholders(plans, hasConfigView ? config : null)
   // [display 2026-11-05] 已选本机显示会话时，MiMo 行**由 Host DTO 驱动**（覆盖手工来源）；
-  // 未选中（生产 disabled / 未开始）时原样返回，手工 Cookie 路径不受影响。
+  // [0.10.2] 未选中/未验证时 mimo 固定为缺失态，**不再**回落旧 Cookie lane（旧配置字段保留但不读取）。
   plans = mimoDisplayOverlay(plans, mimoDisplaySnap, {
     // 渠道被停用时不把 MiMo 加回来（B5）；尚未拿到可信状态时用"读取中"占位（N4）。
     allowMimo: settingBool(config, 'mimoEnabled', true),
@@ -4452,8 +4513,8 @@ var MIMO_AUTH_POLL_MS = 1500
 /** 取消请求的独立有界 TTL（不参与轮询 timer；超时 abort 并如实报告未确认）。 */
 var MIMO_AUTH_CANCEL_TIMEOUT_MS = 2500
 var MIMO_AUTH_TEXT = {
-  entry: '实验性：临时扫码登录（未真实验收）',
-  closedHint: '默认关闭。只有点开这里才会向本机请求认证能力；手工 Cookie 路径不受影响。',
+  entry: '登录 MiMo（扫码）',
+  closedHint: '登录后可自动读取余额',
   notice: '实验性临时入口，不是标准 OAuth：不读取系统浏览器 Cookie、不把票写入任何配置、不接入余额轮询。',
   opening: '正在请求本机认证能力…',
   unsupported: '本机暂不支持该实验性登录（宿主能力未就绪）；其它渠道与手工 Cookie 不受影响。',
@@ -6189,6 +6250,8 @@ function MimoAuthPanel(props) {
 
   if (open !== true) {
     return h('div', { 'data-mimo-auth-panel': 'closed', style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+      // [0.10.2] 默认态只保留：状态一行 + 主按钮 + 一行操作提示（开发者说明不在默认态渲染）。
+      h('p', { key: 'status', style: settingsHintStyle, 'data-mimo-auth-status': 'signed-out' }, '未登录（点击登录）'),
       h('button', {
         type: 'button', 'data-mimo-auth': 'entry', disabled: disabled === true,
         style: Object.assign({}, settingsButtonStyle, disabled === true ? settingsButtonDisabledStyle : {}),
@@ -7473,7 +7536,7 @@ function MimoDisplayPanel(props) {
 
   var body = []
   body.push(h('p', { key: 'title', style: settingsHintStyle, 'data-mimo-display': 'title' },
-    consoleSupported === true ? 'MiMo 本机显示会话（正式扫码登录）' : 'MiMo 本机显示会话（合成边界；生产未启用）'))
+    consoleSupported === true ? 'MiMo 本机登录' : 'MiMo 本机登录'))
   body.push(h('p', { key: 'note', style: settingsHintStyle, 'data-mimo-display': 'note' },
     consoleSupported === true
       ? '本人发起官方扫码与必要会话交换；凭据只存于 Host 内存；当前为 15 分钟本地界（60 秒刷新间隔、最多 14 次），重启后需重新登录。'
@@ -9376,6 +9439,18 @@ function PlanUsageSettingsPage(props) {
           ? '当前来源：' + codexSourceLabel(sourceSaved) + '（真正生效的是已保存的选择）'
           : '将切换到 ' + codexSourceLabel(sourceDraft) + '；点击「保存更改」后生效。'),
       h('p', { style: settingsHintStyle, 'data-codex-source-note': '1' }, codexSourceNoteText(sourceDraft)),
+      // [0.10.2] 仅在「Subscription 行状态 = incompatible（需适配）」时渲染一键适配块。
+      h(CodexSubscriptionPatchBlock, {
+        key: 'cs-patch',
+        active: (function () {
+          var subs = codexSources !== null && codexSources !== undefined && codexSources.state === 'ok'
+            && codexSources.sources !== null && codexSources.sources !== undefined
+            ? codexSources.sources.subscription
+            : undefined
+          return codexSourceRowState(subs) === 'incompatible'
+        })(),
+        writable: writable && !saving,
+      }),
     ))
   }
   // 复用登录插件的渠道说明：Codex 按**当前来源**渲染在来源区里（见上），这里只处理其它
@@ -9615,6 +9690,11 @@ module.exports = {
     fromWire: codexSourceFromWire,
     parsePayload: parseCodexSourcesPayload,
     rowState: codexSourceRowState,
+    /**
+     * [0.10.2] 离线挂载点：把「应用本地适配」块**组件本身**暴露给回归测试（不暴露任何内部状态/
+     * 工具函数）。只在测试加载器 `__ModuleLoader__` 下可见，生产路径不读取该出口。
+     */
+    PatchBlock: CodexSubscriptionPatchBlock,
     digest: function (config) { return configDigestOfClient(config) },
   },
   /**

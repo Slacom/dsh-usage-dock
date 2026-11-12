@@ -175,27 +175,27 @@ function verifiedSnapshot(over) {
   const provider = async () => { calls += 1; return providerWire }
 
   const fromNull = await mimoWireWithDisplay({ peek: () => null }, provider)
-  check('L4a peek 返回 null ⇒ provider 调用一次、返回值原样透传',
-    calls === 1 && fromNull === providerWire, { calls, fromNull })
+  check('L4a peek 返回 null ⇒ 固定 missing 且 provider 零调用（旧 Cookie lane 已移除）',
+    calls === 0 && fromNull !== null && fromNull.error === 'missing', { calls, fromNull })
 
   calls = 0
   const notSelected = await mimoWireWithDisplay({ peek: () => verifiedSnapshot({ selected: false }) }, provider)
-  check('L4b selected:false ⇒ provider 调用一次、原样透传',
-    calls === 1 && notSelected === providerWire, { calls, notSelected })
+  check('L4b selected:false ⇒ 固定 missing 且 provider 零调用',
+    calls === 0 && notSelected !== null && notSelected.error === 'missing', { calls, notSelected })
 
   calls = 0
   const throwingPeek = await mimoWireWithDisplay({ peek: () => { throw new Error('peek boom') } }, provider)
-  check('L4c peek 抛错 ⇒ provider 调用一次、原样透传（异常不外溢）',
-    calls === 1 && throwingPeek === providerWire, { calls, throwingPeek })
+  check('L4c peek 抛错 ⇒ 固定 missing、零调用且异常不外溢',
+    calls === 0 && throwingPeek !== null && throwingPeek.error === 'missing', { calls, throwingPeek })
 
   calls = 0
   const noHandle = await mimoWireWithDisplay(null, provider)
-  check('L4d source 为 null ⇒ provider 调用一次（句柄缺失不致命）',
-    calls === 1 && noHandle === providerWire, { calls, noHandle })
+  check('L4d source 为 null ⇒ 固定 missing 且零调用（句柄缺失不致命）',
+    calls === 0 && noHandle !== null && noHandle.error === 'missing', { calls, noHandle })
 
   calls = 0
   const badHandle = await mimoWireWithDisplay({ peek: 'not-a-function' }, provider)
-  check('L4e peek 不是函数 ⇒ provider 调用一次', calls === 1 && badHandle === providerWire, { calls })
+  check('L4e peek 不是函数 ⇒ 固定 missing 且零调用', calls === 0, { calls })
 }
 
 // ===========================================================================
@@ -231,10 +231,10 @@ function verifiedSnapshot(over) {
   const mimoChannel = out === null ? undefined : (out.channels || []).find((c) => c.id === 'mimo')
   check('L5b 工具仍能为 mimo 返回条目', execError === null && mimoChannel !== undefined,
     execError && execError.message)
-  check('L5c 默认状态（display 未选中）下 mimo **不是** missing —— 说明仍走原 provider lane',
-    mimoChannel !== undefined && mimoChannel.errorCode !== 'missing', mimoChannel)
-  check('L5d 没有 Cookie 时如实报缺凭据（旧 lane 行为不变）',
-    mimoChannel !== undefined && mimoChannel.errorCode === 'no-credential', mimoChannel)
+  check('L5c 默认状态（display 未选中）下 mimo 固定为 missing（不再回落旧 provider lane）',
+    mimoChannel !== undefined && mimoChannel.errorCode === 'missing', mimoChannel)
+  check('L5d 旧 Cookie lane 不再被调用：缺凭据不再是 mimo 的结果（应为 missing）',
+    mimoChannel !== undefined && mimoChannel.errorCode === 'missing', mimoChannel)
 
   for (const fn of effects.reverse()) { if (typeof fn === 'function') fn() }
 
@@ -338,12 +338,12 @@ function verifiedSnapshot(over) {
       return { id: 'mimo', name: 'Xiaomi MiMo', balance: 1, currency: 'CNY', marker: 'provider' }
     }
     const first = await mimoWireWithDisplay(liveSource, provider10)
-    check('L10a getHost() 首次为 null（inject 未完成）⇒ 走 provider，调用 1 次',
-      calls10 === 1 && first !== null && first.marker === 'provider', { calls10, first })
+    check('L10a getHost() 首次为 null（inject 未完成）⇒ 固定 missing，provider 调用 0 次',
+    calls10 === 0 && first !== null && first.error === 'missing', { calls10, first })
     hostNow = { routeDisplay: { peek: () => verifiedSnap } }
     const second = await mimoWireWithDisplay(liveSource, provider10)
-    check('L10b 之后就绪 ⇒ 用快照、provider 调用数仍为 1（随时间自动接上）',
-      calls10 === 1 && second !== null && second.balance === 14.58, { calls10, second })
+    check('L10b 之后就绪 ⇒ 用快照、provider 调用数仍为 0（随时间自动接上）',
+    calls10 === 0 && second !== null && second.balance === 14.58, { calls10, second })
 
     // ---- L11：getHost 抛错 / 不是函数 ⇒ null，provider 恰好一次 ----
     let calls11 = 0
@@ -351,12 +351,12 @@ function verifiedSnapshot(over) {
     const threwGetHost = await mimoWireWithDisplay(
       { peek: () => peek({ getHost: () => { throw new Error('inject boom') } }) }, provider11,
     )
-    check('L11a getHost() 抛错 ⇒ peek 为 null ⇒ provider 调用一次',
-      calls11 === 1 && threwGetHost !== null && threwGetHost.marker === 'p', { calls11, threwGetHost })
+    check('L11a getHost() 抛错 ⇒ 固定 missing、provider 零调用',
+    calls11 === 0 && threwGetHost !== null && threwGetHost.error === 'missing', { calls11, threwGetHost })
     calls11 = 0
     const notFn = await mimoWireWithDisplay({ peek: () => peek({ getHost: 'nope' }) }, provider11)
-    check('L11b getHost 不是函数 ⇒ null ⇒ provider 调用一次',
-      calls11 === 1 && notFn !== null && notFn.marker === 'p', { calls11, notFn })
+    check('L11b getHost 不是函数 ⇒ 固定 missing、provider 零调用',
+    calls11 === 0 && notFn !== null && notFn.error === 'missing', { calls11, notFn })
 
     // ---- L12：源码守卫（顺序 + host.js 必须提供 getHost / 保留 routeDisplay） ----
     const atHost = fnText.indexOf('getHost')
@@ -409,8 +409,8 @@ function verifiedSnapshot(over) {
     : undefined
   check('G1b GUI 路由能返回 mimo 行（走新接的同一 helper，快照不可用时回落 provider）',
     callErr === null && mimoRow !== undefined, callErr && callErr.message)
-  check('G1c 回落时 mimo 语义与 provider 一致（无 Cookie → no-credential，不是 missing）',
-    mimoRow !== undefined && (mimoRow.error === 'no-credential' || mimoRow.error === 'no-key'), mimoRow)
+  check('G1c 快照不可用时 mimo 固定 missing（GUI 路由同样不再碰旧 lane）',
+    mimoRow !== undefined && mimoRow.error === 'missing', mimoRow)
 
   for (const fn of effectsG.reverse()) { if (typeof fn === 'function') fn() }
 
@@ -428,6 +428,25 @@ function verifiedSnapshot(over) {
   check('G3a 接线守卫：GUI 路由的逐渠道取数经 mimoWireWithDisplay 分流（源码断言）', guiHook.test(hostSrcG))
   const uses = (hostSrcG.match(/mimoWireWithDisplay\(/g) || []).length
   check('G3b 接线守卫：恰好两处调用（usage_status + GUI 路由），没有第三套实现', uses === 2, uses)
+}
+
+
+// [0.10.2] MiMo 单通道 + 用户可见文本无旧 Cookie 措辞（源码级哨兵）
+{
+  const hostSrc = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  const toolSrc = readFileSync(new URL('../plans/usage-tool.js', import.meta.url), 'utf8')
+  check('M1 mimoWireWithDisplay 不再回落 provider（源码无 fetchProvider() 调用）',
+    !/return await fetchProvider\(\)/.test(toolSrc) && toolSrc.includes("error: 'missing'"))
+  let providerCalls2 = 0
+  const provider2 = async () => { providerCalls2 += 1; return { id: 'mimo', balance: 1 } }
+  const out2 = await mimoWireWithDisplay({ peek: () => null }, provider2)
+  check('M2 快照不可用 ⇒ missing 且 fetch 0 次（不再碰旧 lane）', providerCalls2 === 0 && out2.error === 'missing', { providerCalls2, out2 })
+  const clientSrc2 = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  for (const bad of ['复制新的 Cookie', '控制台登录态已过期', '手工 Cookie 路径', 'API error code 401', '实验性：临时扫码登录', '合成边界；生产未启用']) {
+    check('M3 用户可见源码不含「' + bad + '」', !clientSrc2.includes(bad))
+  }
+  check('M4 GUI 与 usage_status 都经同一个 helper（index.js 恰好两处调用）',
+    (hostSrc.match(/mimoWireWithDisplay\(/g) || []).length === 2)
 }
 
 console.log('')

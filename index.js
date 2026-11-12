@@ -1383,6 +1383,69 @@ export function apply(ctx, config) {
    *   - 不返回 runtime entries、不返回配置、不返回账号/路径/令牌；
    *   - GET-only，只读，不落任何状态。
    */
+  /**
+   * [0.10.2] Codex Subscription「一键应用本地适配」。
+   *
+   * 两条路由都**不接受任何参数**：目标包目录由 `plans/codex-subscription-patch.js` 按自身位置推导，
+   * 客户端无法指定路径 / URL / 版本。只读路由不读凭据、不联网；动作路由走与 CLI 同一套实现
+   * （`wx` 备份 → 同目录 `wx` 临时文件 → 读回校验 → rename → 校验新哈希），失败不留半改文件。
+   */
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/api/plan-usage/codex-subscription/patch-state',
+    handler: async (req, res) => {
+      if (req.method !== 'GET') {
+        json(res, 405, { ok: false, error: 'method', message: 'method not allowed' })
+        return
+      }
+      try {
+        const mod = await import('./plans/codex-subscription-patch.js')
+        const state = mod.readPatchState(mod.resolvePackageDir())
+        json(res, 200, {
+          ok: true,
+          data: {
+            installed: state.installed,
+            version: state.version,
+            state: state.state,
+            serviceAvailable: state.serviceAvailable,
+          },
+        })
+      } catch (err) {
+        json(res, 200, { ok: false, error: 'E_CS_PATCH_IO' })
+      }
+    },
+  }))
+
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/api/plan-usage/codex-subscription/apply-patch',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        json(res, 405, { ok: false, error: 'method', message: 'method not allowed' })
+        return
+      }
+      // 请求体必须为空：任何多余字段都拒绝（固定码，不解释细节）
+      const len = Number(req.headers && req.headers['content-length'] ? req.headers['content-length'] : 0)
+      if (len > 0) {
+        json(res, 400, { ok: false, error: 'E_CS_PATCH_ARGS' })
+        return
+      }
+      try {
+        const mod = await import('./plans/codex-subscription-patch.js')
+        const baseDir = process.env.TEMP || process.env.TMPDIR || '.'
+        const sep = baseDir.indexOf('\\') >= 0 ? '\\' : '/'
+        const backupRoot = baseDir + (baseDir.endsWith(sep) ? '' : sep) + 'dsh-cs-patch-backup'
+        const out = mod.applyPatch(mod.resolvePackageDir(), { backupRoot: backupRoot })
+        json(res, 200, {
+          ok: true,
+          data: { applied: out.applied === true, backup: out.backup, newSha: out.newSha, requiresRestart: out.requiresRestart === true },
+        })
+      } catch (err) {
+        const code = err && typeof err.code === 'string' && err.code.startsWith('E_CS_PATCH_') ? err.code : 'E_CS_PATCH_IO'
+        json(res, 200, { ok: false, error: code })
+      }
+    },
+  }))
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
     path: '/api/plan-usage/codex-sources',

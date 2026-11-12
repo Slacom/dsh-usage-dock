@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const TOOL = join(HERE, 'patch-codex-subscription.mjs')
-const MANIFEST = JSON.parse(readFileSync(join(HERE, 'patches', 'codex-subscription-3.2.6.json'), 'utf8'))
+const MANIFEST = JSON.parse(readFileSync(join(HERE, '..', 'plans', 'patches', 'codex-subscription-3.2.6.json'), 'utf8'))
 const BASE_SRC = join(HERE, '..', '.diagnostics', 'codex-subscription-readonly-service-20261111', 'base', 'index.js')
 
 let pass = 0
@@ -113,6 +113,59 @@ const out = (r) => String(r.stdout || '') + String(r.stderr || '')
   check('7b 基线被改动（hunk old 缺失）→ exit 2、零写入、拒绝在未知基线上写入',
     a.status === 2 && sha256(readFileSync(tampered.target)) === before2, { status: a.status, o: out(a).slice(0, 140) })
 }
+// ===========================================================================
+// [0.10.2] 共用模块（Host 路由与 CLI 同一实现）：状态三态 + 幂等 + 失败零写入
+// ===========================================================================
+{
+  const mod = await import('../plans/codex-subscription-patch.js')
+  const root2 = mkdtempSync(join(tmpdir(), 'dsh-cs-shared-'))
+  const mk = (name, version, bytes) => {
+    const dir = join(root2, name)
+    mkdirSync(join(dir, 'lib'), { recursive: true })
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-codex-subscription', version }) + '\n')
+    writeFileSync(join(dir, 'lib', 'index.js'), bytes)
+    return dir
+  }
+  const baseDir = mk('base', MANIFEST.version, Buffer.from(baseBytes))
+  const s1 = mod.readPatchState(baseDir)
+  check('H1 readPatchState 未适配副本 → state=appliable', s1.state === 'appliable' && s1.installed === true, s1)
+
+  const wrongVer = mk('wrongver', '3.2.12', Buffer.from(baseBytes))
+  check('H2 版本不符 → state=unsupported', mod.readPatchState(wrongVer).state === 'unsupported', mod.readPatchState(wrongVer))
+
+  const out1 = mod.applyPatch(baseDir, { backupRoot: join(root2, 'bk') })
+  check('H3 applyPatch 成功 → applied:true 且 newSha == programSha',
+    out1.applied === true && out1.newSha.toLowerCase() === MANIFEST.programSha.toLowerCase(), out1)
+  const s2 = mod.readPatchState(baseDir)
+  check('H4 打完后再读状态 → patched', s2.state === 'patched', s2)
+  const out2 = mod.applyPatch(baseDir, { backupRoot: join(root2, 'bk') })
+  check('H5 幂等：已适配时 applied:false、不重复写',
+    out2.applied === false && out2.requiresRestart === false, out2)
+
+  const tampered = mk('tampered', MANIFEST.version, (() => { const b = Buffer.from(baseBytes); b[b.length - 2] = b[b.length - 2] ^ 0x01; return b })())
+  const beforeTampered = readFileSync(join(tampered, 'lib', 'index.js'))
+  let threw = null
+  try { mod.applyPatch(tampered, { backupRoot: join(root2, 'bk2') }) } catch (err) { threw = err && err.code }
+  check('H6 基线不符 → 抛 E_CS_PATCH_UNSUPPORTED 且目标零改动',
+    threw === 'E_CS_PATCH_UNSUPPORTED' && Buffer.compare(readFileSync(join(tampered, 'lib', 'index.js')), beforeTampered) === 0, threw)
+
+  const missing = join(root2, 'nope')
+  let threw2 = null
+  try { mod.applyPatch(missing, { backupRoot: join(root2, 'bk3') }) } catch (err) { threw2 = err && err.code }
+  check('H7 包不存在 → 抛 E_CS_PATCH_UNSUPPORTED（不建目录、不写文件）',
+    threw2 === 'E_CS_PATCH_UNSUPPORTED' && !existsSync(missing), threw2)
+
+  rmSync(root2, { recursive: true, force: true })
+
+  // 客户端文案守卫：[0.10.2] MiMo 默认态不得再出现开发者措辞
+  const clientSrc = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  check('H8 源码守卫：MiMo 默认态已无「实验性：临时扫码登录」字样',
+    !clientSrc.includes('实验性：临时扫码登录'))
+  check('H9 源码守卫：已无「合成边界；生产未启用」字样', !clientSrc.includes('合成边界；生产未启用'))
+  check('H10 源码守卫：默认态含「未登录（点击登录）」状态行与单行提示',
+    clientSrc.includes('未登录（点击登录）') && clientSrc.includes('登录后可自动读取余额'))
+}
+
 rmSync(root, { recursive: true, force: true })
 console.log('')
 console.log(pass + ' passed, ' + fail + ' failed')

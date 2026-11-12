@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url'
 /** 目标包目录（唯一写死的用户路径，集中在这里；可用 --package-dir 覆盖）。 */
 const DEFAULT_PACKAGE_DIR = 'C:\\Users\\Slacom\\.dsh\\profiles\\desktop\\node_modules\\dsh-codex-subscription'
 const HERE = dirname(fileURLToPath(import.meta.url))
-const MANIFEST = join(HERE, 'patches', 'codex-subscription-3.2.6.json')
+const MANIFEST = join(HERE, '..', 'plans', 'patches', 'codex-subscription-3.2.6.json')
 const BACKUP_ROOT = process.env.DSH_PATCH_BACKUP_ROOT ? resolve(process.env.DSH_PATCH_BACKUP_ROOT) : join(HERE, 'patches', 'backup')
 
 const args = process.argv.slice(2)

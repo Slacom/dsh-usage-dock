@@ -549,14 +549,22 @@ export function mimoDisplayWire(snapshot) {
  * @param {() => Promise<object>} fetchProvider 既有的 provider 取数（行为完全不变）
  * @returns {Promise<object>} wire
  */
+/**
+ * [0.10.2] MiMo 的读法收敛为**显示快照单一通道**：
+ *   - 快照 `selected === true && state === 'verified'` ⇒ 用快照（`mimoDisplayWire` 的闭集字段）；
+ *   - 其它情况（无快照 / 未选中 / 未验证 / 读不到 / 值不合法）⇒ 固定缺失态 `{ error: 'missing' }`，
+ *     **零请求**；不再回落 `plans/mimo.js#fetchPlan`（旧 Cookie lane 已从所有用户可见路径移除）。
+ *   `fetchProvider` 仅为**保留调用形状**而存在，本函数不再调用它。
+ */
 export async function mimoWireWithDisplay(source, fetchProvider) {
   let snapshot = null
   try {
     if (source !== null && source !== undefined && typeof source.peek === 'function') snapshot = source.peek()
   } catch (err) {
-    snapshot = null // peek 自己抛错 = 读不到 ⇒ 走原路径
+    snapshot = null
   }
   const wire = mimoDisplayWire(snapshot)
   if (wire !== null) return wire
-  return await fetchProvider()
+  void fetchProvider
+  return { id: 'mimo', name: 'Xiaomi MiMo', error: 'missing' }
 }

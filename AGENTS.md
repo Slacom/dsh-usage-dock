@@ -448,6 +448,13 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
   `dsh-codex-subscription` 上打**本地只读 service 补丁**才拿得到订阅额度，该补丁**不在本包发布内容里**。
   没打补丁时该来源显示「接口暂不可用（需适配）」；`Codex Connect` 来源不受影响、照常可用。
   该补丁还需按第三方包的版本重新核对（本包只消费它的只读接口约定）。
+- **一键应用本地适配**（0.10.2）：设置页 `Subscription` 行显示「需适配」时可直接点「应用本地适配」
+  （Host 路由 `GET /api/plan-usage/codex-subscription/patch-state` 只读、`POST …/apply-patch` 执行，
+  目标包目录由插件自身位置推导、**不接受任何参数**，与 CLI 共用 `plans/codex-subscription-patch.js`）。
+  应用后需重启 DSH 生效；批量/离线场景仍建议用 CLI `node tools/patch-codex-subscription.mjs --apply`。
+- **MiMo 只保留扫码登录一条通道**（0.10.2）：显示快照不适用时 mimo 固定为缺失态（`error:"missing"`），
+  **不再回落** `plans/mimo.js#fetchPlan` 的旧 Cookie lane，因此 401 之类的旧错误不再出现在界面上；
+  配置里的 `mimoCookie` 字段与值**原样保留、不被读取**（不迁移、不清除）。
 - **第三方插件升级/重装会覆盖 Codex Subscription 的补丁**（0.10.1）：升级后运行
   `node tools/patch-codex-subscription.mjs`（默认只检查，`--apply` 才写；另有 `--revert` 从最近备份恢复）。
   出现「不可适配 / 需要生成清单」即表示未打补丁；hunk 清单与第三方版本**绑定**，换版本需重新生成

@@ -673,6 +673,115 @@ const READY_BOTH = {
 console.log('')
 console.log((pass + fail) + ' 项：' + pass + ' 通过, ' + fail + ' 失败')
 // 与仓库其它浏览器半测试一致：显式退出，避免残留的 40s 请求超时计时器把进程挂住。
+
+
+// ===========================================================================
+// Q — [0.10.2] 「应用本地适配」块：组件层（直接挂 PatchBlock）+ 接线层（设置页树里查元素）
+// ===========================================================================
+const PATCH_URL = '/api/plan-usage/codex-subscription/apply-patch'
+
+/** 递归找出所有「函数组件元素」中 type 等于给定组件的节点（不展开其内部）。 */
+function findComponentNodes (node, comp, out = [], depth = 0) {
+  if (node === null || node === undefined || typeof node !== 'object' || depth > 30) return out
+  if (Array.isArray(node)) { for (const n of node) findComponentNodes(n, comp, out, depth); return out }
+  if (node.type === comp) out.push(node)
+  const kids = node.props ? node.props.children : undefined
+  if (kids !== undefined) findComponentNodes(kids, comp, out, depth + 1)
+  return out
+}
+
+function stubPatchFetch (response) {
+  const calls = []
+  const original = globalThis.fetch
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init: init === undefined ? null : init })
+    return { status: 200, json: async () => response }
+  }
+  return { calls, restore: () => { globalThis.fetch = original } }
+}
+
+/** 直接挂组件：返回 { tree, click, settle, calls, done() } */
+async function mountPatchBlock (props, response) {
+  const runtime = createRuntime()
+  const client = loadClient(runtime, { form: makeForm({}).form, payload: { ok: true, data: { plans: [] } } })
+  const PatchBlock = client.module.codexSource.PatchBlock
+  const fake = stubPatchFetch(response)
+  runtime.mount(PatchBlock, props)
+  let tree = await runtime.settle(props)
+  return {
+    PatchBlock,
+    get tree () { return tree },
+    settle: async () => { tree = await runtime.settle(props); return tree },
+    calls: fake.calls,
+    restore: () => { fake.restore(); client.restore() },
+  }
+}
+
+{
+  // Q1：active:false ⇒ 什么都不渲染
+  const b = await mountPatchBlock({ active: false, writable: true }, { ok: true, data: { applied: true } })
+  check('Q1 active:false ⇒ 渲染为空（无 apply 按钮）', byAttr(b.tree, 'data-cs-patch', 'apply') === undefined)
+  b.restore()
+
+  // Q2：active:true + writable ⇒ 按钮与提示
+  const b2 = await mountPatchBlock({ active: true, writable: true }, { ok: true, data: { applied: true } })
+  check('Q2 active:true ⇒ 出现 apply 按钮与适配提示',
+    byAttr(b2.tree, 'data-cs-patch', 'apply') !== undefined && textAll(b2.tree).includes('未适配本插件'),
+    textAll(b2.tree).slice(0, 160))
+  // Q3：点击 ⇒ 仅一次 POST，URL 精确、无 body
+  const btn2 = byAttr(b2.tree, 'data-cs-patch', 'apply')
+  btn2.props.onClick()
+  await b2.settle()
+  check('Q3 点击 ⇒ 恰好一次 POST，URL 精确且 init 无 body 字段',
+    b2.calls.length === 1 && b2.calls[0].url === PATCH_URL
+    && String(b2.calls[0].init.method).toUpperCase() === 'POST'
+    && b2.calls[0].init.body === undefined, b2.calls)
+  // Q4：成功文案
+  const txt4 = textAll(b2.tree)
+  check('Q4 成功 ⇒ 出现「已应用，重启 DSH 后可读取订阅额度」且按钮消失',
+    txt4.includes('已应用，重启 DSH 后可读取订阅额度') && byAttr(b2.tree, 'data-cs-patch', 'apply') === undefined, txt4.slice(0, 200))
+  b2.restore()
+
+  // Q5：失败 ⇒ 固定文案且不含错误码/堆栈
+  const b5 = await mountPatchBlock({ active: true, writable: true }, { ok: false, error: 'E_CS_PATCH_IO' })
+  byAttr(b5.tree, 'data-cs-patch', 'apply').props.onClick()
+  const t5 = textAll(await b5.settle())
+  check('Q5 失败 ⇒ 固定文案且全文不含错误码/堆栈痕迹',
+    t5.includes('应用失败，请稍后重试或用命令行工具')
+    && !t5.includes('E_CS_PATCH') && !t5.includes('Error') && !t5.includes('at '), t5.slice(0, 240))
+  b5.restore()
+
+  // Q6：只读 ⇒ disabled
+  const b6 = await mountPatchBlock({ active: true, writable: false }, { ok: true, data: { applied: true } })
+  const btn6 = byAttr(b6.tree, 'data-cs-patch', 'apply')
+  check('Q6 writable:false ⇒ 按钮 disabled', btn6 !== undefined && btn6.props.disabled === true, btn6 && btn6.props.disabled)
+  b6.restore()
+
+  // Q7/Q8：接线层——设置页树里是否存在该组件元素及其 props
+  const incomp = openSettings(BASE_CFG, { codexSources: { ok: true, data: { sources: [
+    { id: 'connect', label: 'Codex Connect', enabled: true, compatible: true },
+    { id: 'subscription', label: 'Codex Subscription', enabled: true, compatible: false },
+  ], selected: 'connect' } } })
+  const treeI = await incomp.settle()
+  const nodesI = findComponentNodes(treeI, incomp.client.module.codexSource.PatchBlock)
+  check('Q7 incompatible ⇒ 设置页树里有 PatchBlock 且 active===true、writable 为布尔',
+    nodesI.length === 1 && nodesI[0].props.active === true && typeof nodesI[0].props.writable === 'boolean',
+    nodesI.map((n) => ({ active: n.props.active, writable: n.props.writable })))
+  incomp.client.restore()
+
+  const ready = openSettings(BASE_CFG, { codexSources: { ok: true, data: { sources: [
+    { id: 'connect', label: 'Codex Connect', enabled: true, compatible: true },
+    { id: 'subscription', label: 'Codex Subscription', enabled: true, compatible: true },
+  ], selected: 'connect' } } })
+  const treeR = await ready.settle()
+  const nodesR = findComponentNodes(treeR, ready.client.module.codexSource.PatchBlock)
+  check('Q8 ready ⇒ 该元素 active!==true（与 incompatible 夹具明确区分）',
+    nodesR.length === 0 || nodesR.every((n) => n.props.active !== true),
+    nodesR.map((n) => n.props.active))
+  ready.client.restore()
+}
+
+console.log('累计（含 Q 段）：' + (pass + fail) + ' 项：' + pass + ' 通过, ' + fail + ' 失败')
 process.exit(fail === 0 ? 0 : 1)
 
 
