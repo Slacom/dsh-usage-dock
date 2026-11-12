@@ -2,6 +2,28 @@
 
 供本项目后续会话、接手主代理及子代理恢复协作规则；以用户最新明确指令和[项目规范](AGENTS.md)为准。这里不保存凭据、金额、认证URL或临时许可。
 
+## 2026-11-12 15:30：**0.10.2 已发布；0.10.1 已撤（npm 用 deprecate + 删 GitHub Release/tag）**
+
+1. **发布物**：commit **`ae8e994`**、tag **`v0.10.2`**、GitHub Release id **`442612052`**（`/releases/latest` = v0.10.2）；
+   npm **`dsh-usage-dock@0.10.2`**，42 文件，线上 `dist.shasum` **`a4f567f3f54c9f81ecfd6783f542f88010a76eae`**（与本地 dry-run 一致），`dist-tags.latest = 0.10.2`。
+2. **本版内容**：
+   - **MiMo 单通道**：`mimoWireWithDisplay()` 语义改为「快照不适用 ⇒ 固定 `{error:'missing'}`、零请求」，不再回落旧 Cookie lane；
+     界面不再出现 Cookie / 401 / 登录态过期字样；`mimoCookie` 配置原样保留但不读取。
+   - **MiMo 默认态文案**：只剩「未登录 / 登录按钮 / 一行提示」，开发者措辞离屏。
+   - **Codex Subscription 一键适配**：Host 路由 `GET /api/plan-usage/codex-subscription/patch-state`、
+     `POST …/apply-patch`（拒绝非空 body：`E_CS_PATCH_ARGS`；目标包目录由模块位置推导、不接受参数）；
+     设置页新增模块级组件 `CodexSubscriptionPatchBlock`（hooks 全在顶部、四态、仅一次 POST、失败只显固定文案）；
+     补丁逻辑抽到 `plans/codex-subscription-patch.js` + `plans/patches/codex-subscription-3.2.6.json`（随包发布，42 文件里有它们）。
+   - **测试**：`test-codex-source-ui` 新增 Q1–Q8（87 项全过，**已用故意失败的副本验证 Q 段计入退出码 exit=1**；
+     原「79 项」汇总行在 Q 段之前打印，故另加一行「累计（含 Q 段）」）。
+3. **0.10.1 撤包结果（重要）**：`npm unpublish dsh-usage-dock@0.10.1 --force` **被 npm 拒绝（403 安全策略）**——
+   Automation token 无 unpublish 权限/需 OTP。**已改用**：
+   `npm deprecate dsh-usage-dock@0.10.1 "该版本已撤回，请安装 0.10.2（补丁工具内容已并入 0.10.2）"`（成功，registry 已带 deprecated 文案）；
+   并**删除** GitHub Release `v0.10.1`（id 442567445）与远端/本地 tag `v0.10.1`。
+   若要真正从 registry 抹除，只能由用户本人用 **OTP** 在 npm 网页/`npm unpublish` 交互式完成（通常限 72 小时内）。
+4. **已验证/未验证**：本地对真实 profile 的 `--check` = 「已适配」；**未**在真机点过「应用本地适配」按钮（需在未适配机器上实测）、
+   **未**测新电脑（无登录记录）下的 MiMo 默认态外观。下一步应由用户在新设备装 0.10.2 → 看 MiMo 卡片是否只剩登录入口 → 点一键适配 → 重启验 Subscription。
+
 ## 2026-11-12 14:36：**0.10.1 已发布**（第三方补丁工程化）
 
 1. **发布物**：commit **`454b6e7`**、tag **`v0.10.1`**、GitHub Release id **`442567445`**（`/releases/latest` = v0.10.1）；
