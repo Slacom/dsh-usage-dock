@@ -520,7 +520,24 @@ export function mimoDisplayWire(snapshot) {
     // 未选中该来源 ⇒ 这条 lane 对这轮结论**没有发言权**，交回 provider。
     if (snapshot.selected !== true) return null
     const name = BUILTIN_META.mimo.name
-    const missing = () => ({ id: 'mimo', name, error: 'missing' })
+    /**
+     * [0.10.5] 缺席时带上**固定枚举**原因，让界面能区分「没登录」和「读了但失败」。
+     *
+     * 真机故障：两种情况此前都是 `error:'missing'`，胶囊只能一律写「获取失败」，
+     * 未登录也被说成故障。这里只给三态字符串，不含账号、凭据、上游原文。
+     *   - `signed-out`：managed 且本机没有可用登录（displaySupported=false 且无已知失败码）
+     *   - `failed`：连续失败到阈值（freshness=failed 或 readFailures>=5）
+     *   - `pending`：其余（holding / authorizing / 无快照）
+     */
+    const missingState = () => {
+      if (snapshot.displaySupported !== true && (typeof snapshot.code !== 'string' || snapshot.code === '' || snapshot.code === 'E_NONE')) {
+        return 'signed-out'
+      }
+      const failures = typeof snapshot.readFailures === 'number' ? snapshot.readFailures : 0
+      if (snapshot.freshness === 'failed' || failures >= 5) return 'failed'
+      return 'pending'
+    }
+    const missing = () => ({ id: 'mimo', name, error: 'missing', mimoState: missingState() })
     // 适用但不在 verified（holding / stopped / expired / absent / 未知）⇒ 如实缺席。
     if (snapshot.state !== 'verified') return missing()
     const money = snapshot.balance
@@ -566,5 +583,13 @@ export async function mimoWireWithDisplay(source, fetchProvider) {
   const wire = mimoDisplayWire(snapshot)
   if (wire !== null) return wire
   void fetchProvider
-  return { id: 'mimo', name: 'Xiaomi MiMo', error: 'missing' }
+  // [0.10.5] 与 mimoDisplayWire 的缺席态同构：带固定枚举原因，界面据此区分未登录/失败/读取中。
+  const pendingState = snapshot !== null && typeof snapshot === 'object' && !Array.isArray(snapshot)
+    && snapshot.displaySupported !== true
+    && (typeof snapshot.code !== 'string' || snapshot.code === '' || snapshot.code === 'E_NONE')
+    ? 'signed-out'
+    : ((snapshot !== null && typeof snapshot === 'object' && !Array.isArray(snapshot)
+      && (snapshot.freshness === 'failed' || (typeof snapshot.readFailures === 'number' && snapshot.readFailures >= 5)))
+      ? 'failed' : 'pending')
+  return { id: 'mimo', name: 'Xiaomi MiMo', error: 'missing', mimoState: pendingState }
 }

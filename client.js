@@ -320,7 +320,9 @@ function CodexSubscriptionPatchBlock(props) {
       })
       .then(function (body) {
         if (aliveRef.current !== true) return
-        setStatus(body !== null && body !== undefined && body.ok === true ? 'done' : 'failed')
+        if (body !== null && body !== undefined && body.ok === true) { setStatus('done'); return }
+        // [0.10.3] 只按 Host 的**固定码**分流：码只在内存里比较，绝不渲染（更不回显上游正文/堆栈）。
+        setStatus(body !== null && body !== undefined && body.error === 'E_CS_PATCH_UNSUPPORTED' ? 'unsupported' : 'failed')
       }, function () {
         if (aliveRef.current === true) setStatus('failed')
       })
@@ -329,13 +331,23 @@ function CodexSubscriptionPatchBlock(props) {
     return h('p', { key: 'cs-patch-result', style: settingsHintStyle, 'data-cs-patch-result': 'done', 'data-codex-source-patch': 'done' },
       '已应用，重启 DSH 后可读取订阅额度')
   }
+  // [0.10.3] 版本无对应清单：说人话，不渲染固定码。
+  if (status === 'unsupported') {
+    return h('p', { key: 'cs-patch-result', style: settingsHintStyle, 'data-cs-patch-result': 'unsupported', 'data-codex-source-patch': 'unsupported' },
+      '当前第三方插件版本暂不支持一键适配，请升级本插件。')
+  }
   if (status === 'failed') {
     return h('p', { key: 'cs-patch-result', style: settingsHintStyle, 'data-cs-patch-result': 'failed', 'data-codex-source-patch': 'failed' },
       '应用失败，请稍后重试或用命令行工具')
   }
+  // [0.10.3] 版本无对应补丁清单：一句人话，不回显固定码。
+  if (status === 'unsupported') {
+    return h('p', { key: 'cs-patch-result', style: settingsHintStyle, 'data-cs-patch-result': 'unsupported', 'data-codex-source-patch': 'unsupported' },
+      '当前第三方插件版本暂不支持一键适配，请升级本插件。')
+  }
   return h('div', { key: 'cs-patch-block', 'data-cs-patch-block': '1', 'data-codex-source-patch': 'appliable', style: { display: 'flex', flexDirection: 'column', gap: 4 } },
     h('p', { style: settingsHintStyle, 'data-cs-patch-hint': '1' },
-      '检测到 Codex Subscription 未适配本插件（需要给第三方插件加一个只读接口）。'),
+      'Codex 订阅额度需要在本机做一次适配才能读取。'),
     h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
       h('button', {
         type: 'button',
@@ -426,12 +438,49 @@ function sortPlansByOrder(list, orderRaw) {
   })
 }
 
+/**
+ * [0.10.5] 重置倒计时改成**两段精度**，与厂商控制台一致（"4 小时 11 分" / "3 天 13 小时"）。
+ *
+ * 旧实现只给一个粗单位（"4 小时" / "4 天"），用户看不出到底是 4 小时 5 分还是 4 小时 55 分。
+ * 仍然只保留两级单位：三段太长，卡片里放不下也不易读；< 1 分钟才用秒。
+ * 一律 floor（不四舍五入），避免把 59 分 40 秒说成"60 分"。
+ */
+/**
+ * [0.10.5] 重置倒计时拆成**最多两段**，供固定宽度的两格右对齐渲染。
+ *
+ * 为什么拆段而不是一个字符串：不同窗口的时间长度差异很大（"4 时 59 分" vs "29 天 21 时"），
+ * 直接右对齐会让「分/时/天」这些尾单位参差，进度条也跟着每行不等长。拆成两格后，
+ * 每格定宽右对齐 ⇒ 尾单位竖直成列、进度条等长（用户 2026-11-12 明确要求）。
+ *
+ * 单位用单字「时」而非「小时」：同样信息下更窄，配合等宽数字能稳定列宽。
+ */
+function fmtResetParts(sec) {
+  if (sec == null || !(sec > 0)) return []
+  if (sec < 60) return [Math.max(1, Math.floor(sec)) + '秒']
+  if (sec < 3600) return [Math.floor(sec / 60) + '分']
+  if (sec < 86400) {
+    var h = Math.floor(sec / 3600)
+    var m = Math.floor((sec % 3600) / 60)
+    return m === 0 ? [h + '时'] : [h + '时', m + '分']
+  }
+  var d = Math.floor(sec / 86400)
+  var hh = Math.floor((sec % 86400) / 3600)
+  return hh === 0 ? [d + '天'] : [d + '天', hh + '时']
+}
+
+/** 两段拼成一个字符串（title / 无障碍文本用）。 */
 function fmtReset(sec) {
-  if (sec == null || !(sec > 0)) return ''
-  if (sec < 60) return Math.round(sec) + ' 秒'
-  if (sec < 3600) return Math.round(sec / 60) + ' 分钟'
-  if (sec < 86400) return Math.round(sec / 3600) + ' 小时'
-  return Math.round(sec / 86400) + ' 天'
+  return fmtResetParts(sec).join('')
+}
+
+/** [0.10.5] 绝对时间点（本地时区，`MM-DD HH:mm`），用于行内 tooltip。非法输入返回 ''。 */
+function fmtResetAt(resetsAt) {
+  if (typeof resetsAt !== 'string' || resetsAt.length === 0) return ''
+  var t = Date.parse(resetsAt)
+  if (!isFinite(t)) return ''
+  var d = new Date(t)
+  var pad = function (n) { return n < 10 ? '0' + n : '' + n }
+  return pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes())
 }
 
 function toneColor(p) {
@@ -451,6 +500,18 @@ function remainingToneColor(p) {
 function quotaToneColor(meta, p, limited) {
   if (limited) return 'var(--dsw-alias-state-error-primary)'
   return meta.percentMode === 'remaining' ? remainingToneColor(p) : toneColor(p)
+}
+
+/**
+ * [0.10.5] 已换算成"剩余"之后的着色。
+ *
+ * 背景（真机故障）：OpenCode Go 的 wire `percent` 是**已用**比例（1/0/0），旧代码直接当剩余
+ * 画出去，于是「用了 1%」显示成「剩余 0%」。显示层现在统一换算成剩余，**颜色也必须按剩余判定**
+ * （否则 99% 剩余会被 `toneColor` 判成红色）。只接受已经换算好的剩余值。
+ */
+function quotaToneColorRemaining(meta, shownRemaining, limited) {
+  if (limited) return 'var(--dsw-alias-state-error-primary)'
+  return remainingToneColor(shownRemaining)
 }
 
 // ===========================================================================
@@ -1278,13 +1339,24 @@ function ensureStyles() {
 var panelStyle = { position: 'absolute', left: 0, right: 0, bottom: 'calc(100% + 10px)', minWidth: 0, width: '100%', boxSizing: 'border-box', padding: 12, borderRadius: 12, background: 'var(--dsw-alias-bg-overlay)', border: '1px solid var(--dsw-alias-border-l1)', boxShadow: '0 8px 28px rgba(0,0,0,0.22)', color: 'var(--dsw-alias-label-primary)', fontSize: 12, overflowY: 'auto', maxHeight: '70vh' }
 var panelTitleStyle = { fontWeight: 600, margin: '0 0 10px', fontSize: 13 }
 var sectionTitleStyle = { fontWeight: 600, margin: '10px 0 4px', fontSize: 12 }
-var rowStyle = { display: 'flex', alignItems: 'center', gap: 8, margin: '6px 0' }
-var rowLabelStyle = { width: 44, flex: 'none', color: 'var(--dsw-alias-label-secondary)' }
-var barStyle = { flex: 1, height: 6, borderRadius: 3, background: 'var(--dsw-alias-border-l1)', overflow: 'hidden' }
-var barFillStyle = { display: 'block', height: '100%', borderRadius: 3, transition: 'width 0.2s ease' }
+var rowStyle = { display: 'flex', alignItems: 'center', gap: 4, margin: '6px 0' }
+var rowLabelStyle = { width: 40, flex: 'none', color: 'var(--dsw-alias-label-secondary)' }
+var barStyle = { flex: 1, height: 8, borderRadius: 4, background: 'var(--dsw-alias-border-l1)', overflow: 'hidden' }
+var barFillStyle = { display: 'block', height: '100%', borderRadius: 4, transition: 'width 0.2s ease' }
 // 列宽全部固定（label/bar/百分比/剩余时间），保证各行进度条与文字逐列对齐。
-var rowPctStyle = { width: 40, textAlign: 'right', flex: 'none', fontVariantNumeric: 'tabular-nums' }
-var rowResetStyle = { width: 48, flex: 'none', color: 'var(--dsw-alias-label-secondary)', fontSize: 11 }
+var rowPctStyle = { width: 36, textAlign: 'right', flex: 'none', fontVariantNumeric: 'tabular-nums' }
+/**
+ * [0.10.5] 重置列 = **两个定宽右对齐格子**（总宽 84，含 4px 间距）。
+ *
+ * 之前的"自适应宽度"会让每行的重置文字宽度不同 ⇒ 进度条每行长短不一、「分/时/天」参差。
+ * 现在整列**定宽 + 右对齐**，段间不留空格（"2时17分"），尾单位自然竖直成列、进度条逐行等长。
+ * `tabular-nums` 让数字等宽，避免 1/4/9 宽度差导致的抖动。
+ */
+var rowResetStyle = {
+  width: 62, flex: 'none', textAlign: 'right',
+  color: 'var(--dsw-alias-label-secondary)', fontSize: 11, whiteSpace: 'nowrap',
+  fontVariantNumeric: 'tabular-nums',
+}
 var noteStyle = { color: 'var(--dsw-alias-label-secondary)', fontSize: 11, marginTop: 6 }
 var sectionNoteStyle = { color: 'var(--dsw-alias-label-secondary)', fontSize: 11, margin: '2px 0 6px' }
 
@@ -2260,10 +2332,10 @@ function PlanUsageBadge(props) {
       capsuleRows.push({
         dot: 'var(--dsw-alias-label-tertiary)',
         label: meta.name,
-        values: [mimoReadFailed ? '余额读取失败' : mimoDisplayShortText(mimoDisplaySnap, mimoDisplayStore.resolving)],
+        values: [mimoReadFailed ? '获取失败' : mimoDisplayShortText(mimoDisplaySnap, mimoDisplayStore.resolving)],
         stale: false,
         // 失败时 title 也不得带具体原因/URL/错误正文
-        title: meta.name + ' ' + (mimoReadFailed ? '余额读取失败' : mimoDisplayStateText(mimoDisplaySnap)),
+        title: meta.name + ' ' + (mimoReadFailed ? '获取失败' : mimoDisplayStateText(mimoDisplaySnap)),
       })
       continue
     }
@@ -2301,17 +2373,39 @@ function PlanUsageBadge(props) {
     plan = adaptHostWindows(plan, meta)
     var worst = worstPercent(plan, meta)
     if (worst >= 0) {
+      /**
+       * [0.10.5] 胶囊同样按"剩余"显示：已用口径（OpenCode Go）换算 100 − 已用。
+       * 真机故障：wire 是 1/0/0（已用），旧代码直接显示成 0%/0%/0%，看起来像额度耗尽。
+       */
+      var usedMode = meta.percentMode !== 'remaining'
+      var shownOf = function (v) {
+        var raw = v && typeof v.percent === 'number' ? v.percent : 0
+        var shown = usedMode ? (100 - raw) : raw
+        if (shown < 0) return 0
+        if (shown > 100) return 100
+        return shown
+      }
+      var worstShown = 101
+      for (var wi = 0; wi < WINDOWS.length; wi++) {
+        if (plan[WINDOWS[wi].key] == null) continue
+        var shownWi = shownOf(plan[WINDOWS[wi].key])
+        if (shownWi < worstShown) worstShown = shownWi
+      }
+      if (worstShown > 100) worstShown = 0
       // 只展示上游实际返回的窗口，避免缺失的 5小时/月限被误写为 0%。
       var values = WINDOWS
         .filter(function (w) { return plan[w.key] != null })
-        .map(function (w) {
-          var v = plan[w.key]
-          return (v && typeof v.percent === 'number' ? v.percent : 0) + '%'
-        })
-      capsuleRows.push({ dot: quotaToneColor(meta, worst, false), label: meta.name, values: values, stale: plan.stale === true })
+        .map(function (w) { return shownOf(plan[w.key]) + '%' })
+      capsuleRows.push({ dot: quotaToneColorRemaining(meta, worstShown, false), label: meta.name, values: values, stale: plan.stale === true })
     } else if (plan.error === 'no-key') {
       // [local patch 0.8.1] MiMo 的凭据是控制台 Cookie，提示语区分开（no-key 泛指缺凭据）。
-      capsuleRows.push({ dot: null, label: meta.name, values: [meta.id === 'mimo' ? '请先登录' : '请设置 Key'], stale: false })
+      capsuleRows.push({ dot: null, label: meta.name, values: [meta.id === 'mimo' ? '未登录' : '请设置 Key'], stale: false })
+    } else if (meta.id === 'mimo' && plan.mimoState === 'signed-out') {
+      // [0.10.5] 没登录 ≠ 故障：胶囊按用户要求写「未登录」，不要冒充「获取失败」。
+      capsuleRows.push({ dot: null, label: meta.name, values: ['未登录'], stale: false })
+    } else if (meta.id === 'mimo' && plan.mimoState === 'pending') {
+      // 真正在等 Host 状态时才说「读取中…」，且不冒充故障。
+      capsuleRows.push({ dot: 'var(--dsw-alias-label-tertiary)', label: meta.name, values: ['读取中…'], stale: false })
     } else {
       capsuleRows.push({ dot: null, label: meta.name, values: ['获取失败'], stale: false })
     }
@@ -2422,11 +2516,11 @@ function PlanUsageBadge(props) {
       }
       var title = meta.name + (meta.creditMode === true ? ' 积分'
         : meta.balanceThreshold !== undefined ? ' 余额'
-        : (meta.percentMode === 'remaining' ? ' 剩余额度' : ' 用量')) + (plan.level ? ' · ' + plan.level : '')
+        : ' 剩余额度') + (plan.level ? ' · ' + plan.level : '')
       var inner
       if (plan.error) {
         // [refresh 2026-11-10] 本机显示会话读失败时，**具体原因（白名单错误码）只在这里给**：
-        // 胶囊数值 / 胶囊 title / 状态文案一律只说「余额读取失败」，不泄码、不泄 URL。
+        // 胶囊数值 / 胶囊 title / 状态文案一律只说「获取失败」，不泄码、不泄 URL。
         // displayFailureText 只在 planOf 的失败分支出现，且码已经过 DTO 白名单。
         var displayNote = plan.displaySource === true && typeof plan.displayFailureText === 'string'
           && plan.displayFailureText !== '' ? plan.displayFailureText : null
@@ -2624,19 +2718,29 @@ function PlanUsageBadge(props) {
           .map(function (w) {
           var v = plan[w.key]
           var pct = v && typeof v.percent === 'number' ? v.percent : 0
+          // [0.10.5] 已用口径 ⇒ 显示为剩余（100 − 已用）；进度条/百分比/颜色全部按剩余语义。
+          var shownPct = meta.percentMode === 'remaining' ? pct : (100 - pct)
+          if (shownPct < 0) shownPct = 0
+          if (shownPct > 100) shownPct = 100
           var limited = v && v.status === 'rate-limited'
-          var reset = ''
+          var resetParts = []
+          var resetAt = ''
           if (v && typeof v.resetsAt === 'string' && v.resetsAt.length > 0) {
-            reset = fmtReset((Date.parse(v.resetsAt) - Date.now()) / 1000)
+            resetParts = fmtResetParts((Date.parse(v.resetsAt) - Date.now()) / 1000)
+            // [0.10.5] 悬停给出**具体时间点**（本地时区），避免"3 天 13 时"还要自己换算。
+            resetAt = fmtResetAt(v.resetsAt)
           } else if (v && typeof v.resetInSec === 'number') {
-            reset = fmtReset(v.resetInSec)
+            resetParts = fmtResetParts(v.resetInSec)
+            resetAt = fmtResetAt(new Date(Date.now() + v.resetInSec * 1000).toISOString())
           }
-          var fill = Object.assign({}, barFillStyle, { width: Math.max(0, Math.min(100, pct)) + '%', background: quotaToneColor(meta, pct, limited) })
+          var fill = Object.assign({}, barFillStyle, { width: Math.max(0, Math.min(100, shownPct)) + '%', background: quotaToneColorRemaining(meta, shownPct, limited) })
+          // 段间不留空格（"2时17分"）：整列右对齐时尾单位自然成列，且空隙最小。
+          var resetText = resetParts.join('')
           return h('div', { style: rowStyle, key: w.key },
             h('span', { style: rowLabelStyle }, w.label),
             h('span', { style: barStyle }, h('span', { style: fill })),
-            h('span', { style: rowPctStyle }, pct + '%'),
-            h('span', { style: rowResetStyle }, reset),
+            h('span', { style: rowPctStyle }, shownPct + '%'),
+            h('span', { style: rowResetStyle, title: resetAt === '' ? undefined : '重置于 ' + resetAt }, resetText),
           )
         })
         // 套餐级脚注：各套餐的提示逻辑集中在 PLAN_NOTES 表（见上），
@@ -5107,6 +5211,41 @@ function mimoRememberedReasonNote(snap) {
   if (typeof snap.reasonCode === 'string' && snap.reasonCode !== '') parts.push('原因：' + snap.reasonCode)
   return parts.length === 0 ? '' : '（' + parts.join('；') + '）'
 }
+/** [0.10.3] 整行按钮（居中、与卡片其它按钮同款）。 */
+/**
+ * [0.10.3 修复] 二维码一律用 **data: URL**：blob URL 会在卸载时被 revoke，
+ * 重挂载后缓存里的地址已失效（这就是「重开设置页只剩 alt 文字」的根因）。
+ * 字节转二进制字符串按 0x8000 分块，避免 apply 超长参数栈；二维码通常 1–3 KB。
+ */
+function mimoBytesToBase64(bytes) {
+  if (bytes === null || bytes === undefined) return ''
+  var arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+  var bin = ''
+  var CHUNK = 0x8000
+  for (var i = 0; i < arr.length; i += CHUNK) {
+    bin += String.fromCharCode.apply(null, arr.subarray(i, i + CHUNK))
+  }
+  return typeof btoa === 'function' ? btoa(bin) : Buffer.from(arr).toString('base64')
+}
+/** [0.10.3] 把二维码字节变成 data URL（不再依赖 createObjectURL）。 */
+function mimoQrDataUrl(qr) {
+  var mime = qr !== null && qr !== undefined && typeof qr.mime === 'string' && qr.mime !== '' ? qr.mime : 'image/png'
+  var b64 = mimoBytesToBase64(qr !== null && qr !== undefined ? qr.bytes : null)
+  return b64 === '' ? '' : 'data:' + mime + ';base64,' + b64
+}
+
+function mimoWideButton(key, label, disabled, onClick) {
+  return h('button', {
+    key: key, type: 'button', 'data-mimo-wide': key,
+    style: Object.assign({}, settingsButtonStyle, { width: '100%', textAlign: 'center', justifyContent: 'center' },
+      disabled === true ? settingsButtonDisabledStyle : {}),
+    disabled: disabled === true, onClick: onClick,
+  }, label)
+}
+/** [0.10.3] 面板里所有文字统一走 12px 三级色；主状态行允许 13px 主色。 */
+var mimoCenterTextStyle = Object.assign({}, settingsHintStyle, { textAlign: 'center' })
+var mimoPrimaryTextStyle = Object.assign({}, settingsHintStyle, { fontSize: 13, color: 'var(--dsw-alias-label-primary)', textAlign: 'center' })
+
 function MimoRememberedPanel(props) {
   var disabled = props !== null && props !== undefined && props.disabled === true
   var snapHook = React.useState(null)
@@ -5128,7 +5267,12 @@ function MimoRememberedPanel(props) {
   var busyHook = React.useState(false)
   var busy = busyHook[0]
   var setBusy = busyHook[1]
-  var consentHook = React.useState({ a: false, b: false, c: false, d: false })
+  // [0.10.3] 初值全 true：UI 已无勾选，共识一次性表达（协议字段语义不变）
+  var consentHook = React.useState({ a: true, b: true, c: true, d: true })
+  /** [0.10.3] 唯一可见勾选「记住登录」：默认勾选；其余 3 项 consent 恒 true（登录动作即视为同意）。 */
+  var rememberHook = React.useState(true)
+  var remember = rememberHook[0]
+  var setRemember = rememberHook[1]
   var consent = consentHook[0]
   var setConsent = consentHook[1]
   var aliveRef = React.useRef(true)
@@ -5144,12 +5288,38 @@ function MimoRememberedPanel(props) {
   /** 发现请求的单调序号：只有**最新一次**发现可以采纳新 boot。 */
   var discSeqRef = React.useRef(0)
   var latestDiscRef = React.useRef(0)
+  /** [0.10.3] 自动放行动态目标：同一 approvalId 只发一次（不循环、不重发）。 */
+  var approvedRef = React.useRef('')
+  /** [0.10.3] 重挂载自愈：拿不到 QR 且无缓存时，按 authId 只自动取消一次。 */
+  var cancelSentRef = React.useRef('')
+  React.useEffect(function () {
+    var ap = snap !== null && snap !== undefined ? snap.approval : null
+    if (ap === null || ap === undefined) return
+    var apId = typeof ap.approvalId === 'string' ? ap.approvalId : ''
+    if (apId === '' || approvedRef.current === apId) return
+    approvedRef.current = apId
+    send('rememberedApprove', { approvalId: apId })
+  }, [snap])
+
+  /** [0.10.3 真 bug] 重挂载后 authorizing 但拿不到图 ⇒ 自动取消一次，回到 empty。 */
+  React.useEffect(function () {
+    if (snap === null || snap === undefined) return
+    // [0.10.3 收窄] 登录未完成 = authorizing 或 awaiting_confirmation；其它状态一律不取消
+    var unfinished = snap.state === 'authorizing' || snap.state === 'awaiting_confirmation'
+    if (!unfinished) return
+    // 只在本次挂载从未拿到本地二维码/候选时才放弃（用户正看着界面时不得误取消）
+    var hasLocal = qrUrlRef.current !== '' || (snap.candidate !== null && snap.candidate !== undefined)
+    if (hasLocal) return
+    var authId = typeof snap.authId === 'string' ? snap.authId : ''
+    if (authId === '') return
+    if (cancelSentRef.current === authId) return
+    cancelSentRef.current = authId
+    send('rememberedCancel')
+  }, [snap])
 
   function dropQr() {
-    if (qrUrlRef.current !== '') {
-      try { URL.revokeObjectURL(qrUrlRef.current) } catch (e) { /* 已释放 */ }
-      qrUrlRef.current = ''
-    }
+    // [0.10.3] data URL 无需 revoke，只清引用
+    qrUrlRef.current = ''
     setQrUrl('')
   }
 
@@ -5256,9 +5426,12 @@ function MimoRememberedPanel(props) {
               if (qrUrlRef.current !== '') return
               if (epochRef.current !== epoch || bootRef.current !== issuerBoot) return
               try {
-                var url = URL.createObjectURL(new Blob([qr.bytes], { type: qr.mime }))
+                // [0.10.3] data URL：卸载/重挂载都有效（不再 revoke）
+                var url = mimoQrDataUrl(qr)
+                if (url === '') return
                 qrUrlRef.current = url
                 setQrUrl(url)
+
               } catch (e) { /* 无 objectURL：只显示状态 */ }
             })
           }
@@ -5324,13 +5497,15 @@ function MimoRememberedPanel(props) {
     }, label)
   }
   if (st === null) children.push(h('div', { key: 'boot' }, '正在读取记住登录状态…'))
-  if (st === 'disabled') children.push(h('div', { key: 'off' }, '记住登录未启用（渠道或插件已关闭）。'))
-  if (st === 'unsupported') children.push(h('div', { key: 'unsup' }, '当前环境无法安全保存登录（不可用时不会以任何明文方式兜底）。'))
-  if (st === 'unreadable') children.push(h('div', { key: 'bad' }, '本地记住登录无法读取，需要本人重新扫码。'))
+  if (st === 'disabled') children.push(h('div', { key: 'off' }, '记住登录已关闭。'))
+  if (st === 'unsupported') children.push(h('div', { key: 'unsup' }, '此设备暂时无法安全保存登录。'))
+  if (st === 'unreadable') children.push(h('div', { key: 'bad' }, '本地登录记录读不到，请重新扫码。'))
   if (st === 'empty') {
-    children.push(h('div', { key: 'e0' }, '尚未记住登录。点击下方按钮用小米账号二维码登录一次（本次不需要输入任何账号 ID）。'))
-    children.push(mimoTiny('e1', '创建二维码并登录', false, function () {
-      // 用**刚返回**的快照里的 pair 起 begin（不用 render 闭包里的旧 snap）
+    // [0.10.3] 登录前**只有这 4 行**：状态行 / 一行说明 / 扫码登录 / 记住登录勾选。
+    children.push(h('div', { key: 'e0', 'data-mimo-auth-status': 'signed-out', style: mimoPrimaryTextStyle }, '未登录账号'))
+    children.push(h('div', { key: 'e0b', style: mimoCenterTextStyle }, '扫码登录后自动读取该账号余额。'))
+    children.push(mimoWideButton('e1', '扫码登录', busy || disabled, function () {
+      // [0.10.3] Host 只认 authConsent/consentVersion（routes.js 精确允许键），不得新增字段
       send('rememberedStart', { authConsent: true, consentVersion: 1 }).then(function (r) {
         if (r === null || r === undefined || r.ok !== true) return
         var fresh = r.remembered
@@ -5338,42 +5513,33 @@ function MimoRememberedPanel(props) {
         send('rememberedBegin', null, fresh)
       })
     }))
+    children.push(h('div', { key: 'e2', style: mimoCenterTextStyle }, '登录后会记住本机登录状态，可随时退出或忘记。'))
   }
   if (st === 'authorizing') {
-    children.push(h('div', { key: 'a0' }, '请用手机小米账号扫码确认（本机只显示一次性二维码）。'))
-    if (qrUrl !== '') children.push(h('img', { key: 'a1', src: qrUrl, alt: '小米账号登录二维码', width: 180, height: 180 }))
-    if (snap.approval !== null) {
-      children.push(h('div', { key: 'a2' }, '该登录需要额外批准目标：' + String(snap.approval.origin || '')))
-      children.push(mimoTiny('a3', '批准', false, function () { send('rememberedApprove', { approvalId: snap.approval.approvalId }) }))
-      children.push(mimoTiny('a4', '拒绝', false, function () { send('rememberedDeny', { approvalId: snap.approval.approvalId }) }))
-    }
-    children.push(mimoTiny('a5', '取消', false, function () { send('rememberedCancel') }))
+    // [0.10.3] 顺序按反馈：二维码在上，文字与按钮在下
+    // [0.10.3 更新] 只显示**本次挂载内**真正拿到的图；重挂载后没有图就不渲染 img（走自动放弃）
+    if (qrUrl !== '') children.push(h('img', { key: 'a1', src: qrUrl, alt: '小米账号登录二维码', width: 180, height: 180, style: { alignSelf: 'center' } }))
+    children.push(h('div', { key: 'a0', style: mimoCenterTextStyle }, '请用手机扫码确认。'))
+    children.push(mimoWideButton('a5', '取消', busy || disabled, function () { send('rememberedCancel') }))
   }
   if (st === 'awaiting_confirmation' && snap.candidate !== null) {
-    children.push(h('div', { key: 'c0' }, '请确认这是你的账号：'))
-    children.push(h('div', { key: 'c1', className: 'mimo-remembered-candidate' }, snap.candidate.label + '：' + snap.candidate.identifier + '（未取得可信昵称，只显示账号 ID）'))
-    var boxes = [
-      ['a', 'rememberConsent', '记住登录（下次启动自动恢复）'],
-      ['b', 'autoRestore', '启动后自动恢复登录'],
-      ['c', 'autoReadBalance', '启动后自动查询余额'],
-      ['d', 'autoRefresh', '启动后自动刷新余额']
-    ]
-    for (var i = 0; i < boxes.length; i++) {
-      (function (key, label) {
-        children.push(h('label', { key: 'cl-' + key }, h('input', {
-          type: 'checkbox',
-          checked: consent[key] === true,
-          onChange: function (ev) {
-            var next = { a: consent.a, b: consent.b, c: consent.c, d: consent.d }
-            next[key] = ev.target.checked === true
-            setConsent(next)
-          }
-        }), ' ' + label))
-      })(boxes[i][0], boxes[i][2])
-    }
-    var allTrue = consent.a === true && consent.b === true && consent.c === true && consent.d === true
-    children.push(mimoTiny('c9', '确认此账号并记住登录', allTrue !== true, function () { send('rememberedConfirm', { consentVersion: 1, rememberConsent: true, autoRestore: true, autoReadBalance: true, autoRefresh: true }) }))
-    children.push(mimoTiny('c8', '取消', false, function () { send('rememberedCancel') }))
+    children.push(h('div', { key: 'c0', style: mimoPrimaryTextStyle }, '确认这是你的账号？'))
+    // [0.10.3] 只显示 Host 给的账号标识本身，不拼昵称、不让用户输入
+    children.push(h('div', { key: 'c1', className: 'mimo-remembered-candidate', style: mimoCenterTextStyle }, '账号：' + snap.candidate.identifier))
+    // 一行两个按钮：各占一半、文字居中、高度与整行按钮一致
+    children.push(h('div', { key: 'c-row', style: { display: 'flex', gap: 8, alignItems: 'stretch' } },
+      h('button', {
+        key: 'c9', type: 'button', 'data-mimo-wide': 'c9',
+        style: Object.assign({}, settingsButtonStyle, { flex: '1 1 0', textAlign: 'center', justifyContent: 'center' }, (busy || disabled) ? settingsButtonDisabledStyle : {}),
+        disabled: busy || disabled,
+        onClick: function () { send('rememberedConfirm', { consentVersion: 1, rememberConsent: true, autoRestore: true, autoReadBalance: true, autoRefresh: true }) },
+      }, '确认这是我的账号'),
+      h('button', {
+        key: 'c8', type: 'button', 'data-mimo-wide': 'c8',
+        style: Object.assign({}, settingsButtonStyle, { flex: '1 1 0', textAlign: 'center', justifyContent: 'center' }, (busy || disabled) ? settingsButtonDisabledStyle : {}),
+        disabled: busy || disabled,
+        onClick: function () { send('rememberedCancel') },
+      }, '取消')))
   }
   if (st === 'restoring') children.push(h('div', { key: 'r0' }, '正在用已记住的登录恢复（不显示旧金额）。'))
   if (st === 'verified') {
@@ -5413,7 +5579,10 @@ function MimoRememberedPanel(props) {
       children.push(h('div', { key: 's1', className: 'mimo-remembered-reason' }, stopNote))
     }
   }
-  return h('div', { className: 'mimo-remembered-panel' }, children)
+  return h('div', {
+    className: 'mimo-remembered-panel',
+    style: { display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'stretch' },
+  }, children)
 }
 
 /**
@@ -5441,7 +5610,12 @@ function MimoAuthMount(props) {
   }, [])
   if (managed === true) return h(MimoRememberedPanel, props)
   if (ready !== true) return h('div', { className: 'mimo-auth-probe' }, '正在读取登录能力…')
-  return h(React.Fragment, null, h(MimoAuthPanel, props), h(MimoDisplayPanel, props))
+  /**
+   * [0.10.3] managed 之外的宿主**不再挂载旧实验面板**（新装环境回退到它正是本次事故）：
+   * 只给一行明确提示，不含任何勾选框 / 输入框 / 实验措辞。旧组件定义保留（测试引用），生产不渲染。
+   */
+  return h('p', { className: 'mimo-auth-unavailable', 'data-mimo-auth-unavailable': '1', style: settingsHintStyle },
+    '登录不可用（需要新版宿主），请升级 DSH')
 }
 
 function MimoAuthPanel(props) {
@@ -5527,6 +5701,7 @@ function MimoAuthPanel(props) {
     if (qrUrlRef.current !== null && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
       try { URL.revokeObjectURL(qrUrlRef.current) } catch (err) { /* 忽略 */ }
     }
+    // [0.10.3] 二维码是 data URL：revoke 只是空操作，保留调用以维持既有卸载语义
     qrUrlRef.current = null
   }
   function clearTimer() {
@@ -7170,12 +7345,13 @@ function mimoDisplayStateText(snapshot) {
     // managed：**没有活会话 ≠ 本机没启用**。空态/无错 → 「请先登录」；有已知固定失败码 →
     // 「登录状态不可用」（具体原因只进详情）。legacy 非 managed 仍沿用原「合成边界」文案。
     if (snapshot.managed === true) {
-      return mimoDisplayFailureCodeOf(snapshot) === '' ? '请先登录' : '登录状态不可用'
+      // [0.10.3] 未登录账号 / 获取余额失败（1..4 次 stale 仍保旧值，第 5 次才 failed——阈值未改）
+      return mimoDisplayFailureCodeOf(snapshot) === '' ? '未登录账号' : '获取余额失败'
     }
-    return '本机未启用（合成边界）'
+    return '本机未启用'
   }
   if (snapshot.state === 'holding') return '正在核对身份'
-  if (snapshot.state === 'verified') return snapshot.freshness === 'failed' ? '余额读取失败' : (snapshot.balance === null ? '正在读取余额' : '显示中')
+  if (snapshot.state === 'verified') return snapshot.freshness === 'failed' ? '获取余额失败' : (snapshot.balance === null ? '正在读取余额' : '显示中')
   if (snapshot.state === 'stopped') return '已停止（不显示数值）'
   if (snapshot.state === 'expired') return '已过期（不显示数值）'
   return '未开始'
@@ -7197,7 +7373,8 @@ function mimoDisplayShortText(snapshot, resolving) {  if (snapshot === null || s
   if (snapshot.displaySupported !== true) {
     // 与 stateText 同一套 managed 语义：未登录/已退出 ≠ 本机未启用。
     if (snapshot.managed === true) {
-      return mimoDisplayFailureCodeOf(snapshot) === '' ? '请先登录' : '登录状态不可用'
+      // [0.10.3] 胶囊：未登录 / 获取失败（与其它渠道同一套用词）
+      return mimoDisplayFailureCodeOf(snapshot) === '' ? '未登录' : '获取失败'
     }
     return '未启用'
   }
@@ -7205,7 +7382,7 @@ function mimoDisplayShortText(snapshot, resolving) {  if (snapshot === null || s
   if (snapshot.state === 'holding') return '核对中…'
   if (snapshot.state === 'stopped') return '已停止'
   if (snapshot.state === 'expired') return '已过期'
-  if (snapshot.state === 'verified') return snapshot.freshness === 'failed' ? '余额读取失败' : '待读取'
+  if (snapshot.state === 'verified') return snapshot.freshness === 'failed' ? '获取失败' : '待读取'
   return '未开始'
 }
 function mimoDisplayTimeText(ms) {
@@ -7291,6 +7468,21 @@ function mimoDisplayOverlay(plans, snapshot, options) {
     for (var k = 0; k < plans.length; k++) {
       var item = plans[k]
       if (item !== null && typeof item === 'object' && item.id === 'mimo') {
+        /**
+         * [0.10.5] 只有"本机显示会话"来的 wire 才允许在 resolving 期间直接展示。
+         *
+         * 真机故障：Host 已返回 14.58 CNY，胶囊却长期显示「读取中…」——因为旧代码无条件用
+         * hold 占位盖掉了真实余额。但**旧 Cookie 通道**的遗留值（带 `via:'console'` /
+         * `cashBalance` / `giftBalance` 标记）仍必须遮蔽：那是"手工旧值"，不是可信来源，
+         * 这条安全语义（N4 墓碑）不能丢。
+         */
+        var looksLegacyCookie = item.via === 'console'
+          || item.cashBalance !== undefined || item.giftBalance !== undefined
+          || item.isAvailable !== undefined
+        if (!looksLegacyCookie && typeof item.balance === 'number' && isFinite(item.balance)) {
+          masked.push(item)
+          continue
+        }
         replacedPending = true
         masked.push(mimoDisplayPlanOf({ displaySupported: true, selected: true, state: 'holding', balance: null, freshness: null, fetchedAt: null, revision: 0, refreshCount: 0, maxAutoRefresh: 0, identity: null, code: '', awaitingBalanceMatch: false }, item))
         continue
@@ -7333,8 +7525,8 @@ function mimoDisplayPlanOf(snapshot, base) {
   if (snapshot.state === 'verified' && (snapshot.freshness === 'failed' || readFailures >= 5)) {
     // fail-closed：即使 DTO 仍带 balance，也一律不显示金额
     plan.error = 'display'
-    plan.displayFailureText = '余额读取失败：' + (typeof snapshot.code === 'string' && snapshot.code !== '' ? snapshot.code : 'E_UNKNOWN')
-    plan.message = '余额读取失败'
+    plan.displayFailureText = '获取余额失败：' + (typeof snapshot.code === 'string' && snapshot.code !== '' ? snapshot.code : 'E_UNKNOWN')
+    plan.message = '获取余额失败'
     return plan
   }
   if (snapshot.state === 'verified' && snapshot.balance !== null && typeof snapshot.balance.balance === 'number') {
@@ -7348,11 +7540,11 @@ function mimoDisplayPlanOf(snapshot, base) {
   plan.error = 'display'
   if (snapshot.managed === true && snapshot.displaySupported !== true && mimoDisplayFailureCodeOf(snapshot) !== '') {
     // managed 非活态但带着**已知固定失败码**（记录不可读 / binding 不符 / 登录后未验证…）：
-    // 胶囊只说「登录状态不可用」，具体固定码只给详情。
-    plan.displayFailureText = '登录状态不可用：' + mimoDisplayFailureCodeOf(snapshot)
+    // 胶囊只说「获取失败」，具体固定码只给详情。
+    plan.displayFailureText = '获取余额失败：' + mimoDisplayFailureCodeOf(snapshot)
   } else if (snapshot.freshness === 'failed' || (snapshot.readFailures === undefined ? 0 : snapshot.readFailures) >= 5) {
     // 第 5 次失败：固定码/固定理由（code 已在 DTO 白名单内，未知也只用 generic）
-    plan.displayFailureText = '余额读取失败：' + (typeof snapshot.code === 'string' && snapshot.code !== '' ? snapshot.code : 'E_UNKNOWN')
+    plan.displayFailureText = '获取余额失败：' + (typeof snapshot.code === 'string' && snapshot.code !== '' ? snapshot.code : 'E_UNKNOWN')
   }
   plan.message = mimoDisplayStateText(snapshot)
   return plan

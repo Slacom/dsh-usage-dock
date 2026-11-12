@@ -60,33 +60,56 @@ function buttons(tree) {
 }
 
 async function main() {
-  await check('T1 empty：创建二维码按钮存在且 disabled=busy/disabled 一致', async () => {
+  // [0.10.5] 面板在 0.10.3 收敛成「未登录账号 + 一行说明 + 整行扫码登录」：
+  // 不再有 consent 勾选、不再要求用户事先输入账号 ID。
+  await check('T1 empty：未登录文案 + 一个整行扫码登录按钮（无勾选/无输入）', async () => {
     const api = makeApi({ snapshot: snap({ state: 'empty' }) })
     const tree = await mountPanel(api)
     const txt = textOf(tree)
-    assert.ok(txt.includes('尚未记住登录'))
-    const btn = buttons(tree).find((b) => textOf(b).includes('创建二维码并登录'))
+    assert.ok(txt.includes('未登录账号'))
+    assert.ok(txt.includes('扫码登录后自动读取该账号余额'))
+    const btn = buttons(tree).find((b) => textOf(b).includes('扫码登录'))
     assert.ok(btn !== undefined)
+    assert.equal(btn.props['data-mimo-wide'], 'e1')
     assert.equal(btn.props.disabled, false)
-    assert.equal(btn.props.style.fontSize, 12)
+    // 用户要求：登录前**不要**任何勾选与账号输入框
+    assert.equal(nodes(tree).filter((n) => n.type === 'input').length, 0)
+    assert.equal(txt.includes('记住登录（下次启动自动恢复）'), false)
   })
 
-  await check('T2 authorizing：QR/取消按钮为 tiny，取消不发 vendor', async () => {
+  await check('T2 authorizing：二维码提示 + 整行取消按钮，点击只发一次 rememberedCancel', async () => {
     const api = makeApi({ snapshot: snap({ state: 'authorizing', hasQr: true, authId: 'a'.repeat(32), canBegin: false }) })
     const tree = await mountPanel(api)
+    const txt = textOf(tree)
+    assert.ok(txt.includes('请用手机扫码确认'))
     const b = buttons(tree).find((x) => textOf(x) === '取消')
     assert.ok(b !== undefined)
-    assert.equal(b.props.style.fontSize, 12)
+    assert.equal(b.props['data-mimo-wide'], 'a5')
+    const before = api.calls.filter((x) => x.body !== null && x.body.action === 'rememberedCancel').length
+    b.props.onClick()
+    await new Promise((r) => setTimeout(r, 0))
+    const after = api.calls.filter((x) => x.body !== null && x.body.action === 'rememberedCancel').length
+    assert.equal(after - before, 1)
   })
 
-  await check('T3 awaiting_confirmation：4 勾 + 短确认按钮；全勾才可确认', async () => {
+  // [0.10.5] 扫码成功后由 Host 给出**候选账号 ID**，用户只点一次确认；全程不手输 ID。
+  await check('T3 awaiting_confirmation：显示候选账号 + 两个并排按钮（确认/取消）', async () => {
     const api = makeApi({ snapshot: snap({ state: 'awaiting_confirmation', authId: 'b'.repeat(32), candidate: { label: '小米账号ID', identifier: '777' }, canConfirm: true }) })
     const tree = await mountPanel(api)
     const txt = textOf(tree)
-    for (const s of ['记住登录', '启动后自动恢复登录', '启动后自动查询余额', '启动后自动刷新余额']) assert.ok(txt.includes(s), s)
-    const confirm = buttons(tree).find((x) => textOf(x).includes('确认此账号并记住登录'))
+    assert.ok(txt.includes('确认这是你的账号'))
+    assert.ok(txt.includes('账号：777'))
+    const confirm = buttons(tree).find((x) => textOf(x).includes('确认这是我的账号'))
     assert.ok(confirm !== undefined)
-    assert.equal(confirm.props.disabled, true) // 默认 4 勾未全真
+    assert.equal(confirm.props['data-mimo-wide'], 'c9')
+    const cancel = buttons(tree).find((x) => textOf(x) === '取消')
+    assert.ok(cancel !== undefined)
+    assert.equal(cancel.props['data-mimo-wide'], 'c8')
+    // 不再有 4 个 consent 勾选，也不需要用户输入账号
+    assert.equal(nodes(tree).filter((n) => n.type === 'input').length, 0)
+    for (const s of ['启动后自动恢复登录', '启动后自动查询余额', '启动后自动刷新余额']) {
+      assert.equal(txt.includes(s), false, s)
+    }
   })
 
   await check('T4 verified：只有更新于/账号/退出；退出点击恰好一次 rememberedForget', async () => {

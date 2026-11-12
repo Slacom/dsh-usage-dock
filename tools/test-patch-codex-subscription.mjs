@@ -1,8 +1,10 @@
 /**
  * [0.10.1] `tools/patch-codex-subscription.mjs` 的离线回归。
+ * [0.10.3] 追加多版本清单回归：3.2.13 移植清单、按已装版本选清单、缺/非法清单零写入。
  *
  * 全部在**临时目录里的副本**上做：不读也不写真实 profile（真实包的路径只出现在工具里）。
- * 夹具来源：`.diagnostics/codex-subscription-readonly-service-20261111/base/index.js`（base 字节）。
+ * 夹具来源：`.diagnostics/codex-subscription-readonly-service-20261111/base/index.js`（3.2.6 base 字节）、
+ *          `.diagnostics/codex-subscription-3.2.13/extracted/package/lib/index.js`（3.2.13 base 字节）。
  */
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -164,6 +166,92 @@ const out = (r) => String(r.stdout || '') + String(r.stderr || '')
   check('H9 源码守卫：已无「合成边界；生产未启用」字样', !clientSrc.includes('合成边界；生产未启用'))
   check('H10 源码守卫：默认态含「未登录（点击登录）」状态行与单行提示',
     clientSrc.includes('未登录（点击登录）') && clientSrc.includes('登录后可自动读取余额'))
+}
+
+// ===========================================================================
+// [0.10.3] 多版本清单：3.2.13 移植 + 按已装版本选清单 + 缺/非法清单零写入
+// ===========================================================================
+{
+  const mod = await import('../plans/codex-subscription-patch.js')
+  const M13 = JSON.parse(readFileSync(join(HERE, '..', 'plans', 'patches', 'codex-subscription-3.2.13.json'), 'utf8'))
+  const BASE13 = join(HERE, '..', '.diagnostics', 'codex-subscription-3.2.13', 'extracted', 'package', 'lib', 'index.js')
+  if (!existsSync(BASE13)) {
+    console.error('缺少 3.2.13 基线夹具：' + BASE13)
+    process.exit(1)
+  }
+  const base13 = readFileSync(BASE13)
+  const root3 = mkdtempSync(join(tmpdir(), 'dsh-cs-multi-'))
+  const mk3 = (name, version, bytes) => {
+    const dir = join(root3, name)
+    mkdirSync(join(dir, 'lib'), { recursive: true })
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-codex-subscription', version }) + '\n')
+    writeFileSync(join(dir, 'lib', 'index.js'), bytes)
+    return dir
+  }
+  const target13 = (dir) => join(dir, 'lib', 'index.js')
+
+  const all = mod.listManifests()
+  check('V1 清单目录同时提供 3.2.6 与 3.2.13', all.map((e) => e.manifest.version).sort().join(',') === '3.2.13,3.2.6', all.map((e) => e.manifest.version))
+  check('V2 3.2.13 清单 baseSha == 3.2.13 基线哈希', M13.baseSha.toLowerCase() === sha256(base13).toLowerCase(), { want: M13.baseSha, got: sha256(base13) })
+  check('V3 loadManifest("3.2.13") 版本精确命中', mod.loadManifest('3.2.13').version === '3.2.13')
+  check('V4 loadManifest("3.2.6") 仍可用（两版并存）', mod.loadManifest('3.2.6').version === MANIFEST.version)
+
+  const hits13 = mod.hunkHits(base13.toString('utf8'), M13)
+  check('V5 3.2.13 基线 4 条 hunk 各命中 1 次', hits13.length === 4 && hits13.every((r) => r.hits === 1), hits13)
+
+  const dir13 = mk3('v3213', '3.2.13', Buffer.from(base13))
+  const s13 = mod.readPatchState(dir13)
+  check('V6 readPatchState 按已装版本自动选 3.2.13 清单 → appliable',
+    s13.state === 'appliable' && s13.manifestVersion === '3.2.13', { state: s13.state, mv: s13.manifestVersion })
+  const a13 = mod.applyPatch(dir13, { backupRoot: join(root3, 'bk13') })
+  const sha13 = sha256(readFileSync(target13(dir13)))
+  check('V7 applyPatch(3.2.13) → applied 且 newSha == programSha',
+    a13.applied === true && sha13.toLowerCase() === M13.programSha.toLowerCase(), { sha13, want: M13.programSha })
+  const chk13 = spawnSync(process.execPath, ['--check', target13(dir13)], { encoding: 'utf8' })
+  check('V8 打完的 3.2.13 文件 node --check 通过', chk13.status === 0, chk13.stderr)
+  check('V9 打完状态 patched', mod.readPatchState(dir13).state === 'patched')
+  const rv13 = mod.revertPatch(dir13, join(root3, 'bk13'))
+  check('V10 revertPatch(3.2.13) → 与基线逐字节一致',
+    rv13.restoredSha.toLowerCase() === M13.baseSha.toLowerCase() && Buffer.compare(readFileSync(target13(dir13)), base13) === 0, rv13)
+
+  // 未收录版本 ⇒ unsupported + 零写入
+  const dir312 = mk3('v3212', '3.2.12', Buffer.from(base13))
+  const s312 = mod.readPatchState(dir312)
+  let threw312 = null
+  try { mod.applyPatch(dir312, { backupRoot: join(root3, 'bk-none') }) } catch (err) { threw312 = err && err.code }
+  check('V11 版本 3.2.12（两版都无）→ unsupported 且 apply 抛 UNSUPPORTED、零写入',
+    s312.state === 'unsupported' && s312.manifestAvailable === false && threw312 === 'E_CS_PATCH_UNSUPPORTED'
+      && Buffer.compare(readFileSync(target13(dir312)), base13) === 0, { state: s312.state, threw312 })
+
+  // 空清单目录（缺清单）⇒ 拒绝零写入
+  const emptyDir = join(root3, 'manifests-empty')
+  mkdirSync(emptyDir, { recursive: true })
+  let threwEmpty = null
+  try { mod.loadManifest('3.2.6', emptyDir) } catch (err) { threwEmpty = err && err.code }
+  const dir26 = mk3('v326-nomanifest', '3.2.6', Buffer.from(baseBytes))
+  let threwEmptyApply = null
+  try { mod.applyPatch(dir26, { backupRoot: join(root3, 'bk-empty'), manifestDir: emptyDir }) } catch (err) { threwEmptyApply = err && err.code }
+  check('V12 清单目录为空 → loadManifest 抛 UNSUPPORTED，apply 抛 UNSUPPORTED 且零写入',
+    threwEmpty === 'E_CS_PATCH_UNSUPPORTED' && threwEmptyApply === 'E_CS_PATCH_UNSUPPORTED'
+      && Buffer.compare(readFileSync(target13(dir26)), baseBytes) === 0, { threwEmpty, threwEmptyApply })
+
+  // 非法清单（坏 JSON / 缺 programSha）不瘫痪其它版本
+  const mixedDir = join(root3, 'manifests-mixed')
+  mkdirSync(mixedDir, { recursive: true })
+  writeFileSync(join(mixedDir, 'codex-subscription-3.2.7.json'), '{ this is not json ')
+  writeFileSync(join(mixedDir, 'codex-subscription-3.2.8.json'), JSON.stringify({ version: '3.2.8', file: 'lib/index.js', baseSha: 'x', hunks: [] }))
+  writeFileSync(join(mixedDir, 'codex-subscription-3.2.6.json'), readFileSync(join(HERE, '..', 'plans', 'patches', 'codex-subscription-3.2.6.json'), 'utf8'))
+  const mixedList = mod.listManifests(mixedDir)
+  const dir26b = mk3('v326-mixed', '3.2.6', Buffer.from(baseBytes))
+  let mixedApplied = null
+  try { mixedApplied = mod.applyPatch(dir26b, { backupRoot: join(root3, 'bk-mixed'), manifestDir: mixedDir }) } catch (err) { mixedApplied = err && err.code }
+  check('V13 坏清单被跳过、合法清单照常可用（apply 成功）',
+    mixedList.length === 1 && mixedList[0].manifest.version === '3.2.6'
+      && Boolean(mixedApplied && mixedApplied.applied === true)
+      && sha256(readFileSync(target13(dir26b))).toLowerCase() === MANIFEST.programSha.toLowerCase(),
+    { mixed: mixedList.map((e) => e.manifest.version), mixedApplied })
+
+  rmSync(root3, { recursive: true, force: true })
 }
 
 rmSync(root, { recursive: true, force: true })

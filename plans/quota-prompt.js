@@ -63,6 +63,14 @@ const ROUTE_TABLE = Object.freeze({
   'openai-codex': { channelId: 'codex' },
   workbuddy: { channelId: 'workbuddy' },
   'workbuddy-ai': { channelId: 'workbuddy-ai' },
+  /**
+   * [0.10.5] OpenCode Go 的 provider route id 就是 `opencode-go`。
+   *
+   * 真机故障：用户**正在用** OpenCode Go 聊天、策略也关注了它，但提示词里没有任何额度快照——
+   * 因为本表漏了这条，`resolveRoute` 返回 null，`buildQuotaView` 判为 `unmapped` 后
+   * 按"不认识的路由不猜"原则静默不投放。补上映射后与模型清单里的 provider id 对齐。
+   */
+  'opencode-go': { channelId: 'opencode-go' },
   'deepseek-account': { channelId: 'deepseek', source: 'account' },
   'deepseek-official': { channelId: 'deepseek', source: 'api' },
 })

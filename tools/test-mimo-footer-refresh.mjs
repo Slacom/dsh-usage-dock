@@ -303,11 +303,11 @@ async function main() {
     const s = await bootSession(owner)
     const txt = textOf(s.tree)
     assert.equal(txt.includes('11.11'), false, '失败态不得显示任何金额')
-    assert.ok(txt.includes('余额读取失败'))
+    assert.ok(txt.includes('获取失败'))
 
     const pill = pillOf(s.tree)
     assert.ok(pill !== null)
-    assert.ok(pill.props.title.includes('余额读取失败'))
+    assert.ok(pill.props.title.includes('获取失败'))
     assert.equal(pill.props.title.includes('E_MIMO'), false, '胶囊 title 不得带原因码')
     assert.equal(pill.props.title.includes('TRANSIENT'), false)
     assert.equal(pill.props['aria-label'], undefined, '胶囊不得另挂 aria-label 泄原因')
@@ -319,7 +319,7 @@ async function main() {
     const panelText = textOf(panel)
     // 详情里给白名单固定码；胶囊值/title 一律不带
     assert.ok(panelText.includes('E_MIMO_CONSOLE_TRANSIENT'), '详情里给白名单固定码')
-    assert.ok(panelText.includes('余额读取失败'), '详情保留固定前缀文案')
+    assert.ok(panelText.includes('获取余额失败'), '详情保留固定前缀文案')
     assert.equal(panelText.includes('11.11'), false, '详情也不得显示金额')
     assert.equal(owner.refreshCalls, 1, '失败态打开详情仍允许一次主动读（Host 侧继续自动读）')
     const pillAfter = pillOf(s.tree)
@@ -440,7 +440,7 @@ async function main() {
     assert.ok(ownerA.statusCalls > statusBeforeA, '可信 ok:false 之后必须补一次 pureStatus（不能等下一轮轮询）')
     const txtA = textOf(a.tree)
     assert.equal(txtA.includes('11.11'), false, '第 5 次失败必须立刻隐藏金额')
-    assert.ok(txtA.includes('余额读取失败'))
+    assert.ok(txtA.includes('获取失败'))
     const panelA = panelOf(a.tree)
     assert.ok(panelA !== null)
     assert.ok(textOf(panelA).includes('E_MIMO_REMEMBERED_READ_TIMEOUT'), '详情给固定超时码（不是 E_UNKNOWN）')
@@ -491,7 +491,7 @@ async function main() {
     assert.ok(textOf(s.tree).includes('7.38'), '其它渠道不受影响')
     assert.equal(textOf(s.tree).includes('本机未启用'), false, 'managed 空态不得说成「本机未启用」')
     assert.equal(textOf(s.tree).includes('合成边界'), false)
-    assert.ok(textOf(mimoRowOf(s.tree)).includes('请先登录'), '空态诚实说「请先登录」')
+    assert.ok(textOf(mimoRowOf(s.tree)).includes('未登录'), '空态诚实说「未登录」（胶囊短词）')
     pillOf(s.tree).props.onClick()
     await s.settle()
     const panel = panelOf(s.tree)
@@ -527,7 +527,7 @@ async function main() {
     assert.equal(junk.code, '')
   })
 
-  await check('F12 managed 非活态文案：空态「请先登录」/ 失败「登录状态不可用」+ 原因只在详情', async () => {
+  await check('F12 managed 非活态文案：空态「未登录账号」/ 失败「获取余额失败」+ 原因只在详情', async () => {
     // 12a empty（无错、非活）
     const ownerEmpty = makeOwner({
       display: display({
@@ -536,20 +536,21 @@ async function main() {
       }),
     })
     const e = await bootSession(ownerEmpty)
-    assert.equal(e.client.mimoDisplay.stateText(e.client.mimoDisplay.store.snapshot), '请先登录')
+    assert.equal(e.client.mimoDisplay.stateText(e.client.mimoDisplay.store.snapshot), '未登录账号')
     const eRow = mimoRowOf(e.tree)
     assert.ok(eRow !== null)
-    assert.ok(textOf(eRow).includes('请先登录'))
+    // [0.10.5] 胶囊短文案是「未登录」，详情写全称「未登录账号」。
+    assert.ok(textOf(eRow).includes('未登录'))
     assert.equal(textOf(e.tree).includes('本机未启用'), false)
     assert.equal(textOf(e.tree).includes('合成边界'), false)
     const ePill = pillOf(e.tree)
-    assert.ok(ePill.props.title.includes('请先登录'))
+    assert.ok(ePill.props.title.includes('未登录'))
     ePill.props.onClick()
     await e.settle()
-    assert.ok(textOf(panelOf(e.tree)).includes('请先登录'))
+    assert.ok(textOf(panelOf(e.tree)).includes('未登录账号'))
     assert.equal(ownerEmpty.refreshCalls, 0, '未登录不得取余额')
 
-    // 12b failed（带已知固定码）：胶囊只说「登录状态不可用」，原因只进详情
+    // 12b failed（带已知固定码）：胶囊只说「获取余额失败」，原因只进详情
     const ownerFailed = makeOwner({
       display: display({
         displaySupported: false, selected: true, managed: true, state: 'absent',
@@ -558,7 +559,7 @@ async function main() {
     })
     const f = await bootSession(ownerFailed)
     const fTxt = textOf(f.tree)
-    assert.ok(fTxt.includes('登录状态不可用'))
+    assert.ok(fTxt.includes('获取失败'))
     assert.equal(fTxt.includes('E_MIMO_REMEMBERED_RECORD_UNREADABLE'), false, '胶囊不得泄漏原因码')
     assert.equal(fTxt.includes('本机未启用'), false)
     assert.equal(fTxt.includes('合成边界'), false)
@@ -568,13 +569,13 @@ async function main() {
     await f.settle()
     const fPanel = panelOf(f.tree)
     assert.ok(fPanel !== null)
-    assert.ok(textOf(fPanel).includes('登录状态不可用：E_MIMO_REMEMBERED_RECORD_UNREADABLE'), '详情给固定原因码')
+    assert.ok(textOf(fPanel).includes('获取余额失败：E_MIMO_REMEMBERED_RECORD_UNREADABLE'), '详情给固定原因码')
     assert.equal(ownerFailed.refreshCalls, 0, '非活态不取余额')
 
     // 12c legacy 非 managed 文案不动（纯函数直测，不挂载）
     assert.equal(
       e.client.mimoDisplay.stateText({ managed: false, displaySupported: false, state: 'absent', code: '', freshness: null, balance: null }),
-      '本机未启用（合成边界）',
+      '本机未启用',
     )
     assert.equal(
       e.client.mimoDisplay.shortText({ managed: false, displaySupported: false, state: 'absent', code: '', freshness: null, balance: null }, false),

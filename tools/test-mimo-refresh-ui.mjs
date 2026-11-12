@@ -37,10 +37,11 @@ async function main() {
     const d = client.mimoDisplay.pick({ ok: true, bootEpoch: 'a'.repeat(32), display: SNAP({ balance: null, readFailures: 5, freshness: 'failed', code: 'E_MIMO_AUTH_SSO_CHALLENGE' }) }).display
     const plan = client.mimoDisplay.planOf(d, null)
     assert.equal(plan.error, 'display')
-    assert.ok(plan.displayFailureText.startsWith('余额读取失败：'))
+    assert.ok(plan.displayFailureText.startsWith('获取余额失败：'))
     assert.equal(plan.displayFailureText.includes('http'), false)
-    assert.equal(client.mimoDisplay.stateText(d), '余额读取失败')
-    assert.equal(client.mimoDisplay.shortText(d, false), '余额读取失败')
+    assert.equal(client.mimoDisplay.stateText(d), '获取余额失败')
+    // [0.10.5] 胶囊短文案与其它渠道对齐为「获取失败」；详情才用全称「获取余额失败」。
+    assert.equal(client.mimoDisplay.shortText(d, false), '获取失败')
   })
 
   check('R4 前 4 次失败：保留旧金额 + stale 标记；无历史时中性“正在读取余额”', () => {

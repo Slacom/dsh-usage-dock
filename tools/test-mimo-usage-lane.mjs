@@ -140,9 +140,12 @@ function verifiedSnapshot(over) {
     Object.keys(wire).sort().join(',') === 'balance,currency,fetchedAt,id,name', Object.keys(wire))
 
   const holdingLeak = mimoDisplayWire(Object.assign({}, leaky, { state: 'holding' }))
-  check('L2c missing wire 同样不含哨兵（只有 id/name/error）',
+  check('L2c missing wire 同样不含哨兵（只有 id/name/error/mimoState）',
     holdingLeak !== null && !JSON.stringify(holdingLeak).includes(SENTINEL)
-    && Object.keys(holdingLeak).sort().join(',') === 'error,id,name', holdingLeak)
+    // [0.10.5] 缺席态新增固定枚举 mimoState（signed-out|failed|pending），供胶囊区分「未登录/失败/读取中」；
+    // 仍是**闭集**白名单：多一个字段就该红。
+    && Object.keys(holdingLeak).sort().join(',') === 'error,id,mimoState,name'
+    && ['signed-out', 'failed', 'pending'].includes(holdingLeak.mimoState), holdingLeak)
 }
 
 // ===========================================================================

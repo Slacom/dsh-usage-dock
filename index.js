@@ -334,6 +334,12 @@ export function apply(ctx, config) {
         return true
       } catch { return false }
     },
+    /**
+     * [0.10.3] 生产默认开启：之前这两项只在本地 staged 版里有，发布包缺失，
+     * 导致新装环境进不了 managed 模式、客户端回退到旧的实验面板。
+     */
+    enableConsoleProtocol: true,
+    enableRememberedAccount: true,
   })
 
   /**
@@ -1042,38 +1048,82 @@ export function apply(ctx, config) {
 
   // ---- 动态 context：每次请求（含同 step 重试）重新求值 ----
   let quotaContextDispose = null
+  /**
+   * [0.10.5] 注入可观测性：用户看不到「上下文注入」时，必须能自证"有没有注册、为什么没文本"。
+   * 只记录**固定枚举**（不含额度数值、不含账号、不含上游原文）。
+   */
+  let quotaContextRegistered = false
+  let quotaContextState = 'unregistered'
+  let quotaContextChannel = null
+  const quotaContextReasonOf = (view) => {
+    if (view === null || view === undefined || typeof view !== 'object') return 'no-view'
+    if (view.enabled !== true) return 'policy-off'
+    if (typeof view.channelId !== 'string' || view.channelId.length === 0) {
+      if (view.unobserved === true) return 'unobserved-route'
+      if (view.notAllowed !== undefined) return 'route-not-focused'
+      if (view.ambiguous === true) return 'route-ambiguous'
+      if (view.unmapped !== undefined) return 'route-unmapped'
+      if (view.channelDisabled !== undefined) return 'channel-disabled'
+      if (view.poolUnproven !== undefined) return 'pool-unproven'
+      return 'no-channel'
+    }
+    return 'rendered'
+  }
+  const registerQuotaContext = (serviceCtx) => {
+    const systemPrompt = serviceCtx !== null && serviceCtx !== undefined && serviceCtx.systemPrompt !== undefined
+      ? serviceCtx.systemPrompt
+      : (serviceCtx !== null && serviceCtx !== undefined && typeof serviceCtx.get === 'function' ? serviceCtx.get('systemPrompt') : undefined)
+    if (systemPrompt === undefined || systemPrompt === null || typeof systemPrompt.context !== 'function') return
+    quotaContextDispose = systemPrompt.context({
+      name: 'dsh-usage-dock.quota',
+      order: POLICY_CONTEXT_ORDER,
+      interpolate: false,
+      text: (assemblyContext) => {
+        try {
+          const view = buildQuotaView({
+            cfg: quotaCfg,
+            observation: routeObserver.read(assemblyContext !== null && assemblyContext !== undefined
+              ? assemblyContext.agent
+              : undefined),
+            readChannel: (id) => (channelProjection.has(id) ? channelProjection.get(id) : null),
+            readObservation: (id) => (channelMeta.has(id) ? channelMeta.get(id) : null),
+            pickSmallestWindow,
+            identityOf: identityOfChannel,
+            usesReservePool,
+            // [A07] 本版本没有 Reserve 额度池的来源证明，因此该池恒为「未证明」。
+            reservePoolReady: () => false,
+          })
+          quotaContextState = quotaContextReasonOf(view)
+          quotaContextChannel = typeof view.channelId === 'string' && view.channelId.length > 0 ? view.channelId : null
+          return renderQuotaPrompt(view)
+        } catch (err) {
+          quotaContextState = 'error'
+          return ''
+        }
+      },
+    })
+    quotaContextRegistered = typeof quotaContextDispose === 'function'
+    if (quotaContextRegistered) quotaContextState = 'registered-no-request-yet'
+  }
   try {
-    const systemPrompt = typeof ctx.get === 'function' ? ctx.get('systemPrompt') : undefined
-    if (systemPrompt !== undefined && systemPrompt !== null && typeof systemPrompt.context === 'function') {
-      quotaContextDispose = systemPrompt.context({
-        name: 'dsh-usage-dock.quota',
-        order: POLICY_CONTEXT_ORDER,
-        interpolate: false,
-        text: (assemblyContext) => {
-          try {
-            const view = buildQuotaView({
-              cfg: quotaCfg,
-              observation: routeObserver.read(assemblyContext !== null && assemblyContext !== undefined
-                ? assemblyContext.agent
-                : undefined),
-              readChannel: (id) => (channelProjection.has(id) ? channelProjection.get(id) : null),
-              readObservation: (id) => (channelMeta.has(id) ? channelMeta.get(id) : null),
-              pickSmallestWindow,
-              identityOf: identityOfChannel,
-              usesReservePool,
-              // [A07] 本版本没有 Reserve 额度池的来源证明，因此该池恒为「未证明」。
-              reservePoolReady: () => false,
-            })
-            return renderQuotaPrompt(view)
-          } catch (err) {
-            return ''
-          }
-        },
-      })
+    /**
+     * [0.10.5] 用 `ctx.inject` 而不是 apply 时一次性 `ctx.get`：宿主服务可能在本插件之后
+     * 才就绪，一次性读取会静默注册失败（用户侧表现＝"策略开了但提示词里没有"）。
+     */
+    if (typeof ctx.inject === 'function') {
+      ctx.inject(['systemPrompt'], (serviceCtx) => { registerQuotaContext(serviceCtx) })
+    } else {
+      registerQuotaContext(ctx)
     }
   } catch (err) {
     quotaContextDispose = null
   }
+  /** [0.10.5] 只读自证视图：注册与否 + 最近一次求值为什么没文本（固定枚举）。 */
+  const quotaContextView = () => ({
+    registered: quotaContextRegistered,
+    state: quotaContextState,
+    channelId: quotaContextChannel,
+  })
   // 配置变化时刷新策略缓存（宿主公开事件）。
   try {
     if (typeof ctx.on === 'function') {
@@ -1091,6 +1141,10 @@ export function apply(ctx, config) {
           try { quotaContextDispose() } catch (err) { /* 已清理 */ }
           quotaContextDispose = null
         }
+        // [0.10.5] 自证视图必须跟着复位：卸载后仍报 registered 会误导排障。
+        quotaContextRegistered = false
+        quotaContextState = 'disposed'
+        quotaContextChannel = null
         try { routeObserver.dispose() } catch (err) { /* 已清理 */ }
         try { quotaObserver.clear() } catch (err) { /* 已清理 */ }
         channelProjection.clear()
@@ -1202,7 +1256,7 @@ export function apply(ctx, config) {
         customOnly = customOnly.map(guiObservationWire)
         // [A04] 仅自定义分支同样要附统一状态（与主分支一致）。
         attachEffectiveStatus(customOnly)
-        json(res, 200, { ok: true, data: { plans: customOnly, cfg: proof, mimoAuth: mimoAuthStatus } })
+        json(res, 200, { ok: true, data: { plans: customOnly, cfg: proof, mimoAuth: mimoAuthStatus, quotaContext: quotaContextView() } })
         return
       }
       // shell 服务只用于 Python/curl 兜底后端；原生 fetch 后端（0.6.2 起首选）
@@ -1281,7 +1335,7 @@ export function apply(ctx, config) {
           if (segs !== null && segs.length > 0) plan.peakSegs = segs
         }
       }
-      json(res, 200, { ok: true, data: { plans, cfg: proof, mimoAuth: mimoAuthStatus } })
+      json(res, 200, { ok: true, data: { plans, cfg: proof, mimoAuth: mimoAuthStatus, quotaContext: quotaContextView() } })
     },
   }), 'plan-usage: usage route')
 

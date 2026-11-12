@@ -255,8 +255,10 @@ function baseResponder(overrides) {
   check('C2a 探测完成后面板默认收起', byAttr(closed, 'data-mimo-auth-panel', 'closed').length === 1,
     textAll(closed).slice(0, 160))
   const entry = byAttr(closed, 'data-mimo-auth', 'entry')[0]
-  check('C2c 入口标注实验性/未真实验收',
-    entry !== undefined && textOf(entry).includes('实验性') && textOf(entry).includes('未真实验收'))
+  // [0.10.3] 本套件刻意直挂 LegacyPanel（生产已不挂载它），因此这里断言**旧面板自身**的入口文案。
+  check('C2c 旧实验面板入口文案（LegacyPanel 直挂，生产不渲染）',
+    byAttr(closed, 'data-mimo-auth', 'entry').length === 1
+    && textAll(closed).includes('登录 MiMo（扫码）'), textAll(closed).slice(0, 160))
   const pending = entry.props.onClick()
   const mid = await runtime.settle(panelProps)
   check('C3a 点击后恰好一次 GET 且无 body（LegacyPanel 不经探测）', fetcher.authCalls().length === 1

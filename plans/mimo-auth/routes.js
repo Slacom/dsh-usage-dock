@@ -292,7 +292,8 @@ const REMEMBERED_FRESHNESS = new Set(['fresh', 'stale', 'failed', 'paused'])
 const REMEMBERED_READ_FAILURE_LIMIT = 5
 
 function rememberedFieldSets(action) {
-  if (action === 'rememberedStart') return [['action', 'bootEpoch', 'authConsent', 'consentVersion']]
+  // [0.10.3] 允许两种形状：旧的无 rememberConsent，与新的带 rememberConsent（boolean）
+  if (action === 'rememberedStart') return [['action', 'bootEpoch', 'authConsent', 'consentVersion'], ['action', 'bootEpoch', 'authConsent', 'consentVersion', 'rememberConsent']]
   if (action === 'rememberedStatus') {
     // 观察可两种形态：纯观察（无 pair）或**当前 pair** 观察（唯一可能看到候选的路径）
     return [['action', 'bootEpoch'], ['action', 'bootEpoch', 'authId', 'generation']]
@@ -461,10 +462,12 @@ async function handleRemembered(value, { bootEpoch, remembered: api }) {
 
   if (action === 'rememberedStart') {
     // 首扫**无 expected**：本人只同意「可以扫一次码」，不带任何 ID
+    // [0.10.3] rememberConsent 若出现必须是 boolean（取消勾选 = 不写记录）
+    if ('rememberConsent' in value && typeof value.rememberConsent !== 'boolean') return { error: ROUTE_CODES.BAD_REQUEST }
     if (value.authConsent !== true || value.consentVersion !== 1) {
       return json(400, { ok: false, code: ROUTE_CODES.CONSOLE_BAD_REQUEST })
     }
-    const result = await api.startAuth({ authConsent: true, consentVersion: 1 })
+    const result = await api.startAuth({ authConsent: true, consentVersion: 1, rememberConsent: value.rememberConsent !== false })
     return json(rememberedHttpOf(result), {
       ok: result.ok === true, code: result.code, bootEpoch, remembered: view(),
     })

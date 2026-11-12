@@ -253,7 +253,7 @@ async function render(parent) {
 
     for (const qr of quotaRows) {
       const bar = qr.props.children[1]
-      assert.equal(bar.props.style.height, 6, '进度条轨道应存在（height 6）')
+      assert.equal(bar.props.style.height, 8, '进度条轨道应存在（height 8）')
       const fill = bar.props.children
       assert.ok(fill && fill.props && typeof fill.props.style.width === 'string',
         '进度条填充应带百分比宽度')

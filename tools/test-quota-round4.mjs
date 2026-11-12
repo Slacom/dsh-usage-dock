@@ -109,7 +109,11 @@ const originalMimo = mimo.fetch
   })
   // 1) A 下取得 95
   const first = await gui(app)
-  check('R4-01a A 下首次取得 95', first.data.plans[0].balance === 95, first.data.plans[0].balance)
+  // [0.10.5] MiMo 旧 Cookie 通道已在 0.10.2 移除：单通道下 mimo 恒为缺失态、零请求。
+  // 本条从「取到余额 95」改为「如实缺席」，其余 R4-01 系列继续守住「旧在途/旧身份不复活」。
+  const firstMimo = first.data.plans.find((p) => p.id === 'mimo')
+  check('R4-01a A 下 mimo 为缺失态（单通道，不再读 Cookie）',
+    firstMimo !== undefined && firstMimo.error === 'missing' && firstMimo.balance === undefined, firstMimo)
 
   // 2) A 下启动一个会挂起的请求（call=2）
   const pendingOld = gui(app)
@@ -119,7 +123,9 @@ const originalMimo = mimo.fetch
   mimo.fetch = async () => ({ id: 'mimo', name: 'Xiaomi MiMo', balance: 50, currency: 'CNY', unit: 'currency' })
   await app.save({ mimoCookie: COOKIE_B })
   const bBody = await gui(app)
-  check('R4-01b B 下取得 50', bBody.data.plans[0].balance === 50, bBody.data.plans[0].balance)
+  const bMimo = bBody.data.plans.find((p) => p.id === 'mimo')
+  check('R4-01b B 下 mimo 仍为缺失态',
+    bMimo !== undefined && bMimo.error === 'missing' && bMimo.balance === undefined, bMimo)
 
   // 4) 切回 A（配置值回到 A，哈希也回到 A）
   await app.save({ mimoCookie: COOKIE_A })
@@ -167,7 +173,9 @@ const originalMimo = mimo.fetch
     quotaTrustRouteOrder: true,
   })
   const first = await gui(app)
-  check('R4-01e 停用前取得 95', first.data.plans[0].balance === 95, first.data.plans[0].balance)
+  const eFirstMimo = first.data.plans.find((p) => p.id === 'mimo')
+  check('R4-01e 停用前 mimo 为缺失态',
+    eFirstMimo !== undefined && eFirstMimo.error === 'missing' && eFirstMimo.balance === undefined, eFirstMimo)
 
   const pendingOld = gui(app)
   await new Promise((r) => setTimeout(r, 20))

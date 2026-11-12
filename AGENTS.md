@@ -30,9 +30,12 @@ DeepSeek Harness（DSH）的**侧栏用量/余额插件**：在 Web/桌面端左
 用量与余额，点击可展开详情面板。fork 自 `chendefine/dsh-plugins-plan-usage`，改名 `dsh-usage-dock`
 以避免与上游混淆，并做了一系列定制（见第 6 节）。
 
-**当前版本**：0.10.0（Codex Connect/Subscription 双来源手选 + WorkBuddy 改读客户端 `GET /v1/credits`（仅国内 cn、不再按账号筛选）+ MiMo 读数与 `usage_status` 同源 + 胶囊启动占位；承接 0.9.0 的三渠道退场 / 自定义余额 / `usage_status` / 可选额度策略 / 单列设置页。
-**0.9.1 曾是过程内的整改标签，未单独发布，内容已并入 0.10.0**，不要把它当作已发布过的版本）　|　
-**上一公开版**：0.8.4（GitHub Release + npm）　|　**更早**：0.8.5（仅本地定档）、0.8.3、0.8.2、0.8.1、0.7.2（0.8.0 未单独发布）
+**当前版本**：0.10.5（MiMo 登录收敛为「扫码 → 确认账号 → 读余额」+ 显示层修复「真实余额被读取中占位盖掉」+
+OpenCode Go 百分比口径（已用→剩余）+ Codex `Subscription` 补丁支持 3.2.13 与 pnpm 布局 +
+额度策略注入修复（`opencode-go` 路由映射缺失、`ctx.inject` 注册）+ 详情卡片重置时间两段精度与列对齐；
+承接 0.10.0 的双来源手选 / WorkBuddy 只读 cn / MiMo 与 `usage_status` 同源）。
+**0.10.3 / 0.10.4 是本地构建、从未发布**，不要把它们当作已发布版本。　|　
+**上一公开版**：0.10.2（GitHub Release + npm；0.10.1 已撤回、npm 上已 deprecate）
 
 > **审核入口（先读这条）**：当前**权威**记录是
 > [0.9.0 发布状态](docs/release-status-v0.9.0-20261024.md)（程序已部署、用户已确认本地验收；
@@ -458,7 +461,14 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
 - **第三方插件升级/重装会覆盖 Codex Subscription 的补丁**（0.10.1）：升级后运行
   `node tools/patch-codex-subscription.mjs`（默认只检查，`--apply` 才写；另有 `--revert` 从最近备份恢复）。
   出现「不可适配 / 需要生成清单」即表示未打补丁；hunk 清单与第三方版本**绑定**，换版本需重新生成
-  `tools/patches/codex-subscription-<version>.json`，不要指望模糊匹配。
+  `plans/patches/codex-subscription-<version>.json`，不要指望模糊匹配。
+  **0.10.5**：已带 `3.2.6` 与 `3.2.13` 两份清单，补丁模块按**已装版本**精确选清单；
+  目标目录解析支持 pnpm 布局（`.pnpm/<pkg>@<ver>/node_modules/<pkg>`），修复新装环境误判「版本不支持」。
+- **额度策略的提示词注入是有条件的**（0.10.5）：只有「当前对话模型的路由」命中**关注渠道**时才会输出
+  `[当前额度快照]`；`ROUTE_TABLE` 必须认得该 provider（0.10.5 补了 `opencode-go`）。
+  排障用 `/api/plan-usage` 的只读字段 `quotaContext: { registered, state, channelId }`
+  （`state` 固定枚举：`rendered` / `route-unmapped` / `route-not-focused` / `policy-off` / `unobserved-route` …），
+  不要靠猜「是不是没注册」。
 - **MiMo 的 `usage_status` 读的是显示快照**（0.10.0）：胶囊 / 详情 / 工具 / 额度策略共用同一份
   本机显示会话快照（`getHost().routeDisplay.peek()`，缺失才回退 `display.peek()`），
   因此需要「记住登录」链路才有数值；没有该链路时显示占位/读取中，而不是旧的手工 Cookie 值。

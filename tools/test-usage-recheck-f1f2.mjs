@@ -441,13 +441,15 @@ function customEntry(overrides) {
     //   ② 不跨身份缓存污染：清空 Cookie + config-reload 后再查同一 ids，必须仍报 no-credential，
     //      且那一阶段**没有任何** MiMo 请求携带 serviceToken；
     //   ③ 单飞/作废语义：身份变化后不得把旧值当作「当前身份」的余额发布（由 ② 的 no-credential 覆盖）。
-    check('F2.6a 首次查询允许用当前配置（B）取到新鲜值，且不是缓存命中',
+    // [0.10.5] MiMo 的旧 Cookie 通道已在 0.10.2 移除：现在**只有**本机显示会话一条通道，
+    // 没有显示快照时固定为缺失态且**零上游请求**（不再读写 mimoCookie）。下面三条守这一点。
+    check('F2.6a 无显示快照 ⇒ mimo 为缺失态（不再读 Cookie）',
       mimoFirst !== undefined
-        && (mimoFirst.errorCode === null || mimoFirst.errorCode === undefined)
-        && sent.some((cookie) => cookie.indexOf('serviceToken=B') !== -1)
+        && mimoFirst.errorCode === 'missing'
+        && mimoFirst.availability === 'error'
         && (mimoFirst.cached === undefined || mimoFirst.cached === false), mimoFirst)
-    check('F2.6b 取数发生在当前配置下（请求确实带上了 B，不是凭空读缓存）',
-      sent.some((cookie) => cookie.indexOf('serviceToken=B') !== -1), sent)
+    check('F2.6b 整个过程零 Cookie 请求（单通道后不再带 serviceToken）',
+      sent.every((cookie) => cookie.indexOf('serviceToken') === -1), sent)
 
     // 清空 Cookie + 单次 reload 使配置缓存失效，再查同一 ids：
     // 「无凭据」身份里不得出现 B 的成功余额。
@@ -457,8 +459,8 @@ function customEntry(overrides) {
     const second = await def.execute({ ids: ['mimo'] })
     const mimoSecond = second.channels.find((c) => c.id === 'mimo')
     const sentBeforeReload = sent.length
-    check('F2.6c 清空 Cookie + reload 后仍报 no-credential（不跨身份缓存污染）',
-      mimoSecond !== undefined && mimoSecond.errorCode === 'no-credential', mimoSecond)
+    check('F2.6c 清空 Cookie + reload 后仍是缺失态（结论不因 Cookie 变化而变）',
+      mimoSecond !== undefined && mimoSecond.errorCode === 'missing', mimoSecond)
     check('F2.6d 清空后这一阶段没有任何 MiMo 请求携带 serviceToken（也不回填 B 的缓存值）',
       sent.slice(sentBeforeReload).every((cookie) => cookie.indexOf('serviceToken') === -1),
       sent.slice(sentBeforeReload))

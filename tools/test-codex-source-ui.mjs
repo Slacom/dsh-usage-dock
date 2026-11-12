@@ -726,7 +726,7 @@ async function mountPatchBlock (props, response) {
   // Q2：active:true + writable ⇒ 按钮与提示
   const b2 = await mountPatchBlock({ active: true, writable: true }, { ok: true, data: { applied: true } })
   check('Q2 active:true ⇒ 出现 apply 按钮与适配提示',
-    byAttr(b2.tree, 'data-cs-patch', 'apply') !== undefined && textAll(b2.tree).includes('未适配本插件'),
+    byAttr(b2.tree, 'data-cs-patch', 'apply') !== undefined && textAll(b2.tree).includes('Codex 订阅额度需要在本机做一次适配才能读取。'),
     textAll(b2.tree).slice(0, 160))
   // Q3：点击 ⇒ 仅一次 POST，URL 精确、无 body
   const btn2 = byAttr(b2.tree, 'data-cs-patch', 'apply')
@@ -750,6 +750,23 @@ async function mountPatchBlock (props, response) {
     t5.includes('应用失败，请稍后重试或用命令行工具')
     && !t5.includes('E_CS_PATCH') && !t5.includes('Error') && !t5.includes('at '), t5.slice(0, 240))
   b5.restore()
+
+  // Q5b：[0.10.3] 版本无对应清单 ⇒ 单独的人话文案（码只在内存比较，仍不回显）
+  const bU = await mountPatchBlock({ active: true, writable: true }, { ok: false, error: 'E_CS_PATCH_UNSUPPORTED' })
+  byAttr(bU.tree, 'data-cs-patch', 'apply').props.onClick()
+  const tU = textAll(await bU.settle())
+  check('Q5b E_CS_PATCH_UNSUPPORTED ⇒ 「当前第三方插件版本暂不支持一键适配，请升级本插件。」且不回显码',
+    tU.includes('当前第三方插件版本暂不支持一键适配，请升级本插件。')
+    && !tU.includes('E_CS_PATCH') && !tU.includes('应用失败'), tU.slice(0, 240))
+  bU.restore()
+
+  // Q5c：其它固定码（ARGS）仍走通用失败文案，保持既有行为
+  const bA = await mountPatchBlock({ active: true, writable: true }, { ok: false, error: 'E_CS_PATCH_ARGS' })
+  byAttr(bA.tree, 'data-cs-patch', 'apply').props.onClick()
+  const tA = textAll(await bA.settle())
+  check('Q5c E_CS_PATCH_ARGS ⇒ 仍是通用失败文案、不回显码',
+    tA.includes('应用失败，请稍后重试或用命令行工具') && !tA.includes('E_CS_PATCH'), tA.slice(0, 240))
+  bA.restore()
 
   // Q6：只读 ⇒ disabled
   const b6 = await mountPatchBlock({ active: true, writable: false }, { ok: true, data: { applied: true } })

@@ -119,6 +119,9 @@ function check(name, cond, detail) {
     resolveRoute('deepseek-official').source === 'api')
   check('N4f 未知路由不猜（packyapi）', resolveRoute('packyapi') === null)
   check('N4g 空 provider 返回 null', resolveRoute('') === null)
+  // [0.10.5] 真机故障回归：provider route id 就是 `opencode-go`，漏映射会让策略在
+  // 用户真正使用该渠道时静默不投放（提示词里看不到任何额度快照）。
+  check('N4i opencode-go → opencode-go 渠道', channelForProvider('opencode-go') === 'opencode-go')
   check('N4h 用 WorkBuddy 跑 DeepSeek 模型 → 评估 WorkBuddy 而非 DeepSeek',
     channelForProvider('workbuddy') === 'workbuddy' && channelForProvider('workbuddy') !== 'deepseek')
 }

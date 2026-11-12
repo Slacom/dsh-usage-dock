@@ -292,13 +292,25 @@ try {
     check('B5: allowMimo=true 时按 DTO 驱动 MiMo 行', enabledRows.length === 2 && enabledRows[1].id === 'mimo', enabledRows)
   }
 
-  // 9) N4：尚未拿到可信状态时用"读取中"占位，不回退手工值
+  // 9) N4：尚未拿到可信状态时的遮蔽规则
+  //
+  // [0.10.5] 契约收窄：只有**旧 Cookie 通道的遗留值**才必须遮蔽（墓碑语义）。
+  // 本机显示会话来的 wire 已经是 Host 的权威结论，resolving 期间也要如实显示
+  // （真机故障：Host 返回 14.58 CNY，胶囊却长期显示「读取中…」）。
   {
-    const masked = api.overlay([{ id: 'mimo', balance: MANUAL_BALANCE, currency: 'CNY' }], null, { allowMimo: true, resolving: true })
-    const maskedMimo = masked.filter((p) => p.id === 'mimo')[0]
-    check('N4: resolving 时 MiMo 显示读取中', maskedMimo !== undefined && maskedMimo.balance === undefined
-      && api.shortText(null, true).indexOf('读取中') === 0, maskedMimo)
-    check('N4: resolving 时不显示手工旧值', JSON.stringify(masked).indexOf(String(MANUAL_BALANCE)) < 0)
+    // 9a) 旧 Cookie 遗留值（带 via:'console' 标记）仍必须遮蔽
+    const legacy = api.overlay([{ id: 'mimo', balance: MANUAL_BALANCE, currency: 'CNY', via: 'console' }], null, { allowMimo: true, resolving: true })
+    const legacyMimo = legacy.filter((p) => p.id === 'mimo')[0]
+    check('N4: resolving 时旧 Cookie 遗留值被遮蔽（显示读取中）', legacyMimo !== undefined && legacyMimo.balance === undefined
+      && api.shortText(null, true).indexOf('读取中') === 0, legacyMimo)
+    check('N4: resolving 时不显示旧 Cookie 手工值', JSON.stringify(legacy).indexOf(String(MANUAL_BALANCE)) < 0)
+
+    // 9b) 本机显示会话来的 wire（无遗留标记）不得被占位盖掉
+    const trustedWire = api.overlay([{ id: 'mimo', balance: MANUAL_BALANCE, currency: 'CNY' }], null, { allowMimo: true, resolving: true })
+    const trustedMimo = trustedWire.filter((p) => p.id === 'mimo')[0]
+    check('N4: resolving 时显示会话 wire 保留真实余额（不被读取中盖掉）',
+      trustedMimo !== undefined && trustedMimo.balance === MANUAL_BALANCE, trustedMimo)
+
     const absentSnap = api.pick({ ok: true, display: { displaySupported: false, selected: false, state: 'absent' } }).display
     const trustedAbsent = api.overlay([{ id: 'mimo', balance: MANUAL_BALANCE, currency: 'CNY' }], absentSnap, { allowMimo: true, resolving: false })
     check('N4: 可信 absent 后恢复手工来源', trustedAbsent[0].balance === MANUAL_BALANCE, trustedAbsent)
