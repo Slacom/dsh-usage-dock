@@ -447,6 +447,10 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
 
 ## 7. 已知限制
 
+> 📌 **用户已确认要做、但尚未实施的事项统一记在 [docs/backlog.md](docs/backlog.md)**（含
+> MiMo「平台票据缺失」的 3 次有限自动重试、安卓移动端适配、策略表口径等）。动手前先看那份清单，
+> 不要凭记忆重推需求。
+
 - **Codex `Subscription` 来源依赖第三方本地补丁**（0.10.0）：需要在第三方包
   `dsh-codex-subscription` 上打**本地只读 service 补丁**才拿得到订阅额度，该补丁**不在本包发布内容里**。
   没打补丁时该来源显示「接口暂不可用（需适配）」；`Codex Connect` 来源不受影响、照常可用。
