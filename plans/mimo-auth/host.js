@@ -59,6 +59,7 @@ export function registerMimoAuth(ctx, onStatus = () => {}, options = {}) {
     enableRememberedAccount: source.enableRememberedAccount === true,
     enableConsoleProtocol: source.enableConsoleProtocol === true,
     isEnabled: typeof source.isEnabled === 'function' ? source.isEnabled : undefined,
+    onLegacyLogin: typeof source.onLegacyLogin === 'function' ? source.onLegacyLogin : undefined,
   }
   let child = null
   safeStatus(onStatus, { supported: false, code: FLOW_UNAVAILABLE, bootEpoch })
@@ -113,6 +114,7 @@ export function createAuthHost(ctx, bootEpoch, onStatus = () => {}, dependencies
   })
   // Exact test/DI key: the actual D transport object, never a module or factory.
   const injectedSecureTransport = dependencies.secureTransport ?? null
+  const onLegacyLogin = typeof dependencies.onLegacyLogin === 'function' ? dependencies.onLegacyLogin : null
   const postQrProducer = dependencies.postQrProducer ?? null
   const postQrBalanceAdapter = dependencies.postQrBalanceAdapter ?? null
   const postQrEnabled = typeof postQrProducer === 'function' && typeof postQrBalanceAdapter === 'function'
@@ -135,6 +137,13 @@ export function createAuthHost(ctx, bootEpoch, onStatus = () => {}, dependencies
     : null
   /** consoleAttach 的 Host 内部上下文（不进 DTO、不进路由响应）。 */
   const attachSlot = { authId: null, generation: 0 }
+  /**
+   * 最近一次 legacy 会话（供同进程只读读取 done 余额；不落盘、不进 DTO）。
+   * [0.11.0 整改] `balanceFetchedAt` = **真正拿到余额那一刻**的稳定采样时间：多次 peek 不变，
+   * 供调用方判 5 分钟新鲜期与决定是否重放；旧实现每次返回 `Date.now()`，一次扫码余额会被
+   * 永久当成「刚采集」。
+   */
+  const lastLegacySession = { ticketId: null, generation: 0, balanceFetchedAt: null }
   const syntheticDisplay = typeof dependencies.displayProducer === 'function'
     || typeof dependencies.displayIdentityVerifier === 'function'
     || typeof dependencies.displayBalanceAdapter === 'function'
@@ -482,13 +491,30 @@ export function createAuthHost(ctx, bootEpoch, onStatus = () => {}, dependencies
           },
         })).then(isolateDynamicResponse)
       }
-      return fetchImpl(url, init)
+      // [local 2026-11-14] legacy 流程在移动网络上偶发瞬时网络错误（E_NETWORK），
+      // 而这一步都是幂等 GET。单次重试 300ms，避免一次网络抖动就让整次扫码登录失败；
+      // 重试仍失败时由 flow 层带 step/networkCode 诊断返回。
+      const attempt = async () => {
+        try {
+          return await fetchImpl(url, init)
+        } catch (error) {
+          if (init?.signal?.aborted === true) throw error
+          await new Promise((resolve) => setTimeout(resolve, 300))
+          if (init?.signal?.aborted === true) throw error
+          return fetchImpl(url, init)
+        }
+      }
+      return attempt()
     }
   }
 
   async function beginFlow(ticketId, generation) {
     const session = liveSession(ticketId, generation)
     if (session === null) return { ok: false, code: 'E_MIMO_AUTH_STALE_GENERATION' }
+    lastLegacySession.ticketId = ticketId
+    lastLegacySession.generation = generation
+    // [0.11.0 整改] 新会话开始即清空稳定采样时间；只有真正拿到余额时才重新记录。
+    lastLegacySession.balanceFetchedAt = null
     let runtime
     try {
       runtime = await loadFlow()
@@ -516,12 +542,26 @@ export function createAuthHost(ctx, bootEpoch, onStatus = () => {}, dependencies
       }
     }
     let flow
+    let flowJar = null
+    // 登录流程结束时 destroy() 会 jar.clear()，必须在读余额那一刻抓 cookie。
+    let capturedLegacyCookie = ''
     try {
+      flowJar = new runtime.CookieJar({
+        allowQuotedValues: true,
+        rootDomains: ['xiaomi.com', 'xiaomimimo.com', 'account.xiaomi.com', 'platform.xiaomimimo.com'],
+      })
       flow = runtime.createMemoryFlow({
         now,
         limits: { hardMs: Math.max(1, session.deadline - now()) },
         fetchImpl: fetchFor(session, generation, secureTransport),
-        jar: new runtime.CookieJar({ rootDomains: ['xiaomi.com', 'xiaomimimo.com'] }),
+        // [local 2026-11-14] 官方登录接口改走账号子域后，扫码成功会向 account.xiaomi.com
+        // 层级写 cookie；原白名单只有 xiaomi.com / xiaomimimo.com，会判 FOREIGN_DOMAIN
+        // → E_SET_COOKIE_REJECTED。把官方账号/平台域本身补进白名单（仍是官方域集合）。
+        // [local 2026-11-14] 与 console 流程同一先例（0.10.6 授权）：官方登录可能返回
+        // 带引号的 cookie 值（quoted `"..."`）；legacy QR 流程的 Jar 之前没开这个开关，
+        // 扫码成功后会整批判 BAD_VALUE → E_SET_COOKIE_REJECTED。只放宽引号包裹的合法值，
+        // 其余字节/域/路径/过期规则不变。
+        jar: flowJar,
         parseBalance: parseMimoBalance,
         allowDynamicLongPoll: session.allowDynamicLongPoll === true,
         display: {
@@ -529,7 +569,16 @@ export function createAuthHost(ctx, bootEpoch, onStatus = () => {}, dependencies
             const result = manager.setQr(generation, bytes, mime)
             return result.ok ? { kind: 'shown' } : { kind: 'error', code: result.code }
           },
-          askBalanceMatch: (view) => disposed ? Promise.resolve('later') : manager.requestBalanceMatch(generation, view),
+          askBalanceMatch: (view) => {
+            if (flowJar !== null && typeof flowJar.cookieHeaderFor === 'function') {
+              for (const target of ['https://platform.xiaomimimo.com/api/v1/balance', 'https://platform.xiaomimimo.com/']) {
+                const picked = flowJar.cookieHeaderFor(target)
+                const candidate = picked !== null && picked !== undefined && typeof picked.header === 'string' ? picked.header : ''
+                if (candidate.length > capturedLegacyCookie.length) capturedLegacyCookie = candidate
+              }
+            }
+            return disposed ? Promise.resolve('later') : manager.requestBalanceMatch(generation, view)
+          },
           close() {},
         },
         approval: (payload) => manager.requestApproval(generation, {
@@ -546,6 +595,32 @@ export function createAuthHost(ctx, bootEpoch, onStatus = () => {}, dependencies
       .then(() => flow.run({ signal: session.controller.signal }))
       .then((report) => {
         const done = report?.ok === true && report?.gates?.qr?.ok === true && report?.gates?.balance?.ok === true
+        // [0.11.0 整改] 真正拿到余额的**这一刻**记录稳定采样时间（与是否持久化凭据无关）；
+        // 之后 `legacyDoneBalance()` 多次 peek 都返回同一个 fetchedAt。
+        if (done) {
+          try {
+            const status = manager.status(ticketId, generation)
+            const balance = status !== null && status !== undefined && status.balance !== null && typeof status.balance === 'object' ? status.balance : null
+            if (balance !== null && typeof balance.balance === 'number' && Number.isFinite(balance.balance)) {
+              const fetchedAt = now()
+              lastLegacySession.balanceFetchedAt = fetchedAt
+              if (onLegacyLogin !== null) {
+                try {
+                  // 优先用读余额时抓到的 cookie（此时 jar 还没被 destroy 清空）。
+                  let header = capturedLegacyCookie
+                  if (header.length > 0) {
+                    onLegacyLogin({
+                      platformCookie: header,
+                      balance: balance.balance,
+                      currency: typeof balance.currency === 'string' ? balance.currency : 'CNY',
+                      fetchedAt,
+                    })
+                  }
+                } catch (err) { /* 持久化回调失败不影响登录结果 */ }
+              }
+            }
+          } catch (err) { /* 读取 done 快照失败不影响登录结果 */ }
+        }
         try {
           manager.finish(generation, {
             state: done ? 'done' : 'failed',
@@ -705,6 +780,41 @@ export function createAuthHost(ctx, bootEpoch, onStatus = () => {}, dependencies
 
   return {
     bootEpoch, manager, dispose, console: consoleSessions, display,
+    /**
+     * [0.11.0 dsh-go 原生面板] 同进程只读/流程入口：直接把已注册到 connection.fetch 的
+     * auth / qr handler 暴露给本插件自己的原生面板（不经过 HTTP、不经过浏览器认证）。
+     *
+     * 参数与返回和 HTTP 路由完全一致（WHATWG Request/Response）；调用方负责构造 Request。
+     * 仅暴露给同进程的插件代码，不进 DTO、不落日志。
+     */
+    native: { auth: authHandler, qr: qrHandler },
+    /**
+     * 只读：最近一次 legacy 扫码登录成功后会话里的余额（无则 null）。
+     * 供 usage_status / 原生额度面板补齐 legacy 通道的显示快照。
+     *
+     * [0.11.0 整改] `fetchedAt` 用**拿到余额那一刻**记录的稳定采样时间（多次 peek 不变）；
+     * 缺稳定时间 ⇒ 无法证明新鲜度，fail-closed 返回 null（不再每次伪造 `Date.now()`）。
+     */
+    legacyDoneBalance: () => {
+      try {
+        const ticketId = lastLegacySession.ticketId
+        if (typeof ticketId !== 'string' || ticketId.length === 0) return null
+        const fetchedAt = lastLegacySession.balanceFetchedAt
+        if (typeof fetchedAt !== 'number' || !Number.isFinite(fetchedAt)) return null
+        const raw = manager.status(ticketId, lastLegacySession.generation)
+        const snapshot = raw !== null && raw !== undefined && raw.state !== undefined ? raw : null
+        if (snapshot === null || snapshot.state !== 'done') return null
+        const balance = snapshot.balance !== null && typeof snapshot.balance === 'object' ? snapshot.balance : null
+        if (balance === null || typeof balance.balance !== 'number' || !Number.isFinite(balance.balance)) return null
+        return {
+          balance: balance.balance,
+          currency: typeof balance.currency === 'string' && balance.currency.length > 0 ? balance.currency : 'CNY',
+          fetchedAt,
+        }
+      } catch (err) {
+        return null
+      }
+    },
     /**
      * `routeDisplay` = **路由实际使用**的 display：
      * managed（记住登录）模式 = `remembered.displaySnapshot()` 的纯观察门面，

@@ -24,7 +24,44 @@ function diagnosticEnum(value, allowed) {
   return typeof value === 'string' && allowed.includes(value) ? value : 'unknown'
 }
 
+const DIAGNOSTIC_COOKIE_CODES = Object.freeze([
+  'E_COOKIE_EMPTY', 'E_COOKIE_CRLF', 'E_COOKIE_TOO_LARGE', 'E_COOKIE_BAD_NAME',
+  'E_COOKIE_BAD_VALUE', 'E_COOKIE_BAD_DOMAIN', 'E_COOKIE_FOREIGN_DOMAIN',
+  'E_COOKIE_STORE_FULL', 'E_COOKIE_BAD_SOURCE',
+])
+
+const DIAGNOSTIC_CREDENTIAL_FIELDS = Object.freeze(['passToken', 'userId', 'cUserId', 'deviceId'])
+const DIAGNOSTIC_CREDENTIAL_REASONS = Object.freeze(['not-string', 'empty', 'too-long', 'value-format'])
+
+const DIAGNOSTIC_NETWORK_STEPS = Object.freeze(['genLogin', 'longPoll', 'qrImage', 'redirect', 'sso', 'balance', 'unknown'])
+const DIAGNOSTIC_NETWORK_CODES = Object.freeze([
+  'ENOTFOUND', 'EAI_AGAIN', 'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EPIPE',
+  'EHOSTUNREACH', 'ENETUNREACH', 'CERT_HAS_EXPIRED', 'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'ERR_TLS_CERT_ALTNAME_INVALID', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET', 'UND_ERR_CLOSED', 'ABORT_ERR', 'other',
+])
+
 function normalizeDiagnostic(value, code) {
+  if (code === 'E_NETWORK') {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
+    const step = typeof value.step === 'string' && DIAGNOSTIC_NETWORK_STEPS.includes(value.step) ? value.step : 'unknown'
+    const networkCode = typeof value.networkCode === 'string' && DIAGNOSTIC_NETWORK_CODES.includes(value.networkCode)
+      ? value.networkCode : 'other'
+    return { step, networkCode }
+  }
+  if (code === 'E_CREDENTIAL_FIELD_INVALID') {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
+    const field = typeof value.field === 'string' && DIAGNOSTIC_CREDENTIAL_FIELDS.includes(value.field) ? value.field : 'unknown'
+    const reason = typeof value.reason === 'string' && DIAGNOSTIC_CREDENTIAL_REASONS.includes(value.reason) ? value.reason : 'unknown'
+    return { field, reason }
+  }
+  if (code === 'E_SET_COOKIE_REJECTED') {
+    if (value === null || typeof value !== 'object' || Array.isArray(value) || !Array.isArray(value.cookieCodes)) return null
+    const cookieCodes = value.cookieCodes
+      .filter((item) => typeof item === 'string' && DIAGNOSTIC_COOKIE_CODES.includes(item))
+      .slice(0, 6)
+    return cookieCodes.length > 0 ? { cookieCodes } : null
+  }
   if (code !== 'E_URL_PURPOSE_MISMATCH' || value === null || typeof value !== 'object' || Array.isArray(value)) return null
   return {
     rejectedPurpose: diagnosticEnum(value.rejectedPurpose, DIAGNOSTIC_PURPOSES),

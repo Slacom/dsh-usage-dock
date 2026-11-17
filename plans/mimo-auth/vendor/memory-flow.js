@@ -91,6 +91,29 @@ const ALLOWED_CODES = new Set(Object.values(FLOW_CODES))
 const HUMAN_KEYS = Object.freeze(['captcha', 'captchaUrl', 'mfa', 'twoFactor', 'needVerify', 'verifyCode'])
 /** 账号票候选字段（只映射这些；值必须通过类型 + cookie-octet 校验）。 */
 const ACCOUNT_FIELDS = Object.freeze(['passToken', 'userId', 'cUserId', 'deviceId'])
+/** 网络错误诊断用的固定枚举（不透传原始异常文本）。 */
+const NETWORK_CODE_ENUM = Object.freeze([
+  'ENOTFOUND', 'EAI_AGAIN', 'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EPIPE',
+  'EHOSTUNREACH', 'ENETUNREACH', 'CERT_HAS_EXPIRED', 'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'ERR_TLS_CERT_ALTNAME_INVALID', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET', 'UND_ERR_CLOSED', 'ABORT_ERR', 'other',
+])
+function networkCodeOf(error) {
+  const candidates = [error?.cause?.code, error?.code, error?.cause?.name, error?.name]
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && NETWORK_CODE_ENUM.includes(candidate)) return candidate
+  }
+  return 'other'
+}
+/** 统一的 E_NETWORK 抛出：带 step + 固定错误码诊断（不透传原文）。 */
+function networkFail(state, error) {
+  const network = fail(FLOW_CODES.NETWORK)
+  network.diagnostic = {
+    step: state !== null && typeof state === 'object' && typeof state.step === 'string' ? state.step : 'unknown',
+    networkCode: networkCodeOf(error),
+  }
+  return network
+}
 
 const DEFAULT_LIMITS = Object.freeze({
   hardMs: 5 * 60 * 1000,
@@ -195,7 +218,19 @@ export function createMemoryFlow(deps) {
   function absorbOnce(state, lines, url) {
     if (lines === null) return
     const absorbed = jar.absorb(lines, url)
-    if (Array.isArray(absorbed?.rejected) && absorbed.rejected.length > 0) throw fail(FLOW_CODES.SET_COOKIE_REJECTED)
+    if (Array.isArray(absorbed?.rejected) && absorbed.rejected.length > 0) {
+      // [local 2026-11-14] 按浏览器语义处理无法解析/不合策略的 Set-Cookie 行：
+      // 这些行本来就不会被存下或发送（jar 已拒收），不应让整次登录失败。
+      // 实测真实网络会混入 6 条 E_COOKIE_BAD_NAME 的垃圾行；旧实现据此抛
+      // E_SET_COOKIE_REJECTED，导致扫码成功后登录直接失败。
+      // 这里只记录固定枚举（诊断用，不含 cookie 名/值/域原文），继续后续步骤；
+      // 真正必需的凭据 cookie 由后续 gate 的 token 检查把关。
+      if (!Array.isArray(state.rejectedCookieCodes)) state.rejectedCookieCodes = []
+      for (const item of absorbed.rejected) {
+        const code = item !== null && typeof item === 'object' && typeof item.code === 'string' ? item.code : 'unknown'
+        if (state.rejectedCookieCodes.length < 12) state.rejectedCookieCodes.push(code)
+      }
+    }
     void state
   }
 
@@ -243,9 +278,14 @@ export function createMemoryFlow(deps) {
     const allowed = PURPOSE_HOSTS[purpose]
     if (!Array.isArray(allowed)) throw rejectDynamic(purpose, 'purpose', host)
     // 先区分"根本不是官方域"（host）与"官方域但用途不对"（purpose）。
+    // [local 2026-11-14] 官方登录接口会把 longPoll 等地址返回成 **account.xiaomi.com 的子域**
+    // （实测 hostClass=account-subdomain，vendor 原版只认精确 host）。子域只能由官方控制，
+    // 因此按「官方域或官方域的子域」判定；目的域绑定保持不变。
     const official = host === ACCOUNT_HOST || host === PLATFORM_HOST
+      || host.endsWith('.' + ACCOUNT_HOST) || host.endsWith('.' + PLATFORM_HOST)
     if (official !== true) throw rejectDynamic(purpose, 'host', host)
-    if (!allowed.includes(host)) throw rejectDynamic(purpose, 'purpose', host)
+    const hostAllowed = allowed.some((base) => host === base || host.endsWith('.' + base))
+    if (!hostAllowed) throw rejectDynamic(purpose, 'purpose', host)
     return parsed
   }
 
@@ -309,7 +349,7 @@ export function createMemoryFlow(deps) {
         for (;;) {
           const item = await wait(() => reader.read())
           if (item?.done === true) break
-          if (!(item?.value instanceof Uint8Array)) throw fail(FLOW_CODES.NETWORK)
+          if (!(item?.value instanceof Uint8Array)) throw networkFail(state, null)
           total += item.value.byteLength
           if (total > maxBytes) throw fail(image ? FLOW_CODES.QR_IMAGE_TOO_LARGE : FLOW_CODES.RESPONSE_TOO_LARGE)
           chunks.push(item.value)
@@ -333,6 +373,7 @@ export function createMemoryFlow(deps) {
 
   /** Each request owns a linked controller through fetch AND bounded body completion. */
   async function callOnce(state, budget, url, { method = 'GET', step, perCallMs = limits.pollPerCallMs, accept = 'application/json' } = {}) {
+    state.step = typeof step === 'string' ? step : 'unknown'
     assertRegistered(state, url, method)
     if (budget.expired()) throw fail(FLOW_CODES.BUDGET_EXHAUSTED)
     if (state.report.calls.total >= limits.maxCalls) throw fail(FLOW_CODES.CALL_BUDGET)
@@ -356,8 +397,15 @@ export function createMemoryFlow(deps) {
       if (budget.expired() || outcome.kind === 'timeout') throw fail(FLOW_CODES.BUDGET_EXHAUSTED)
       if (budget.aborted() || outcome.kind === 'aborted') throw fail(FLOW_CODES.ABORTED)
       if (outcome.kind === 'capTimeout' || now() >= capDeadline) { child.abort(); throw fail(FLOW_CODES.REQUEST_TIMEOUT) }
-      // Never trust an IO exception's .code.
-      if (outcome.kind !== 'ok') throw fail(FLOW_CODES.NETWORK)
+      // 旧实现把任何 IO 异常都压成 E_NETWORK，排障时看不到原因；这里附固定枚举诊断。
+      if (outcome.kind !== 'ok') {
+        const network = fail(FLOW_CODES.NETWORK)
+        network.diagnostic = {
+          step: typeof step === 'string' ? step : 'unknown',
+          networkCode: networkCodeOf(outcome.error),
+        }
+        throw network
+      }
       return outcome.value
     }
     try {
@@ -401,12 +449,14 @@ export function createMemoryFlow(deps) {
         const outcome = await budget.race(() => reader.read(), limits.pollPerCallMs)
         if (outcome.kind !== 'ok') {
           try { Promise.resolve().then(() => reader.cancel()).catch(() => {}) } catch { /* 忽略 */ }
-          throw fail(outcome.kind === 'aborted' ? FLOW_CODES.ABORTED : (outcome.kind === 'error' ? FLOW_CODES.NETWORK : FLOW_CODES.BUDGET_EXHAUSTED))
+          throw outcome.kind === 'aborted'
+            ? fail(FLOW_CODES.ABORTED)
+            : outcome.kind === 'error' ? networkFail(state, outcome.error) : fail(FLOW_CODES.BUDGET_EXHAUSTED)
         }
         const step = outcome.value
         if (step?.done === true) break
         const chunk = step?.value
-        if (!(chunk instanceof Uint8Array)) throw fail(FLOW_CODES.NETWORK)
+        if (!(chunk instanceof Uint8Array)) throw networkFail(state, null)
         total += chunk.byteLength
         if (total > maxBytes) {
           try { Promise.resolve().then(() => reader.cancel()).catch(() => {}) } catch { /* 忽略 */ }
@@ -422,11 +472,11 @@ export function createMemoryFlow(deps) {
     if (typeof response?.text === 'function') {
       const outcome = await budget.race(() => response.text(), limits.pollPerCallMs)
       if (outcome.kind === 'aborted') throw fail(FLOW_CODES.ABORTED)
-      if (outcome.kind !== 'ok') throw fail(outcome.kind === 'error' ? FLOW_CODES.NETWORK : FLOW_CODES.BUDGET_EXHAUSTED)
+      if (outcome.kind !== 'ok') throw outcome.kind === 'error' ? networkFail(state, outcome.error) : fail(FLOW_CODES.BUDGET_EXHAUSTED)
       if (outcome.value.length > maxBytes) throw fail(FLOW_CODES.RESPONSE_TOO_LARGE)
       return outcome.value
     }
-    throw fail(FLOW_CODES.NETWORK)
+    throw networkFail(state, null)
   }
 
   function parseJsonStrict(text, state) {
@@ -461,7 +511,9 @@ export function createMemoryFlow(deps) {
         const outcome = await budget.race(() => reader.read(), limits.pollPerCallMs)
         if (outcome.kind !== 'ok') {
           try { Promise.resolve().then(() => reader.cancel()).catch(() => {}) } catch { /* 忽略 */ }
-          throw fail(outcome.kind === 'aborted' ? FLOW_CODES.ABORTED : (outcome.kind === 'error' ? FLOW_CODES.NETWORK : FLOW_CODES.BUDGET_EXHAUSTED))
+          throw outcome.kind === 'aborted'
+            ? fail(FLOW_CODES.ABORTED)
+            : outcome.kind === 'error' ? networkFail(state, outcome.error) : fail(FLOW_CODES.BUDGET_EXHAUSTED)
         }
         const step = outcome.value
         if (step?.done === true) break
@@ -481,7 +533,7 @@ export function createMemoryFlow(deps) {
     if (typeof response?.arrayBuffer === 'function') {
       const outcome = await budget.race(() => response.arrayBuffer(), limits.pollPerCallMs)
       if (outcome.kind === 'aborted') throw fail(FLOW_CODES.ABORTED)
-      if (outcome.kind !== 'ok') throw fail(outcome.kind === 'error' ? FLOW_CODES.NETWORK : FLOW_CODES.BUDGET_EXHAUSTED)
+      if (outcome.kind !== 'ok') throw outcome.kind === 'error' ? networkFail(state, outcome.error) : fail(FLOW_CODES.BUDGET_EXHAUSTED)
       const bytes = new Uint8Array(outcome.value)
       if (bytes.byteLength > limits.maxQrBytes) throw fail(FLOW_CODES.QR_IMAGE_TOO_LARGE)
       return bytes
@@ -502,10 +554,28 @@ export function createMemoryFlow(deps) {
   function accountCookieLines(pollPayload) {
     const lines = []
     for (const field of ACCOUNT_FIELDS) {
-      const value = pollPayload?.[field]
+      // 注意必须是 let：下面会把 number 归一化成字符串（旧版误写 const 会抛
+      // "Assignment to constant variable."，扫码后 receipt 里 userId 是数字时必现）。
+      let value = pollPayload?.[field]
       if (value === undefined || value === null) continue
-      if (typeof value !== 'string' || value.length === 0 || value.length > 4096) throw fail(FLOW_CODES.CREDENTIAL_FIELD_INVALID)
-      if (!COOKIE_OCTET_RE.test(value)) throw fail(FLOW_CODES.CREDENTIAL_FIELD_INVALID)
+      const bad = (reason) => {
+        const error = fail(FLOW_CODES.CREDENTIAL_FIELD_INVALID)
+        // 固定枚举诊断：只回字段名（固定常量）和原因，不含值原文。
+        error.diagnostic = { field, reason }
+        return error
+      }
+      // [local 2026-11-14] 官方回执的 userId 现在是 JSON number（console 夹具同样用
+      // Number(ACCOUNT_ID)）。只接受安全非负整数并转成十进制字符串，其余类型仍拒绝。
+      if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) value = String(value)
+      if (typeof value !== 'string') throw bad('not-string')
+      if (value.length === 0) throw bad('empty')
+      if (value.length > 4096) throw bad('too-long')
+      // [local 2026-11-14] 官方现在会返回带引号的凭据值（quoted `"..."`，与 console
+      // 流程 0.10.6 遇到的情况一致）。这里按 jar 同一口径放行严格引号包裹的合法值；
+      // jar 已开 allowQuotedValues，原样保留引号出站，不做 decode/unescape。
+      const quoted = value.length >= 2 && value.startsWith('"') && value.endsWith('"')
+        && COOKIE_OCTET_RE.test(value.slice(1, -1))
+      if (!COOKIE_OCTET_RE.test(value) && !quoted) throw bad('value-format')
       lines.push(`${field}=${value}; Path=/; Secure`)
     }
     return lines
@@ -532,7 +602,7 @@ export function createMemoryFlow(deps) {
       const hopUrl = validateDynamic(hop, purpose)
       register(state, hopUrl.toString())
       const step = await callOnce(state, budget, hopUrl.toString(), { step: 'redirect', perCallMs: 15_000 })
-      if (step.status >= 300 && step.status < 400 && typeof step.location === 'string' && step.location.length > 0) {
+            if (step.status >= 300 && step.status < 400 && typeof step.location === 'string' && step.location.length > 0) {
         hop = step.location
         continue
       }
@@ -600,7 +670,7 @@ export function createMemoryFlow(deps) {
     if (magic === null) throw fail(FLOW_CODES.QR_IMAGE_INVALID)
     state.report.booleans.qrIsPng = magic === 'png'
     state.report.booleans.qrIsJpeg = magic === 'jpeg'
-    const shown = await budget.race(() => display.showQr({ bytes, mime: magic === 'png' ? 'image/png' : 'image/jpeg' }), limits.displayMs)
+        const shown = await budget.race(() => display.showQr({ bytes, mime: magic === 'png' ? 'image/png' : 'image/jpeg' }), limits.displayMs)
     if (shown.kind === 'aborted') throw fail(FLOW_CODES.ABORTED)
     if (shown.kind !== 'ok') throw fail(FLOW_CODES.DISPLAY_ERROR)
     if (shown.value?.kind === 'cancelled' || shown.value?.kind === 'closed') throw fail(FLOW_CODES.CANCELLED)
@@ -608,9 +678,29 @@ export function createMemoryFlow(deps) {
 
     // 长轮询：保留**成功那次**的响应归属，供 Cookie 域使用。
     let receipt = null
+    let networkFailures = 0
+    let pollSeq = 0
     for (;;) {
-      const poll = await callOnce(state, budget, lpUrl.toString(), { step: 'longPoll' })
-      if (poll.timedOut === true) continue
+      let poll
+      try {
+        state.step = 'longPoll'
+        poll = await callOnce(state, budget, lpUrl.toString(), { step: 'longPoll' })
+      } catch (error) {
+        // [local 2026-11-14] 扫码成功时官方可能先**断开长轮询连接**（表现为
+        // E_NETWORK / ECONNRESET）再让下一次轮询拿到 location。浏览器会继续轮询；
+        // 旧实现直接整次失败。这里有限容错：连续 5 次网络错误才判失败。
+        if (error?.[INTERNAL_FAILURE] === true && error.code === FLOW_CODES.NETWORK) {
+          networkFailures += 1
+          if (networkFailures >= 5) throw error
+          const wait = Math.min(limits.backoffMs, Math.max(1, state.deadline - now()))
+          const paused = await budget.race(() => sleep(wait), wait + 50)
+          if (paused.kind !== 'ok') throw fail(paused.kind === 'aborted' ? FLOW_CODES.ABORTED : FLOW_CODES.BUDGET_EXHAUSTED)
+          continue
+        }
+        throw error
+      }
+      pollSeq += 1
+            if (poll.timedOut === true) continue
       if (poll.status !== 200) throw fail(FLOW_CODES.STATUS_UNEXPECTED)
       const payload = await readJson(state, budget, poll.response)
       if (detectHumanChallenge(payload)) throw fail(FLOW_CODES.NEEDS_HUMAN_VERIFICATION)
@@ -624,7 +714,7 @@ export function createMemoryFlow(deps) {
       if (paused.kind !== 'ok') throw fail(paused.kind === 'aborted' ? FLOW_CODES.ABORTED : FLOW_CODES.BUDGET_EXHAUSTED)
     }
 
-    const dynamicReceipt = state.approvedLongPoll !== null && receipt.sourceUrl === state.approvedLongPoll
+        const dynamicReceipt = state.approvedLongPoll !== null && receipt.sourceUrl === state.approvedLongPoll
     if (dynamicReceipt) {
       // Dynamic approved LP may not mint account cookies or feed any later purpose.
       // Presence of any account credential field is fail-closed, including null/empty values.
@@ -636,7 +726,12 @@ export function createMemoryFlow(deps) {
       const lines = accountCookieLines(receipt.payload)
       if (lines.length > 0) {
         const accountUrl = new URL(receipt.sourceUrl)
-        if (accountUrl.hostname.toLowerCase() !== ACCOUNT_HOST) throw fail(FLOW_CODES.URL_PURPOSE_MISMATCH)
+        // [local 2026-11-14] 长轮询来源现在是官方子域（如 ak.lp.account.xiaomi.com），
+        // 旧校验只认精确 account.xiaomi.com；放宽为「官方账号域或其子域」，
+        // 凭据 cookie 仍按固定 https://account.xiaomi.com/ 归属吸收，域绑定不变。
+        const accountHost = accountUrl.hostname.toLowerCase()
+        const officialAccount = accountHost === ACCOUNT_HOST || accountHost.endsWith('.' + ACCOUNT_HOST)
+        if (!officialAccount) throw fail(FLOW_CODES.URL_PURPOSE_MISMATCH)
         absorbOnce(state, lines, `https://${ACCOUNT_HOST}/`)
       }
     }
@@ -664,7 +759,7 @@ export function createMemoryFlow(deps) {
   }
 
   async function gateBalance(state, budget) {
-    state.report.stage = 'balance'
+        state.report.stage = 'balance'
     state.report.gates.balance.attempted = true
     register(state, FIXED_ENTRY.BALANCE)
     const res = await callOnce(state, budget, FIXED_ENTRY.BALANCE, { step: 'balance', perCallMs: 10_000 })
@@ -694,7 +789,7 @@ export function createMemoryFlow(deps) {
         : 'later'
     }
     state.report.gates.balance.ok = true
-  }
+      }
 
   function destroy(state) {
     try {
@@ -782,6 +877,8 @@ export function createMemoryFlow(deps) {
       state.report.code = code
       if (error?.[INTERNAL_FAILURE] === true && error.diagnostic !== undefined) {
         state.report.diagnostic = error.diagnostic
+      } else if (code === FLOW_CODES.NETWORK) {
+        state.report.diagnostic = { step: typeof state.step === 'string' ? state.step : 'unknown', networkCode: 'other' }
       }
       if (state.report.stage === 'qr' && state.report.gates.qr.ok !== true) state.report.gates.qr.code = code
       if (state.report.stage === 'balance') state.report.gates.balance.code = code

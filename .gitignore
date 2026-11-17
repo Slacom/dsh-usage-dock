@@ -10,3 +10,6 @@ reference/
 
 # 本地诊断/探针（asar 解包、一次性权限与配置探针；0.9.0 起）
 .diagnostics/
+
+# 补丁工具写出的本地备份（`--apply` 的 wx 备份；仅本机可恢复用）
+tools/patches/

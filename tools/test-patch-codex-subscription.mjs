@@ -1,10 +1,12 @@
 /**
  * [0.10.1] `tools/patch-codex-subscription.mjs` 的离线回归。
  * [0.10.3] 追加多版本清单回归：3.2.13 移植清单、按已装版本选清单、缺/非法清单零写入。
+ * [0.10.6] 追加 3.2.17 清单（`inheritFrom` 继承 3.2.13，只覆盖 1 条 hunk）与继承失败模式回归。
  *
  * 全部在**临时目录里的副本**上做：不读也不写真实 profile（真实包的路径只出现在工具里）。
  * 夹具来源：`.diagnostics/codex-subscription-readonly-service-20261111/base/index.js`（3.2.6 base 字节）、
- *          `.diagnostics/codex-subscription-3.2.13/extracted/package/lib/index.js`（3.2.13 base 字节）。
+ *          `.diagnostics/codex-subscription-3.2.13/extracted/package/lib/index.js`（3.2.13 base 字节）、
+ *          `.diagnostics/codex-subscription-3.2.17/package/lib/index.js`（3.2.17 base 字节）。
  */
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -191,7 +193,8 @@ const out = (r) => String(r.stdout || '') + String(r.stderr || '')
   const target13 = (dir) => join(dir, 'lib', 'index.js')
 
   const all = mod.listManifests()
-  check('V1 清单目录同时提供 3.2.6 与 3.2.13', all.map((e) => e.manifest.version).sort().join(',') === '3.2.13,3.2.6', all.map((e) => e.manifest.version))
+  check('V1 清单目录同时提供 3.2.6 / 3.2.13 / 3.2.17（3.2.17 经 inheritFrom 继承解析）',
+    all.map((e) => e.manifest.version).sort().join(',') === '3.2.13,3.2.17,3.2.6', all.map((e) => e.manifest.version))
   check('V2 3.2.13 清单 baseSha == 3.2.13 基线哈希', M13.baseSha.toLowerCase() === sha256(base13).toLowerCase(), { want: M13.baseSha, got: sha256(base13) })
   check('V3 loadManifest("3.2.13") 版本精确命中', mod.loadManifest('3.2.13').version === '3.2.13')
   check('V4 loadManifest("3.2.6") 仍可用（两版并存）', mod.loadManifest('3.2.6').version === MANIFEST.version)
@@ -252,6 +255,149 @@ const out = (r) => String(r.stdout || '') + String(r.stderr || '')
     { mixed: mixedList.map((e) => e.manifest.version), mixedApplied })
 
   rmSync(root3, { recursive: true, force: true })
+}
+
+// ===========================================================================
+// [0.10.6] 3.2.17 清单（inheritFrom 继承 3.2.13）+ 继承失败模式 fail-closed
+// ===========================================================================
+{
+  const mod = await import('../plans/codex-subscription-patch.js')
+  const M17 = JSON.parse(readFileSync(join(HERE, '..', 'plans', 'patches', 'codex-subscription-3.2.17.json'), 'utf8'))
+  const BASE17 = join(HERE, '..', '.diagnostics', 'codex-subscription-3.2.17', 'package', 'lib', 'index.js')
+  if (!existsSync(BASE17)) {
+    console.error('缺少 3.2.17 基线夹具：' + BASE17)
+    process.exit(1)
+  }
+  const base17 = readFileSync(BASE17)
+  const root4 = mkdtempSync(join(tmpdir(), 'dsh-cs-3217-'))
+  const mk4 = (name, version, bytes) => {
+    const dir = join(root4, name)
+    mkdirSync(join(dir, 'lib'), { recursive: true })
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-codex-subscription', version }) + '\n')
+    writeFileSync(join(dir, 'lib', 'index.js'), bytes)
+    return dir
+  }
+  const target4 = (dir) => join(dir, 'lib', 'index.js')
+
+  check('W1 3.2.17 清单 baseSha == 3.2.17 基线夹具哈希',
+    M17.baseSha.toLowerCase() === sha256(base17).toLowerCase(), { want: M17.baseSha, got: sha256(base17) })
+  const resolved17 = mod.manifestForVersion('3.2.17').manifest
+  check('W2 3.2.17 继承解析出 4 条 hunk，顺序与 3.2.13 一致且覆盖项原位替换',
+    resolved17.hunks.length === 4
+      && resolved17.hunks.map((h) => h.id).join(',') === 'readonly-usage-service-factory,usage-bridge-revision-var,revision-bump-on-account-changed,provide-readonly-usage-service'
+      && resolved17.hunks[2].old === M17.hunks[0].old && resolved17.hunks[2].new === M17.hunks[0].new,
+    resolved17.hunks.map((h) => h.id))
+  const hits17 = mod.hunkHits(base17.toString('utf8'), resolved17)
+  check('W3 3.2.17 基线 4 条 hunk 各命中 1 次', hits17.length === 4 && hits17.every((r) => r.hits === 1), hits17)
+  const covered = mod.coveredVersions()
+  check('W4 coveredVersions() = 3.2.6/3.2.13/3.2.17（纯版本号、升序、不含路径）',
+    covered.join(',') === '3.2.6,3.2.13,3.2.17', covered)
+
+  const dir17 = mk4('v3217', '3.2.17', Buffer.from(base17))
+  const s17 = mod.readPatchState(dir17)
+  check('W5 readPatchState 按已装版本选 3.2.17 → appliable',
+    s17.state === 'appliable' && s17.manifestVersion === '3.2.17', { state: s17.state, mv: s17.manifestVersion })
+  const a17 = mod.applyPatch(dir17, { backupRoot: join(root4, 'bk17') })
+  const sha17 = sha256(readFileSync(target4(dir17)))
+  check('W6 applyPatch(3.2.17) → applied 且 newSha == programSha',
+    a17.applied === true && sha17.toLowerCase() === M17.programSha.toLowerCase(), { sha17, want: M17.programSha })
+  check('W7 打完状态 patched', mod.readPatchState(dir17).state === 'patched')
+  const rv17 = mod.revertPatch(dir17, join(root4, 'bk17'))
+  check('W8 revertPatch(3.2.17) → 与基线逐字节一致',
+    rv17.restoredSha.toLowerCase() === M17.baseSha.toLowerCase() && Buffer.compare(readFileSync(target4(dir17)), base17) === 0, rv17)
+
+  // 继承失败模式：自造清单目录（通过 manifestDir 参数注入），三种非法继承都必须被跳过/判非法，
+  // apply 抛 E_CS_PATCH_UNSUPPORTED 且目标文件零改动（fail-closed）。
+  const sha64 = (c) => c.repeat(64)
+  const parentHunk = { id: 'base-hunk', old: 'AAA', new: 'BBB' }
+  const validParent = { version: '9.9.0', file: 'lib/index.js', baseSha: sha64('a'), programSha: sha64('b'), hunks: [parentHunk] }
+  const childInherit = (parentVersion, overrideHunks) => ({
+    version: '9.9.1', file: 'lib/index.js', baseSha: sha64('c'), programSha: sha64('d'),
+    inheritFrom: parentVersion, hunks: overrideHunks,
+  })
+  const mkManifestDir = (name, files) => {
+    const dir = join(root4, name)
+    mkdirSync(dir, { recursive: true })
+    for (const [version, manifest] of Object.entries(files)) {
+      writeFileSync(join(dir, 'codex-subscription-' + version + '.json'), JSON.stringify(manifest, null, 2) + '\n')
+    }
+    return dir
+  }
+  const badCases = [
+    ['W9 缺父清单（inheritFrom 指向不存在的版本）子清单被跳过', mkManifestDir('m-missing', { '9.9.1': childInherit('9.9.0', [parentHunk]) })],
+    ['W10 继承成环（9.9.1 ⇄ 9.9.2）子清单被跳过', mkManifestDir('m-cycle', {
+      '9.9.1': childInherit('9.9.2', [parentHunk]),
+      '9.9.2': childInherit('9.9.1', [parentHunk]),
+    })],
+    ['W11 覆盖 id 不在父清单里子清单被判非法', mkManifestDir('m-unknown-id', {
+      '9.9.0': validParent,
+      '9.9.1': childInherit('9.9.0', [{ id: 'not-in-parent', old: 'AAA', new: 'CCC' }]),
+    })],
+  ]
+  for (const [name, dir] of badCases) {
+    const listed = mod.listManifests(dir)
+    let loadCode = null
+    try { mod.loadManifest('9.9.1', dir) } catch (err) { loadCode = err && err.code }
+    // 夹具包的已装版本与非法清单的 version **一致**（9.9.1）：确保 apply 失败走的是「清单不存在/不合法」
+    // 这条路径，而不是「版本不匹配」（后者即使继承校验坏了也会拒绝，测不到 fail-closed 的零写入）。
+    const pkg = mk4('pkg-' + dir.slice(root4.length + 1), '9.9.1', Buffer.from(base17))
+    const st = mod.readPatchState(pkg, null, dir)
+    let applyCode = null
+    try { mod.applyPatch(pkg, { backupRoot: join(root4, 'bk-bad'), manifestDir: dir }) } catch (err) { applyCode = err && err.code }
+    check(name + ' → 子清单不进清单列表、apply 抛 UNSUPPORTED 且零写入',
+      !listed.some((e) => e.manifest.version === '9.9.1') && loadCode === 'E_CS_PATCH_UNSUPPORTED'
+        && st.state === 'unsupported' && st.manifestAvailable === false
+        && applyCode === 'E_CS_PATCH_UNSUPPORTED'
+        && Buffer.compare(readFileSync(target4(pkg)), base17) === 0,
+      { listed: listed.map((e) => e.manifest.version), loadCode, state: st.state, available: st.manifestAvailable, applyCode })
+  }
+
+  // 对照：合法继承链仍能解析（覆盖 id 命中父清单），证明上面的失败不是「一律失败」
+  const okDir = mkManifestDir('m-ok', {
+    '9.9.0': validParent,
+    '9.9.1': childInherit('9.9.0', [{ id: 'base-hunk', old: 'AAA', new: 'ZZZ' }]),
+  })
+  const okManifest = mod.manifestForVersion('9.9.1', okDir).manifest
+  check('W12 合法继承链可解析（对照：覆盖 id 原位替换生效）',
+    okManifest.hunks.length === 1 && okManifest.hunks[0].new === 'ZZZ',
+    okManifest.hunks)
+
+  // [0.10.6 整改] 继承深度上限必须在「父先子后」的文件名序下也生效：
+  // 旧实现的 memo 会把父链以 depth 0 的展开结果缓存起来，子清单随后直接命中缓存，
+  // 于是 6 条继承边被全部接受、MAX_INHERIT_DEPTH=4 形同失效（终审发现）。
+  // 目录：9.9.00（根、无父）+ 9.9.01…9.9.06 逐级 inheritFrom；文件名即版本升序 ⇒ 父先子后。
+  const deepDir = join(root4, 'm-depth')
+  mkdirSync(deepDir, { recursive: true })
+  for (let i = 0; i <= 6; i += 1) {
+    const version = '9.9.0' + i
+    const manifest = { version, file: 'lib/index.js', baseSha: sha64('e'), programSha: sha64('f'), hunks: [parentHunk] }
+    if (i > 0) manifest.inheritFrom = '9.9.0' + (i - 1)
+    writeFileSync(join(deepDir, 'codex-subscription-' + version + '.json'), JSON.stringify(manifest, null, 2) + '\n')
+  }
+  const deepListed = mod.listManifests(deepDir).map((e) => e.manifest.version)
+  check('W13 父先文件名序（9.9.00→9.9.06）：超过 4 条继承边的清单被拒绝，4 边以内保留',
+    deepListed.join(',') === '9.9.00,9.9.01,9.9.02,9.9.03,9.9.04', deepListed)
+  let deepLoad5 = null
+  let deepLoad6 = null
+  try { mod.loadManifest('9.9.05', deepDir) } catch (err) { deepLoad5 = err && err.code }
+  try { mod.loadManifest('9.9.06', deepDir) } catch (err) { deepLoad6 = err && err.code }
+  const deepControl = mod.manifestForVersion('9.9.04', deepDir)
+  check('W14 loadManifest 对 5/6 条继承边抛 UNSUPPORTED；4 边合法链仍可解析（对照）',
+    deepLoad5 === 'E_CS_PATCH_UNSUPPORTED' && deepLoad6 === 'E_CS_PATCH_UNSUPPORTED'
+      && deepControl !== null && deepControl.manifest.hunks.length === 1,
+    { deepLoad5, deepLoad6, control: deepControl === null ? null : deepControl.manifest.version })
+  // 超深清单版本（9.9.05）的包：apply 必须走「清单不存在/不合法」路径并零写入
+  const deepPkg = mk4('pkg-depth', '9.9.05', Buffer.from(base17))
+  const deepState = mod.readPatchState(deepPkg, null, deepDir)
+  let deepApply = null
+  try { mod.applyPatch(deepPkg, { backupRoot: join(root4, 'bk-depth'), manifestDir: deepDir }) } catch (err) { deepApply = err && err.code }
+  check('W15 超深清单版本 9.9.05 → unsupported（manifestAvailable=false）、apply 抛 UNSUPPORTED 且零写入',
+    deepState.state === 'unsupported' && deepState.manifestAvailable === false
+      && deepApply === 'E_CS_PATCH_UNSUPPORTED'
+      && Buffer.compare(readFileSync(target4(deepPkg)), base17) === 0,
+    { state: deepState.state, available: deepState.manifestAvailable, deepApply })
+
+  rmSync(root4, { recursive: true, force: true })
 }
 
 rmSync(root, { recursive: true, force: true })

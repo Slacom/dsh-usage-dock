@@ -205,11 +205,21 @@ export function createSessionManager(options = {}) {
       failure: s.failure === null ? null : {
         code: s.failure.code,
         stage: s.failure.stage,
-        diagnostic: s.failure.diagnostic === null ? null : {
-          rejectedPurpose: s.failure.diagnostic.rejectedPurpose,
-          rejectedReason: s.failure.diagnostic.rejectedReason,
-          hostClass: s.failure.diagnostic.hostClass,
-        },
+        diagnostic: s.failure.diagnostic === null ? null : (
+          // [local 2026-11-14] Cookie 拒绝只回固定 E_COOKIE_* 枚举，便于排障；
+          // 原先只投影 URL-mismatch 的三项，cookie 诊断会被抹成空对象。
+          Array.isArray(s.failure.diagnostic.cookieCodes)
+            ? { cookieCodes: s.failure.diagnostic.cookieCodes.slice(0, 6) }
+            : typeof s.failure.diagnostic.field === 'string'
+            ? { field: s.failure.diagnostic.field, reason: s.failure.diagnostic.reason }
+            : typeof s.failure.diagnostic.networkCode === 'string'
+            ? { step: s.failure.diagnostic.step, networkCode: s.failure.diagnostic.networkCode }
+            : {
+              rejectedPurpose: s.failure.diagnostic.rejectedPurpose,
+              rejectedReason: s.failure.diagnostic.rejectedReason,
+              hostClass: s.failure.diagnostic.hostClass,
+            }
+        ),
       },
       remainingMs: Math.max(0, s.deadline - now()),
       calls: s.calls,

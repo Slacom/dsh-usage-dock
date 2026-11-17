@@ -2,6 +2,162 @@
 
 供本项目后续会话、接手主代理及子代理恢复协作规则；以用户最新明确指令和[项目规范](AGENTS.md)为准。这里不保存凭据、金额、认证URL或临时许可。
 
+## 2026-11-16 晚间：关机前交接（0.11.0 未提交、client.js 未部署）
+
+1. 完整交接见 [docs/handoff-2026-11-16-0.11.0.md](docs/handoff-2026-11-16-0.11.0.md)。
+2. 代码：0.11.0（DSH Go 原生半合入 + 桌面设置页搬到顶层 `settings.section` 分区「Usage Dock」+
+   实心钱包图标（Material Symbols，Apache-2.0）），
+   **全部未 git 提交**；测试全绿（native 40、boundaries 47、strip 17、legacy 12、patch 49/0、settings 17、
+   line-endings 71 等）。
+3. 终审：GPT-6.1-Sol Max——DSH Go 三轮（首轮 5 类、二轮 2 项，三轮定向通过）；设置页搬迁**通过**
+   （槽位未声明前 register 会同步抛错，已改 `slots.inject` 闭合）。
+4. 部署：desktop profile 已是 0.11.0 的 `index.js`/`plans`/`package.json`；**最新 `client.js` 未部署**
+   （关机前用户拒绝了复制命令），下次开工先复制 `client.js` 再重启 DSH。
+5. 未决：真机/视觉验收、`workbuddy` 渠道在本会话被平台拒绝（只能用 `opencode-go/deepseek-v4.1-flash`，
+   用户要求后续切 `workbuddy/cn:deepseek-v4.1-flash`，需先放开 provider）、0.10.6/0.11.0 发布（推送闸门）、
+   `mimoRememberLogin` 在 Web 设置页仍无开关。
+
+## 2026-11-16：0.11.0 DSH Go 原生适配（本地构建，未发布）——原生面板 / strip / MiMo 登录持久化
+
+> **记录来源**：DSH Go 侧（手机 App）适配包（基于 0.10.5）自带的 `docs/dsh-go-native-panel.md`
+> §3 / §4.4 / §4.5 与 `docs/backlog.md`「进展（2026-11-14～16）」。**适配包的 MEMORY.md 只到
+> 2026-11-12**，没有这几天的条目；本条目由上述工作记录整理而成，不是从适配包 MEMORY 原文抄来的。
+> 适配包在 `E:\WorkSpace\DSH\DSH Usage Dock\.diagnostics\dshgo-20261116\unpacked\dsh-usage-dock`，
+> 干净 0.10.5 基线在 `.diagnostics\dshgo-20261116\base`。
+
+1. **原生面板（2026-11-14）**：dsh-go 的左侧聊天记录抽屉不开放插件座位，详情卡片的原生落点是
+   **插件面板**。`package.json` 新增 `dshGo` 清单（v1，title 额度/Usage，icon wallet）与 Web 半 `dsh`
+   并存；`contributes.panels` 3 个：`quota`（`session.tab` + `features`，`presentation:"sheet"`）、
+   `settings`（`placement:["plugin"]`）、`mimo-login`（`placement:["plugin"]`）。实现集中在
+   `plans/dsh-go-native.js`（1701 行：静态视图骨架 + 数据投影 + 失败回退 + 复制摘要 +
+   `ctx.dshGo.panel()` 注册；视图 = 静态骨架 + `{"$":"data…"}` 绑定，刷新不重建视图；
+   视图预算约 2196 字节 / 27 组件 / 4 层，上限 32 KiB / 120 / 8）。取数仍在 Host 进程内，
+   复用各 provider / MiMo 显示快照 / 自定义余额，面板打开才启动 30 秒 feed、关闭即取消；
+   暂时失败灰化保留旧值、永久失败立即提示；自定义余额用 `list` + `data.customRows`。
+   无 `webServer` 的隔离宿主（官方检查器）注册完即返回，`check --load` 能加载校验。
+2. **原生设置页（2026-11-14 两轮返工）**：额度面板底部「设置」发 `{ open: "panel:settings" }`；
+   只编辑非密钥字段（总开关/渠道开关/Codex 来源/余额阈值/额度策略阈值），密钥、Cookie、
+   自定义余额仍走网页版设置页。按渠道分 6 组；「启用/关注额度策略」开关是 onChange 即时保存 +
+   refresh 重建视图（**切换会重建表单、未保存的其它编辑会被刷新**），保存只提交当前视图实际渲染的
+   字段；`quotaFocusChannels` 按 5 个关注开关重建、`quotaChannelThresholds` 按渠道合并。
+   排版坑：`row` 在 form 里会被 160dp 最小宽压成一列、v2 `style.columns` 在部分 App 版本不生效，
+   最后用 `grid columns: 2`；策略字段上限 32，故 Codex 只保留关注开关；`2/256` 计数器是 App 对
+   number/textField 的内置行为，插件侧关不掉。
+3. **MiMo 扫码登录（原生面板，2026-11-15 收尾）**：设置页入口 + 原生 `mimo-login` 面板
+   （QR / 轮询 / 取消），复用 Host 已注册的 auth/QR handler（`host.native.auth/qr`），动作序列与
+   网页版一致。原生面板没有「确认账号匹配」控件，改为检测到 `awaitingBalanceMatch` 时自动回
+   `later`（原先空等约 100 秒）；legacy 扫码登录的余额只存在会话 manager，现投影成 display 形状，
+   额度面板 / 网页胶囊 / 用量策略都能读到；二维码剩余不足 45 秒提示尽快扫描、过期明确显示
+   「二维码已过期」。动态审批场景仍提示去网页版。
+4. **MiMo 登录持久化（2026-11-15/16，真机验证通过）**：可选、默认开 `mimoRememberLogin`——
+   扫码登录成功后把**平台侧 4 个 cookie** 交给 DSH 凭据记录保管（`ctx.credentials`），引擎重启后
+   重放 `GET https://platform.xiaomimimo.com/api/v1/balance`，200/code=0 即恢复余额，401/403/结构异常
+   则删除记录回落重新扫码；设置页 MiMo 分组可关闭（关闭即删除记录）。实现坑：登录流程结束时
+   `jar.clear()`，cookie 必须在读余额时（`askBalanceMatch`）抓取；`serviceToken` 的 `Path` 可能是
+   `/api`，要用余额接口完整 URL 取 cookie。**残余风险**：`serviceToken` 实际有效期、设备/IP 绑定是否
+   失效未知，过期需重扫。纯逻辑 + 可注入 fetch 测试 11 项（`tools/test-mimo-legacy-store.mjs`）。
+5. **mimo-auth 官方接口变化兼容（2026-11-14 真机联调，网页版同样受益）**：不改流程、只补兼容——
+   ① long-poll 与凭据来源变成 `*.account.xiaomi.com` 子域，vendor 域名/用途校验放宽为「官方账号域或
+   其子域」；② 扫码回执带引号 cookie / 账号域 cookie，legacy CookieJar 开 `allowQuotedValues` 并补
+   根域白名单；③ 真机网络混入格式非法 `Set-Cookie` 行（实测 6 条 `E_COOKIE_BAD_NAME`），改为按浏览器
+   语义忽略并继续（旧流程整次判 `E_SET_COOKIE_REJECTED`），必需凭据仍由后续 token gate 把关；
+   ④ 回执凭据字段（passToken/userId/cUserId/deviceId）可带严格引号，按 jar 同一口径放行、原样出站；
+   ⑤ 回执 `userId` 变为 JSON **number**，只接受安全非负整数并转十进制字符串；⑥ 移动网络瞬时断连的
+   GET 单次重试（300ms）；⑦ 所有网络失败点带固定枚举诊断 `step + networkCode`。
+6. **`composer.strip`（2026-11-15）**：`dshGo.contributes["composer.strip"]` 1 条
+   （`{id:"strip", icon:"wallet", panel:"quota"}`，strip id 与面板 id 不重复），输入框上方一行
+   ≤24 字额度摘要 + 点按开 `quota` sheet。路由判定在 Host 侧：订阅 `session/event`，三类事件
+   **latest wins**（`model/selection` → `request/header` → `assistant/message`），首次/换会话用
+   `snapshotEvents()` 回填最近 400 条，只按 `sessionId` 隔离、拿不到就 `emit(null)` 隐藏；
+   内置 provider 走 `ROUTE_TABLE` 精确匹配、自定义按条目 `provider` 精确匹配；**MiMo provider id
+   尚未进 ROUTE_TABLE**（待真机确认）。文本模板按渠道全名 + 依次数值；tone：百分比 ≤10 `bad`、
+   ≤30 `warn`，余额 ≤0 `bad`；失败/未知/无窗口/无余额返回 null；单渠道 30 秒缓存 + single-flight，
+   优先复用额度策略观察的投影。
+7. **测试与验证口径**：适配包离线测试 `test-dsh-go-native` **37 项**、`test-dsh-go-strip` **17 项**、
+   `test-mimo-legacy-store` **11 项**（本代理在适配包内实跑确认这三个数字）；官方
+   `node …/dsh-go-plugin/kit/bin/check.mjs . --load` 通过（面板 3 个，视图 0 issue）。文档明写
+   **不是真机渲染验证**（视图结构只由检查器的 App 解析器副本验证；MiMo 登录持久化另有真机验收）。
+   回归面（适配包记录）：`test-android-compat` 14、`test-usage-tool` 108、`-register` 70、
+   `-host` 41、`test-usage-policy` 89、`test-usage-integration` 31、`test-host-custom` 31、
+   `test-config-unwrap` 22、`test-footer-row` 12、`test-collapsed-pill` 4、`test-degrade-refresh` 44、
+   `test-line-endings` 71 全部通过。**终审整改后**计数变为 native 40 / 新增 boundaries 47 / strip 17 /
+   mimo-legacy 12（见第 9/10 条）。
+8. **合入取舍（写入 docs/integration-dshgo-0.11.0.md）**：以适配包 `index.js` 为底，补回本仓库
+   0.10.6 的 `patch-state` `manifestVersion` / `covered`；保留本仓库 0.10.6 的 `client.js`、
+   `plans/codex-subscription-patch.js` 与 3.2.17 清单（适配包的 `client.js` 就是 0.10.5 原样）；
+   `plans/mimo-auth/**` 采用适配包版本。**仍未真机验证 `composer.strip` 观感**，原生面板也没搬
+   Web 卡片的峰谷条 / 充值 / 赠金 / Codex 适配入口等细节。
+9. **终审三轮（2026-11-16）**：GPT-6.1-Sol Max 共三轮，**首轮、第二轮均不通过，第三轮定向复审
+   「通过（定向范围）」**；**验收边界：这是离线代码与定向行为复审通过，不等同手机真机、原生视觉
+   或发布验收**。整改要点：
+   - **首轮 5 类**（已整改）：启用/桥接闸门（MiMo legacy 记忆登录保存与恢复统一要求
+     `dshGo 桥存在 && enabled !== false && mimoEnabled !== false && mimoRememberLogin !== false`，
+     无桥/停用不读凭据不重放、桥未就绪不排队；`app-boot/config-reload` 与设置页保存推进代次、
+     作废在途与旧值）；strip 启用闸门（停用不调 provider、不显示旧值，读缓存/投影前与调用前各判一次，
+     配置重载同步遮蔽并清缓存）；来源身份隔离 + 永久失败清旧值（strip key =
+     `channelId|identityOfChannel(id)`，Codex 含 `codexSource`、自定义含 provider/端点/修订号；
+     原生 carry 同规则 `${channelId}|identity`，缺身份不复用，Host 为每条原生 wire 附不可逆 `identity`）；
+     策略刷新定时器与插件作用域无条件绑定清理（不依赖 `usage_status` 注册成功，桥退出即停，
+     tick 在 await 前后复检）；原生设置页策略开关此前 `onChange` 未透传、6 个 toggle 无绑定，
+     现补透传 + `policyToggle`（只增删本次切换的目标渠道、保留其它关注项含 `custom:*` 与未知 id）；
+     `legacyDoneBalance()` 返回稳定采样时间（多次 peek 不变），5 分钟或缺失时间戳不再当 fresh。
+   - **第二轮 2 项**（已整改）：① **原生 collect 身份事后贴标**——改为取数**前**固化每个渠道的
+     `identityOfChannel(id)`、采样后复核；期间身份漂移的旧 wire **不带 identity**，下一轮暂时失败
+     不再 carry 旧百分比、第二轮重新采样（E1–E3）；② **过期 done 短路**——新增
+     `pickLegacyBalanceView`，顺序「done 新鲜优先 → record 新鲜 → 都不新鲜才限频重放」，
+     **过期 done 只失去优先权、不短路**已重放成功的新余额（记录缓存的新余额 19 CNY 最终显示在
+     原生额度面板，F1–F9）。
+   - **第三轮：通过（定向范围）**——GPT-6.1-Sol Max 判定 E（collect 身份采样前固化 / 采样后复核）
+     与 F（`pickLegacyBalanceView` 顺序、过期 done 不短路）两项阻断均已闭合，未发现新阻断；
+     复审还额外验证「身份稳定后能自愈（29% 再 carry）」「记录缓存再次过期会重新重放」
+     「恰好 5 分钟仍新鲜、+1ms 重放」。**验收边界：离线代码与定向行为复审通过，不等同手机真机、
+     原生视觉或发布验收。** 守门测试 `tools/test-dsh-go-boundaries.mjs` 已扩到 **47** 项
+     （首轮问题 + E1–E3 + F1–F9）。
+10. **整改后测试（主代理实跑全绿）**：`test-dsh-go-native` **40/40**、
+    `test-dsh-go-boundaries` **47/47**（整改新增，含 E/F 段）、`test-dsh-go-strip` **17/17**、
+    `test-mimo-legacy-store` **12/12**；回归 `test-patch-codex-subscription` 49/0、
+    `test-codex-patch-ui` 35、`test-codex-source-ui` 91、`test-android-compat` 14、
+    `test-usage-tool` 108、`test-footer-row` 12、`test-line-endings` 71。
+    **第三轮定向复审通过（定向范围），但不等同手机真机、原生视觉或发布验收；前两轮整改后未再上
+    真机复核**。`index.js` 整改后相对
+    v0.10.5 为 **+1065 / −6**。文档已同步（integration §4「终审三轮」、AGENTS §7、release notes
+    工程细节）与「下一步」：桌面设置页**已迁到顶层设置分区**（`settings.section` +
+    `settings.section.icon`，与「Codex 订阅」同款）；**图标已按用户选择改为实心钱包**
+    （Material Symbols `wallet`，**Apache-2.0**，即仓库根 `icon.svg` 的 24 网格单条 path；
+    描边款只留作 `docs/demos/settings-icon-preview.html` 候选预览）。备选「两处都保留」/
+    「插件详情内嵌」未采用。
+11. **部署（2026-11-16，主代理执行）**：0.11.0 已复制到 desktop profile 插件目录
+    （`C:\Users\Slacom\.dsh\profiles\desktop\node_modules\dsh-usage-dock`），部署前备份在
+    `.diagnostics\deploy-0.11.0-20261116\before`；**待用户重启 DSH 验证**（磁盘已部署 ≠ 运行时已激活，
+    需重启 + 硬刷新后确认原生面板 / strip / 设置页与桌面端回归）。**未 git 提交、未发布**。
+
+## 2026-11-16：0.10.6 本地构建（未发布）——Codex Subscription 适配 3.2.17
+
+1. **根因**：第三方 `dsh-codex-subscription` 升到 **3.2.17**，本插件 0.10.5 只收录 3.2.6 / 3.2.13 清单
+   ⇒ 设置页「需适配」点「应用本地适配」返回 `E_CS_PATCH_UNSUPPORTED`。3.2.17 与 3.2.13 的差异**只有一处**：
+   `lib/index.js` 的 `onAccountChanged` 首行新增 `remoteBridge.clearUploads()`（在 `subagentCatalog.clear()` 之前），
+   使 3.2.13 清单里那条含后续清理行的锚点失配。
+2. **做法**：清单新增 `plans/patches/codex-subscription-3.2.17.json`，并支持
+   `"inheritFrom": "<父清单 version>"` **继承**（3.2.17 继承 3.2.13，只覆盖 `revision-bump-on-account-changed`
+   一条 hunk；锚点收在 handler 开口处，只插入 `usageBridgeRevision += 1;`）。
+   继承链 fail-closed：缺父/成环/**超过 4 条继承边**/覆盖 id 不在父清单 ⇒ 清单非法并跳过。
+   终审发现的 **memo 绕过深度上限**缺陷已修（`resolveManifestEntry` 去掉 memo，深度按当次递归路径累计；
+   修复前「父先文件名序」下 6 条继承边会被全部接受），由 W13–W15 守门。
+   `GET /api/plan-usage/codex-subscription/patch-state` 新增只读字段 `covered`（本包合法清单版本列表）
+   与 `manifestVersion`（与已装版本精确匹配的清单版本；清单命中但文件与基线不符时仍等于已装版本，无清单才 null）。
+   设置页「需适配」块改为三态版本感知：`patched` 只提示重启、`appliable` 给按钮、
+   `unsupported` 区分两种文案——「已收录但本机文件与已知基线不一致」vs「暂无适配清单（已收录 …）」，
+   两种都不给按钮；GET 失败仍退回原来的「显示按钮」兜底。
+3. **数字**：3.2.17 清单 baseline `33f07e96…`、program `687ef5bb…`；
+   `test-patch-codex-subscription` **49 passed / 0 failed**、`test-codex-patch-ui` **35/35**、
+   `test-codex-source-ui` **91/91**（含 Q3a/Q3b/Q3c 按 URL 分流）；另 `test-settings` 6/6、
+   `test-android-compat` 14/14、`test-custom-settings` 49/49、`test-mimo-auth-client` 113/113。
+4. **部署与现状（主代理执行）**：0.10.6 文件已复制到
+   `C:\Users\Slacom\.dsh\profiles\desktop\node_modules\dsh-usage-dock`；真实第三方包已由 CLI 打上补丁
+   （备份 `tools/patches/backup/2026-11-16T13-01-43-361Z/`）；**等待用户重启 DSH 验证**
+   （磁盘已部署 ≠ 运行时已激活，需重启 + 硬刷新后确认设置页三态与订阅额度读取）。
+   **未 git 提交、未发布。**
+
 ## 2026-11-12 15:30：**0.10.2 已发布；0.10.1 已撤（npm 用 deprecate + 删 GitHub Release/tag）**
 
 1. **发布物**：commit **`ae8e994`**、tag **`v0.10.2`**、GitHub Release id **`442612052`**（`/releases/latest` = v0.10.2）；

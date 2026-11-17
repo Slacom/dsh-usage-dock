@@ -26,6 +26,13 @@
 import { randomUUID, createHash } from 'node:crypto'
 import z from '@deepseek-ai/schemastery'
 import { PLANS, planSchemaFields, percentSemanticsOf } from './plans/index.js'
+import { parseMimoBalance } from './plans/mimo.js'
+import {
+  MIMO_LEGACY_RECORD_KEY,
+  buildLegacyRecord,
+  parseLegacyRecord,
+  replayLegacyBalance,
+} from './plans/mimo-legacy-store.js'
 import { peakPhaseAt, peakSegments } from './plans/peak-phase.js'
 /**
  * [2026-10-25 客户端 Key 端点] WorkBuddy 只读客户端积分接口 + 账号列表（固定"不支持"元数据）。
@@ -66,12 +73,16 @@ import { registerUsageTool } from './plans/usage-tool-register.js'
 // 漏了这个导入会让**每一次成功采集**都抛 ReferenceError，被外层 catch 吞掉，
 // 于是提示词永远只剩「暂无额度数据」。`node --check` 抓不到未绑定的运行时名字。
 import { projectUsage, mimoWireWithDisplay } from './plans/usage-tool.js'
-import { quotaPolicySchemaFields } from './plans/usage-policy.js'
+// [dsh-go 原生 strip] 会话路由 → 渠道 → ≤24 字文本（纯函数）。
+import { applySessionRouteEvent, providerToChannel, formatStripText } from './plans/strip.js'
+// [dsh-go 原生适配] 详情卡片 → App 原生面板（panels: session.tab / features）。
+import { registerDshGoSurface } from './plans/dsh-go-native.js'
+import { quotaPolicySchemaFields, parseFocusChannels } from './plans/usage-policy.js'
 import { registerMimoAuth } from './plans/mimo-auth/host.js'
 import { createQuotaObserver, promoteOwnTicket } from './plans/quota-observer.js'
 import { createRouteObserver } from './plans/quota-route.js'
 import { buildQuotaView } from './plans/quota-view.js'
-import { renderQuotaPrompt, pickSmallestWindow, usesReservePool } from './plans/quota-prompt.js'
+import { renderQuotaPrompt, pickSmallestWindow, usesReservePool, resolveRoute } from './plans/quota-prompt.js'
 import { describeWindowCapability } from './plans/quota-thresholds.js'
 
 export const name = 'plan-usage'
@@ -96,6 +107,55 @@ const ACCOUNT_BOUND_PLAN_IDS = new Set(['deepseek', 'codex', 'workbuddy', 'workb
 /** [D6-G] systemPrompt 段落的排序位：排在工具说明之后、SDK 之前。 */
 const POLICY_CONTEXT_ORDER = 300
 
+/**
+ * [终审 F] legacy 余额的新鲜期：只认**真实采集时间**（`fetchedAt`），5 分钟后不再当新鲜值。
+ */
+const LEGACY_BALANCE_FRESH_MS = 5 * 60_000
+
+/**
+ * [终审 F] legacy 余额的**选择顺序**（纯函数，便于离线守门）。
+ *
+ * ① `done` 快照（当前进程里扫码登录完成的余额）只有在真实 `fetchedAt` 新鲜（≤5 分钟）时
+ *    才有**优先权**；
+ * ② 否则看凭据记录缓存 `record`，同样只按真实 `fetchedAt` 判新鲜；
+ * ③ 都没有新鲜值 ⇒ `needsReplay:true`，由调用方限频触发一次重放并返回 null（读取中/缺失）。
+ *
+ * **过期/缺时间戳的 done 不得短路整条路径**——否则重放成功的新余额会被过期的 done
+ * 快照永久挡住（终审 F 的真实故障）。
+ *
+ * @param {{done?: object|null, record?: object|null, now?: number}} input
+ * @returns {{value: {balance:{balance:number,currency:string}, fetchedAt:number}|null, needsReplay:boolean}}
+ */
+export function pickLegacyBalanceView(input) {
+  const src = input !== null && typeof input === 'object' ? input : {}
+  const now = typeof src.now === 'number' && Number.isFinite(src.now) ? src.now : Date.now()
+  const sampledAtOf = (entry) => {
+    if (entry === null || entry === undefined || typeof entry !== 'object') return null
+    const at = entry.fetchedAt
+    return typeof at === 'number' && Number.isFinite(at) && at > 0 ? at : null
+  }
+  const fresh = (sampledAt) => sampledAt !== null && now - sampledAt <= LEGACY_BALANCE_FRESH_MS
+  const valueOf = (entry, sampledAt) => ({
+    balance: { balance: entry.balance, currency: entry.currency },
+    fetchedAt: sampledAt,
+  })
+  const done = src.done !== null && src.done !== undefined && typeof src.done === 'object' ? src.done : null
+  if (done !== null) {
+    const sampledAt = sampledAtOf(done)
+    if (fresh(sampledAt) && typeof done.balance === 'number' && Number.isFinite(done.balance)) {
+      return { value: valueOf(done, sampledAt), needsReplay: false }
+    }
+  }
+  const record = src.record !== null && src.record !== undefined && typeof src.record === 'object' ? src.record : null
+  if (record !== null) {
+    const sampledAt = sampledAtOf(record)
+    if (fresh(sampledAt) && typeof record.balance === 'number' && Number.isFinite(record.balance)) {
+      return { value: valueOf(record, sampledAt), needsReplay: false }
+    }
+  }
+  return { value: null, needsReplay: true }
+}
+
 /** 只需要 Web 服务器；账号余额通过可选的 deepseekAccount 服务读取。 */
 export const inject = ['webServer']
 
@@ -106,6 +166,9 @@ export const Config = z.object(Object.assign(
   // [local patch 0.8.1] 渠道显示顺序（胶囊与详情面板共用）：渠道 id 的 JSON 数组，
   // 设置页用「上移/下移」按钮维护；未列出的渠道按注册表默认顺序排在后面。
   { planOrder: z.string().default('[]').volatile() },
+  // [dsh-go/MiMo 持久化] 扫码登录成功后把平台 cookie 存进 DSH 凭据记录，
+  // 重启引擎后重放余额接口，免去重新扫码。默认开启，可在设置页关闭（关闭即清除）。
+  { mimoRememberLogin: z.boolean().default(true).volatile() },
   planSchemaFields(),
   // [0.9.0] 自定义余额渠道（公开元数据 + 分离的 secret dict）。
   customSchemaFields(),
@@ -312,6 +375,147 @@ export function apply(ctx, config) {
   // [local patch 0.8.1] 路由内改用 liveConfig()（每次请求重读），快照只作兜底。
   const cfg = config != null && typeof config === 'object' ? config : {}
   const liveConfig = createLiveConfig(ctx, cfg)
+
+  // [dsh-go 原生适配] 原生面板不依赖 webServer，先注册再决定是否启动 Web 半：
+  //   - 只有装了 dsh-go 桥接的主机（手机本机引擎）才会执行 ctx.inject(['dshGo'])；
+  //   - 面板视图是静态骨架 + 数据绑定，数据在面板打开时由下面的 collect 拉取；
+  //   - 其它主机（含 dsh-go 插件检查器的隔离宿主）上 Web 半行为完全不变。
+  const nativeCollectRef = { fn: null }
+  /** [dsh-go] 原生桥接是否可用：只有这种主机才需要「策略快照后台刷新」。 */
+  let dshGoBridgeSeen = false
+  /** [终审 D] 插件作用域是否已卸载：后台刷新 tick 在异步前后都要检查它。 */
+  let applyDisposed = false
+  // 原生面板注册跟随桥接的插件作用域回收（官方示例 dsh-go-example-usage / -workbench /
+  // -readaloud 也不额外包 ctx.effect）：自己再包一层清理，会让官方检查器在 dispose() 之后
+  // 读到空注册表、误报「quota has no view file and no panel registration」。
+  const dshGoSurface = registerDshGoSurface(ctx, {
+    plans: PLANS,
+    semanticsOf: percentSemanticsOf,
+    onBridge: () => {
+      dshGoBridgeSeen = true
+      // [终审 D] 桥接出现/重载后恢复后台刷新循环（桥退出时会被停掉，重进要能重新启动）。
+      Promise.resolve().then(() => {
+        if (applyDisposed) return
+        policyRefreshStopped = false
+        startPolicyRefreshLoop()
+      }).catch(() => {})
+    },
+    // [终审 D] 桥接作用域退出：撤销桥接状态并停止后台循环（原生半调用；缺省时由下面的 inject 兜住）。
+    onBridgeDetach: () => {
+      dshGoBridgeSeen = false
+      try { policyRefreshStop() } catch (err) { /* 旧宿主 */ }
+    },
+    strip: (scope, emit, caps) => subscribeStrip(scope, emit, caps),
+    mimoSessionBalance: () => legacyMimoBalance(),
+    sessionChannelLabel: (sessionId, localeNow) => {
+      if (typeof sessionId !== 'string' || sessionId.length === 0) return ''
+      try {
+        backfillSessionRoute(sessionId)
+        const route = sessionRoute.get(sessionId)
+        if (route === undefined) return ''
+        const cfgNow = quotaCfg !== null && typeof quotaCfg === 'object' ? quotaCfg : {}
+        const channel = channelForRoute(route, cfgNow)
+        if (channel === null) return ''
+        const names = {
+          'opencode-go': 'OpenCode Go', codex: 'Codex', deepseek: 'DeepSeek', mimo: 'MiMo', workbuddy: 'WorkBuddy',
+        }
+        const name = channel.custom === true
+          ? (typeof channel.name === 'string' && channel.name.length > 0 ? channel.name : '自定义余额')
+          : (names[channel.channelId] || channel.channelId)
+        const en = typeof localeNow === 'string' && localeNow.toLowerCase().startsWith('en')
+        return (en ? 'Current session: ' : '当前会话：') + name
+      } catch (err) {
+        return ''
+      }
+    },
+    loadConfig: async () => unpackConfig(await liveConfig()),
+    collect: (cfgNow) => (nativeCollectRef.fn === null ? Promise.resolve([]) : nativeCollectRef.fn(cfgNow)),
+    customEntries: (cfgNow) => {
+      try {
+        return collectCustomEntries(cfgNow === null || cfgNow === undefined ? {} : cfgNow, { allowLegacy: legacyCustomAllowed() })
+      } catch (err) {
+        return []
+      }
+    },
+    // [0.11.0 原生设置页] 写回配置：复用 DSH 的 settings 服务（与网页版设置页同一条写盘通道，
+    // 会走 volatile 字段校验 + Loader 热重载）。不可用时由设置页提示「当前主机不能保存设置」。
+    saveConfig: async (patch) => {
+      const settings = (() => {
+        try { return ctx.get('settings') } catch (err) { return undefined }
+      })()
+      if (settings === null || settings === undefined || typeof settings.update !== 'function') {
+        throw new Error('settings service unavailable')
+      }
+      await settings.update('plan-usage', patch)
+      // 原生设置页的策略开关保存后立即 refresh 视图；作废 2 秒缓存，避免重建时读到旧配置。
+      if (typeof liveConfig.invalidate === 'function') liveConfig.invalidate()
+      /**
+       * [终审 A/B/C] 设置页保存**不依赖**是否收到 `app-boot/config-reload`：
+       * 立即撤销 legacy 旧值、让 strip 进入同步遮蔽并作废旧缓存/在途结果，
+       * 然后重读配置再放行 strip 重新计算。
+       */
+      invalidateLegacyMimoState()
+      markStripConfigDirty()
+      void Promise.resolve().then(() => refreshQuotaCfg()).finally(() => {
+        stripConfigPending = false
+        notifyStripSubs()
+      })
+      if (patch !== null && typeof patch === 'object' && Object.prototype.hasOwnProperty.call(patch, 'mimoRememberLogin')) {
+        if (patch.mimoRememberLogin === false) clearLegacyMimoRecord()
+        else void restoreLegacyMimo(true)
+      }
+    },
+    // 设置面板打开时订阅配置热重载，外部（网页版）改了配置也能立即回显。
+    onConfigReload: (fn) => {
+      if (typeof ctx.on !== 'function' || typeof fn !== 'function') return null
+      try {
+        const dispose = ctx.on('app-boot/config-reload', fn)
+        return typeof dispose === 'function' ? dispose : null
+      } catch (err) {
+        return null
+      }
+    },
+    // [0.11.0 原生面板 · MiMo 扫码登录] 直接调用本插件已经在 connection.fetch 注册的
+    // auth / qr handler（同进程、非 HTTP），复用完整的 MiMo 登录状态机与 QR 图片。
+    mimoAuth: {
+      status: () => mimoAuthStatus,
+      request: async (kind, body) => {
+        const host = (() => {
+          try { return mimoAuthHost.getHost() } catch (err) { return null }
+        })()
+        if (host === null || host === undefined || host.native === undefined || host.native === null) return null
+        const handler = kind === 'qr' ? host.native.qr : host.native.auth
+        if (typeof handler !== 'function') return null
+        const path = kind === 'qr' ? '/api/plan-usage-mimo-qr' : '/api/plan-usage-mimo-auth'
+        const init = body === null || body === undefined
+          ? { method: 'GET' }
+          : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }
+        let response
+        try {
+          response = await handler(new Request('http://127.0.0.1' + path, init))
+        } catch (err) {
+          return null
+        }
+        if (response === null || response === undefined) return null
+        if (kind === 'qr') {
+          if (response.status !== 200) return { ok: false, status: response.status }
+          try {
+            const bytes = Buffer.from(await response.arrayBuffer())
+            return { ok: true, mime: response.headers.get('content-type') || 'image/png', bytes }
+          } catch (err) {
+            return null
+          }
+        }
+        let payload = null
+        try { payload = await response.json() } catch (err) { payload = null }
+        return { ok: response.status === 200, status: response.status, body: payload }
+      },
+    },
+  })
+  // dsh-go 插件检查器的隔离宿主没有 webServer（它不是完整的 DSH 组合环境）。
+  // 原生面板已经注册，Web 路由 / 工具 / 观察器都依赖 webServer，不再在这里启动。
+  if (ctx == null || ctx.webServer == null) return
+
   // [MiMo G1] Optional owner-only auth capability; main plugin never hard-injects connection.
   let mimoAuthStatus = { supported: false, code: 'E_MIMO_AUTH_UNAVAILABLE' }
   /**
@@ -340,6 +544,7 @@ export function apply(ctx, config) {
      */
     enableConsoleProtocol: true,
     enableRememberedAccount: true,
+    onLegacyLogin: (payload) => { persistLegacyMimoLogin(payload) },
   })
 
   /**
@@ -356,25 +561,346 @@ export function apply(ctx, config) {
    * 任何异常/缺失都退化成 `null`；`routeDisplay.peek()` 抛错**不**偷偷回退 legacy（保持批次 D 语义）。
    * 只读消费，绝不用于变更动作（managed 下 start/read/grant/… 固定拒绝）。
    */
+  // ---- [MiMo legacy 登录持久化] ----
+  /**
+   * 扫码登录成功后把**平台侧 cookie** 交给 DSH 凭据记录保管（`ctx.credentials`），
+   * 重启引擎后重放余额接口即可免扫码。记录落盘在 `$DSH_HOME/.credentials.yaml`
+   * （0600、原子写），不含账号密码/账号 cookie/上游原文。
+   */
+  const legacyRecordState = { checkedAt: 0, data: null, inFlight: null }
+  const credentialsService = () => {
+    try {
+      const service = ctx.get('credentials')
+      return service !== null && service !== undefined && typeof service.modifyRecord === 'function' ? service : null
+    } catch (err) {
+      return null
+    }
+  }
+  /** [终审 A] legacy 状态代次：配置变化 / 关闭 remember 时递增，让在途结果全部作废。 */
+  let legacyEpoch = 0
+  /** 记录重放的最小重试间隔（避免每次读显示都打上游）。 */
+  const LEGACY_RESTORE_RETRY_MS = 30_000
+  /**
+   * [终审 A｜legacy 闸门] 凭据读取 / 余额重放的**唯一**开关，四层全部满足才放行：
+   *   ① 本机存在 dsh-go 原生桥接（只有手机本机引擎才有这条 lane）；
+   *   ② 插件总开关 `enabled !== false`；
+   *   ③ MiMo 渠道开关 `mimoEnabled !== false`；
+   *   ④ `mimoRememberLogin !== false`。
+   * 任何一项不满足 ⇒ 零凭据读取、零上游重放；读配置失败按 fail-closed 处理。
+   */
+  const legacyMimoGate = async () => {
+    if (dshGoBridgeSeen !== true) return false
+    try {
+      const live = unpackConfig(await liveConfig())
+      if (cfgValue(live, 'enabled') === false) return false
+      if (cfgValue(live, 'mimoEnabled') === false) return false
+      return cfgValue(live, 'mimoRememberLogin') !== false
+    } catch (err) {
+      return false
+    }
+  }
+  /** 同步版闸门（显示路径不能 await）：只信已缓存的配置快照；缺快照时仅校验桥接。 */
+  const legacyMimoGateSync = () => {
+    if (dshGoBridgeSeen !== true) return false
+    const snapshot = quotaCfg
+    if (snapshot === null || typeof snapshot !== 'object') return true
+    if (cfgValue(snapshot, 'enabled') === false) return false
+    if (cfgValue(snapshot, 'mimoEnabled') === false) return false
+    return cfgValue(snapshot, 'mimoRememberLogin') !== false
+  }
+  /**
+   * [终审 A] 配置变化 / 关闭 remember 时**立即**撤销在途与旧值：
+   * 推进代次让在途任务的结果作废，并清掉展示缓存，避免停用后旧值继续显示。
+   */
+  const invalidateLegacyMimoState = () => {
+    legacyEpoch += 1
+    legacyRecordState.checkedAt = 0
+    legacyRecordState.data = null
+    legacyRecordState.inFlight = null
+  }
+  const persistLegacyMimoLogin = (payload) => {
+    const epoch = legacyEpoch
+    const stopped = () => epoch !== legacyEpoch || dshGoBridgeSeen !== true
+    void Promise.resolve().then(async () => {
+      try {
+        if (!(await legacyMimoGate())) return
+        if (stopped()) return
+        const record = buildLegacyRecord(payload)
+        if (record === null) return
+        // 记录新鲜度只信 buildLegacyRecord 给出的真实采样时间（payload.fetchedAt 缺失才用当前时间）。
+        const credentials = credentialsService()
+        if (credentials === null) return
+        if (stopped()) return
+        await credentials.modifyRecord(MIMO_LEGACY_RECORD_KEY, async () => ({ kind: 'grant', payload: record }))
+        if (stopped()) return
+        legacyRecordState.checkedAt = Date.now()
+        legacyRecordState.data = { balance: record.balance, currency: record.currency, fetchedAt: record.fetchedAt }
+      } catch (err) { /* 持久化失败不影响登录结果 */ }
+    })
+  }
+  const clearLegacyMimoRecord = () => {
+    // [终审 A] 关闭即撤销：清展示缓存 + 作废在途任务，再尽力删除凭据记录。
+    invalidateLegacyMimoState()
+    void Promise.resolve().then(async () => {
+      try {
+        const credentials = credentialsService()
+        if (credentials !== null && typeof credentials.deleteRecord === 'function') {
+          await credentials.deleteRecord(MIMO_LEGACY_RECORD_KEY)
+        }
+      } catch (err) { /* 删除失败下次仍会尝试 */ }
+    })
+  }
+  /** 读记录 → 重放余额接口；返回 `{balance,currency,fetchedAt}` 或 null。 */
+  const restoreLegacyMimo = (force) => {
+    // [终审 A] 触发时桥接就必须已存在：apply 早期（桥接尚未注入）的调用直接不排队，
+    // 否则等微任务跑到时桥接可能已就绪，会凭空打一次凭据读取。
+    if (dshGoBridgeSeen !== true) return Promise.resolve(null)
+    if (legacyRecordState.inFlight !== null) return legacyRecordState.inFlight
+    const epoch = legacyEpoch
+    const stopped = () => epoch !== legacyEpoch || dshGoBridgeSeen !== true
+    const task = Promise.resolve().then(async () => {
+      try {
+        if (!(await legacyMimoGate())) return null
+        if (stopped()) return null
+        // 只有**真实 fetchedAt** 新鲜时才复用缓存；checkedAt 只用于限制重放频率。
+        if (force !== true && legacyRecordState.data !== null) {
+          const sampledAt = typeof legacyRecordState.data.fetchedAt === 'number'
+            && Number.isFinite(legacyRecordState.data.fetchedAt) && legacyRecordState.data.fetchedAt > 0
+            ? legacyRecordState.data.fetchedAt
+            : null
+          if (sampledAt !== null && Date.now() - sampledAt < LEGACY_BALANCE_FRESH_MS) return legacyRecordState.data
+        }
+        const credentials = credentialsService()
+        if (credentials === null || typeof credentials.readRecord !== 'function') return null
+        let record
+        try { record = await credentials.readRecord(MIMO_LEGACY_RECORD_KEY) } catch (err) { record = undefined }
+        if (stopped()) return null
+        const parsed = parseLegacyRecord(record)
+        if (parsed === null) {
+          if (record !== undefined && record !== null && typeof credentials.deleteRecord === 'function') {
+            try { await credentials.deleteRecord(MIMO_LEGACY_RECORD_KEY) } catch (err) { /* 忽略 */ }
+          }
+          if (stopped()) return null
+          legacyRecordState.checkedAt = Date.now()
+          legacyRecordState.data = null
+          return null
+        }
+        const result = await replayLegacyBalance(parsed.cookie, { parseBalance: parseMimoBalance })
+        if (stopped()) return null
+        if (result.ok === true) {
+          const data = { balance: result.balance, currency: result.currency, fetchedAt: result.fetchedAt }
+          legacyRecordState.checkedAt = Date.now()
+          legacyRecordState.data = data
+          return data
+        }
+        if (result.reason === 'unauthorized' || result.reason === 'parse') {
+          if (typeof credentials.deleteRecord === 'function') {
+            try { await credentials.deleteRecord(MIMO_LEGACY_RECORD_KEY) } catch (err) { /* 忽略 */ }
+          }
+          legacyRecordState.checkedAt = Date.now()
+          legacyRecordState.data = null
+        }
+        return null
+      } catch (err) {
+        return null
+      } finally {
+        if (legacyRecordState.inFlight === task) legacyRecordState.inFlight = null
+      }
+    })
+    legacyRecordState.inFlight = task
+    return task
+  }
+
+  /** legacy 余额：优先当前进程内的登录会话，其次凭据记录重放（重启后免扫码）。 */
+  const legacyMimoBalance = () => {
+    /**
+     * [终审 A] 无桥 / 停用 / 关 remember：既不读凭据，也不把历史余额说成新鲜。
+     * 同步闸门只能读缓存的配置快照；配置重载时 `invalidateLegacyMimoState()` 已清空旧值。
+     */
+    if (!legacyMimoGateSync()) {
+      if (legacyRecordState.data !== null) invalidateLegacyMimoState()
+      return null
+    }
+    const triggerRestore = (force) => {
+      if (legacyRecordState.checkedAt !== 0 && Date.now() - legacyRecordState.checkedAt < LEGACY_RESTORE_RETRY_MS) return
+      void restoreLegacyMimo(force)
+    }
+    // ① 当前进程内的 done 快照：只有 host 给出**真实 fetchedAt** 时才参与选择；
+    //    过期/缺时间戳**只失去优先权**，不能短路后面的记录缓存（终审 F）。
+    let done = null
+    try {
+      const h = mimoAuthHost !== null && mimoAuthHost !== undefined && typeof mimoAuthHost.getHost === 'function'
+        ? mimoAuthHost.getHost()
+        : null
+      if (h !== null && h !== undefined && typeof h.legacyDoneBalance === 'function') {
+        const hit = h.legacyDoneBalance()
+        if (hit !== null && typeof hit === 'object') done = hit
+      }
+    } catch (err) { /* 下一步走记录 */ }
+    // ②/③ 统一由纯函数决定：done 新鲜 → 用它；否则记录缓存新鲜 → 用它；都没有 → 限频重放并返回 null。
+    const decision = pickLegacyBalanceView({ done, record: legacyRecordState.data, now: Date.now() })
+    if (decision.value !== null) return decision.value
+    if (decision.needsReplay) triggerRestore(true)
+    return null
+  }
+
   const mimoDisplayPeek = () => {
     try {
       const h = mimoAuthHost !== null && mimoAuthHost !== undefined && typeof mimoAuthHost.getHost === 'function'
         ? mimoAuthHost.getHost()
         : null
       if (h === null || h === undefined) return null
-      if (h.routeDisplay !== null && h.routeDisplay !== undefined && typeof h.routeDisplay.peek === 'function') {
-        return h.routeDisplay.peek()
+      // routeDisplay/display 可能返回「缺席 DTO」（非 null 但不可用），
+      // 会挡住 legacy 兜底；只有真的能投影成 wire 的才直接返回。
+      // 本地轻量判定（与 mimoDisplayWire 的可用条件一致）：避免测试/离线环境依赖额外 import。
+      const usable = (candidate) => {
+        if (candidate === null || typeof candidate !== 'object' || Array.isArray(candidate)) return null
+        if (candidate.selected !== true || candidate.state !== 'verified') return null
+        const money = candidate.balance
+        if (money === null || typeof money !== 'object' || Array.isArray(money)) return null
+        if (typeof money.balance !== 'number' || !Number.isFinite(money.balance) || money.balance < 0) return null
+        return candidate
       }
-      if (h.display !== null && h.display !== undefined && typeof h.display.peek === 'function') return h.display.peek()
-      return null
+      if (h.routeDisplay !== null && h.routeDisplay !== undefined && typeof h.routeDisplay.peek === 'function') {
+        const direct = usable(h.routeDisplay.peek())
+        if (direct !== null) return direct
+      }
+      if (h.display !== null && h.display !== undefined && typeof h.display.peek === 'function') {
+        const direct = usable(h.display.peek())
+        if (direct !== null) return direct
+      }
+      // [local 2026-11-15] legacy 扫码登录只把余额写进会话 manager，不会生成 display 快照；
+      // 用量面板会一直 `mimo:missing`。这里把 done 会话的余额投影成 display 形状，
+      // 让面板/策略/网页胶囊都能读到（只读、不带凭据）。
+      const legacy = legacyMimoBalance()
+      if (legacy === null) return null
+      return {
+        displaySupported: true,
+        selected: true,
+        state: 'verified',
+        balance: legacy.balance,
+        currency: legacy.balance.currency,
+        freshness: 'fresh',
+        fetchedAt: legacy.fetchedAt,
+        displayId: 'legacy-session',
+        generation: 1,
+        revision: 1,
+        code: 'E_NONE',
+        identity: null,
+        awaitingBalanceMatch: false,
+        confirmedByUser: true,
+        canStop: false,
+        managed: false,
+        readFailures: 0,
+        refreshCount: 0,
+        maxAutoRefresh: 0,
+      }
     } catch (err) {
       return null
     }
   }
   const mimoDisplaySource = { peek: mimoDisplayPeek }
+  /** [终审 E] MiMo 显示快照的来源身份（非密；采样前后各取一次，用于发现会话/代次漂移）。 */
+  const mimoDisplayIdentity = () => {
+    try {
+      const h = mimoAuthHost !== null && mimoAuthHost !== undefined && typeof mimoAuthHost.getHost === 'function'
+        ? mimoAuthHost.getHost()
+        : null
+      if (h === null || h === undefined) return ''
+      const snap = h.routeDisplay !== null && h.routeDisplay !== undefined && typeof h.routeDisplay.peek === 'function'
+        ? h.routeDisplay.peek()
+        : (h.display !== null && h.display !== undefined && typeof h.display.peek === 'function' ? h.display.peek() : null)
+      if (snap === null || typeof snap !== 'object') return ''
+      const parts = []
+      if (typeof snap.displayId === 'string' && snap.displayId.length > 0) parts.push(snap.displayId)
+      if (typeof snap.generation === 'number' && Number.isFinite(snap.generation)) parts.push('g' + snap.generation)
+      if (typeof snap.revision === 'number' && Number.isFinite(snap.revision)) parts.push('r' + snap.revision)
+      return parts.length > 0 ? '|disp=' + parts.join('.') : ''
+    } catch (err) {
+      return ''
+    }
+  }
+
+  /**
+   * [dsh-go 原生适配] 原生面板取数：与 Web 路由共用 provider / 配置热读 / 自定义渠道路径，
+   * 但不经过 GUI 的观察票据（原生面板只读展示，不参与额度策略观察）。
+   *
+   * 面板关闭后 data feed 被取消，不再轮询；面板打开时每 30 秒一次（与 Web 半一致）。
+   */
+  nativeCollectRef.fn = async (cfgNow) => {
+    const cfgSnapshot = cfgNow !== null && typeof cfgNow === 'object' ? cfgNow : {}
+    /**
+     * [终审 E｜身份必须在采样前固化]
+     *
+     * 旧实现「整批 await 完再统一算身份」：慢渠道等待期间 Codex revision / 账号变化时，
+     * 先完成的旧结果会被贴上**新**身份，carry 隔离反而信任这个错误标记。
+     *
+     * 现在：
+     *   - 采样**之前**把共享配置缓存对齐到本次采样用的配置，并逐渠道记录 `identityBefore`；
+     *   - 采样**之后**再算一次 `identityAfter`（按当时的真实缓存，**不再回写旧 cfg**）；
+     *   - 只有两者相等、且（MiMo）显示快照身份也相等时，才把 `identity` 附到该条 wire；
+     *     不等 ⇒ 不带 identity（原生半按「不复用旧值」处理）。
+     */
+    try { quotaCfg = cfgSnapshot } catch (err) { /* 只读缓存 */ }
+    const identityBefore = new Map()
+    const displayBefore = new Map()
+    const captureIdentityBefore = (id) => {
+      if (typeof id !== 'string' || id.length === 0) return
+      let value = null
+      try { value = identityOfChannel(id) } catch (err) { value = null }
+      identityBefore.set(id, typeof value === 'string' && value.length > 0 ? value : null)
+      if (id === 'mimo') displayBefore.set(id, mimoDisplayIdentity())
+    }
+    const enabledPlans = PLANS.filter((plan) => cfgSnapshot[plan.fields.enabled] !== false)
+    for (const plan of enabledPlans) captureIdentityBefore(plan.id)
+    try {
+      for (const entry of collectCustomEntries(cfgSnapshot, { allowLegacy: legacyCustomAllowed() })) {
+        captureIdentityBefore(entry.id)
+      }
+    } catch (err) { /* 条目读不到时对应 wire 不会带 identity */ }
+    let shell
+    try { shell = ctx.get('shell') } catch (err) { shell = undefined }
+    const builtIn = await Promise.all(enabledPlans.map((plan) => Promise.resolve()
+      .then(() => (plan.id === 'mimo'
+        ? mimoWireWithDisplay(mimoDisplaySource, () => plan.fetch(ctx, shell, cfgSnapshot))
+        : plan.fetch(ctx, shell, cfgSnapshot)))
+      .catch(() => withConfiguredCodexSource(execError(plan), cfgSnapshot))))
+    let custom = []
+    try {
+      custom = await fetchCustomPlans(ctx, undefined, cfgSnapshot, { allowLegacy: legacyCustomAllowed() })
+    } catch (err) {
+      custom = []
+    }
+    const ordered = orderPlansByPlanOrder(builtIn.concat(Array.isArray(custom) ? custom : []), cfgSnapshot.planOrder)
+    /**
+     * [carry 身份] 原生面板每个渠道附一个**不可逆来源身份**字符串（非密：不含 URL/Key/账号），
+     * 由原生半用 `${channelId}|${identity}` 做旧值 carry 隔离。
+     * 该字段只进原生面板数据，**不**写回 Web wire 的既有字段。
+     */
+    const nativeWires = []
+    for (const wire of Array.isArray(ordered) ? ordered : []) {
+      if (wire === null || typeof wire !== 'object') { nativeWires.push(wire); continue }
+      const id = wire.id
+      const before = identityBefore.get(id)
+      let after = null
+      try { after = identityOfChannel(id) } catch (err) { after = null }
+      const sameChannelIdentity = typeof before === 'string' && before.length > 0 && before === after
+      const displayAfter = id === 'mimo' ? mimoDisplayIdentity() : ''
+      const sameDisplayIdentity = id !== 'mimo' || displayAfter === (displayBefore.get(id) || '')
+      if (sameChannelIdentity && sameDisplayIdentity) {
+        nativeWires.push(Object.assign({}, wire, { identity: after + displayAfter }))
+      } else {
+        // 采样期间身份发生漂移：不带 identity（原生半按「不复用旧值」处理）。
+        nativeWires.push(Object.assign({}, wire))
+      }
+    }
+    return nativeWires
+  }
 
   // [额度自动感知] 观察容器与路由观察器提升到 apply 作用域：
   // **GUI 路由与模型工具共用同一份状态与失败计数**（交接文档 §3.1）。
+  void restoreLegacyMimo()
+
   const quotaObserver = createQuotaObserver()
   const routeObserver = createRouteObserver({
     ctx,
@@ -1046,6 +1572,511 @@ export function apply(ctx, config) {
   }
   void refreshQuotaCfg()
 
+  // ---- [dsh-go] 策略快照的后台刷新 ----
+  /**
+   * 额度策略的提示词快照读的是「观察容器」里的额度投影，而投影平时只由
+   * Web GUI 的 30 秒轮询或 `usage_status` 工具调用填充。手机原生端没有网页轮询，
+   * 模型也很少主动调工具，于是策略一直显示「暂无额度数据」。
+   *
+   * 这里补一个轻量后台刷新：只在「原生桥接存在 + 额度策略开启」时，每 60 秒
+   * 只取**关注渠道**（配置里 quotaFocusChannels ∩ 已启用），走与 GUI 相同的
+   * 签票 → 取数 → 发布观察路径；不新增任何对外接口，也不额外访问非关注渠道。
+   */
+  let policyRefreshTimer = null
+  let policyRefreshRunning = false
+  let policyRefreshStopped = false
+  const policyRefreshStop = () => {
+    policyRefreshStopped = true
+    if (policyRefreshTimer !== null) {
+      try { clearInterval(policyRefreshTimer) } catch (err) { /* 已清理 */ }
+      policyRefreshTimer = null
+    }
+  }
+  const policyRefreshTick = async () => {
+    if (applyDisposed || policyRefreshStopped || policyRefreshRunning || dshGoBridgeSeen !== true) return
+    policyRefreshRunning = true
+    try {
+      const cfgNow = unpackConfig(await liveConfig())
+      // [终审 D] 异步读配置前后都要复检存活 / 桥接 / 开关，避免卸载后仍打 provider。
+      if (applyDisposed || policyRefreshStopped || dshGoBridgeSeen !== true) return
+      quotaCfg = cfgNow
+      if (cfgNow === null || typeof cfgNow !== 'object' || cfgNow.enabled === false || cfgNow.quotaPolicyEnabled !== true) return
+      let focus = []
+      try { focus = parseFocusChannels(cfgNow.quotaFocusChannels) } catch (err) { focus = [] }
+      const wanted = new Set(Array.isArray(focus) ? focus : [])
+      const plans = PLANS.filter((plan) => wanted.has(plan.id) && cfgNow[plan.fields.enabled] !== false)
+      if (plans.length === 0) return
+      try { reconcileIdentities() } catch (err) { /* 身份重算失败不影响取数 */ }
+      let shell
+      try { shell = ctx.get('shell') } catch (err) { shell = undefined }
+      await Promise.all(plans.map(async (plan) => {
+        if (applyDisposed || policyRefreshStopped || dshGoBridgeSeen !== true) return
+        let ticket = null
+        try {
+          const opSeq = beginOp(plan.id)
+          ticket = quotaObserver.begin({ id: plan.id, identity: identityOfChannel(plan.id) })
+          ownTicket(plan.id, ticket, opSeq)
+          pendingTickets.set(plan.id, ticket)
+          const wire = await (plan.id === 'mimo'
+            ? mimoWireWithDisplay(mimoDisplaySource, () => plan.fetch(ctx, shell, cfgNow))
+            : plan.fetch(ctx, shell, cfgNow))
+          // provider 返回后再复检：卸载 / 桥退出 / 配置停用的迟到结果不得再发布。
+          if (applyDisposed || policyRefreshStopped || dshGoBridgeSeen !== true) return
+          publishObservation(wire, ticket)
+        } catch (err) {
+          if (applyDisposed || policyRefreshStopped || dshGoBridgeSeen !== true) return
+          try { publishObservation(withConfiguredCodexSource(execError(plan), cfgNow), ticket) } catch (err2) { /* 观察失败不影响其它渠道 */ }
+        }
+      }))
+    } catch (err) {
+      /* 后台刷新失败不打扰用户：下一轮会再试 */
+    } finally {
+      policyRefreshRunning = false
+    }
+  }
+  const startPolicyRefreshLoop = () => {
+    if (applyDisposed || policyRefreshTimer !== null || policyRefreshStopped) return
+    policyRefreshTick()
+    policyRefreshTimer = setInterval(() => { policyRefreshTick() }, 60_000)
+    if (policyRefreshTimer !== null && typeof policyRefreshTimer.unref === 'function') policyRefreshTimer.unref()
+  }
+  /**
+   * [终审 D] 刷新循环的生命周期**无条件**绑定插件作用域（不依赖 usage_status 注册成功）：
+   * 即使宿主没有 tools 服务、注册分支提前返回，卸载时也必须清掉 60 秒 interval。
+   */
+  try {
+    if (typeof ctx.effect === 'function') {
+      ctx.effect(() => () => {
+        applyDisposed = true
+        dshGoBridgeSeen = false
+        policyRefreshStop()
+        // 原生面板 / strip 订阅也跟随插件作用域回收（含它们各自的 interval）。
+        try {
+          if (dshGoSurface !== null && dshGoSurface !== undefined && typeof dshGoSurface.dispose === 'function') {
+            dshGoSurface.dispose()
+          }
+        } catch (err) { /* 已卸载 */ }
+      })
+    }
+  } catch (err) { /* 旧宿主没有 effect：退化为桥接 ticking 自检 */ }
+  /**
+   * [终审 D] 桥接作用域就是刷新循环的生命周期来源：桥退出（服务消失 / 宿主重载）时
+   * 撤销桥接状态并停止循环；桥重新出现时 onBridge 会再次启动。
+   */
+  try {
+    if (typeof ctx.inject === 'function') {
+      ctx.inject(['dshGo'], (bridgeCtx) => {
+        dshGoBridgeSeen = true
+        Promise.resolve().then(() => {
+          if (applyDisposed) return
+          policyRefreshStopped = false
+          startPolicyRefreshLoop()
+        }).catch(() => {})
+        try {
+          if (bridgeCtx !== null && bridgeCtx !== undefined && typeof bridgeCtx.effect === 'function') {
+            bridgeCtx.effect(() => () => {
+              dshGoBridgeSeen = false
+              policyRefreshStop()
+            })
+          }
+        } catch (err) { /* 旧宿主 */ }
+        return () => {
+          dshGoBridgeSeen = false
+          policyRefreshStop()
+        }
+      })
+    }
+  } catch (err) { /* 旧宿主没有 inject */ }
+
+  // ---- [dsh-go] composer.strip：当前会话渠道的一行摘要 ----
+  /**
+   * 会话 → 最近一次实际/选择的路由。只跟踪主会话；事件由 `session/event` 增量更新，
+   * strip 首次订阅时用 `snapshotEvents()` 回填一次。
+   */
+  const sessionRoute = new Map()
+  const sessionRouteSubs = new Map()
+  const sessionBackfilled = new Set()
+  const stripSubs = new Set()
+  const stripCache = new Map()
+  const stripInflight = new Map()
+  const STRIP_ID = 'strip'
+  const STRIP_FRESH_MS = 30_000
+  const notifyStripSubs = () => {
+    for (const fn of stripSubs) {
+      try { fn() } catch (err) { /* 单个订阅失败不影响其它 */ }
+    }
+  }
+  const notifySessionRoute = (sessionId) => {
+    const subs = sessionRouteSubs.get(sessionId)
+    if (subs === undefined) return
+    for (const fn of subs) {
+      try { fn() } catch (err) { /* 同上 */ }
+    }
+  }
+  const applyRouteEventForSession = (sessionId, event) => {
+    if (applySessionRouteEvent(sessionRoute, sessionId, event)) notifySessionRoute(sessionId)
+  }
+  /** 从 sessions 服务读「当前会话实际/最近一次请求的路由」（事件没收到时的兜底）。 */
+  const routeFromSessionService = (sessionId) => {
+    let session = null
+    try {
+      const sessions = ctx.get('sessions')
+      session = sessions !== null && sessions !== undefined && typeof sessions.get === 'function'
+        ? sessions.get(sessionId)
+        : null
+    } catch (err) { session = null }
+    if (session === null || session === undefined) {
+            return null
+    }
+    try {
+      if (typeof session.requestContext === 'function') {
+        const info = session.requestContext()
+        if (info !== null && info !== undefined && typeof info.provider === 'string' && info.provider.length > 0) {
+                    return { provider: info.provider, model: typeof info.model === 'string' ? info.model : '', source: 'request/context' }
+        }
+      }
+      if (typeof session.requestHeader === 'function') {
+        const header = session.requestHeader()
+        const config = header !== null && header !== undefined && header.config !== null && typeof header.config === 'object' ? header.config : null
+        if (config !== null && typeof config.provider === 'string' && config.provider.length > 0) {
+                    return { provider: config.provider, model: typeof config.model === 'string' ? config.model : '', source: 'request/header' }
+        }
+      }
+      if (typeof session.snapshotEvents === 'function') {
+        const events = session.snapshotEvents()
+        if (Array.isArray(events)) {
+          let found = null
+          for (let index = Math.max(0, events.length - 400); index < events.length; index += 1) {
+            const route = routeFromEventLite(events[index])
+            if (route !== null) found = route
+          }
+          if (found !== null) {
+                        return { provider: found.provider, model: found.model, source: 'snapshot' }
+          }
+        }
+      }
+          } catch (err) {
+          }
+    return null
+  }
+  /** 轻量事件解析（避免额外 import；与 plans/strip.js 的规则一致）。 */
+  const routeFromEventLite = (event) => {
+    if (event === null || event === undefined || typeof event !== 'object') return null
+    const data = event.data !== null && typeof event.data === 'object' ? event.data : null
+    if (data === null) return null
+    if (event.type === 'model/selection' && typeof data.provider === 'string' && data.provider.length > 0) return { provider: data.provider, model: typeof data.model === 'string' ? data.model : '' }
+    if (event.type === 'request/header') {
+      const config = data.header !== null && typeof data.header === 'object' && data.header.config !== null && typeof data.header.config === 'object' ? data.header.config : null
+      if (config !== null && typeof config.provider === 'string' && config.provider.length > 0) return { provider: config.provider, model: typeof config.model === 'string' ? config.model : '' }
+    }
+    if (event.type === 'assistant/message') {
+      const message = data.message !== null && typeof data.message === 'object' ? data.message : null
+      const source = message !== null && message.source !== null && typeof message.source === 'object' ? message.source : null
+      if (source !== null && typeof source.provider === 'string' && source.provider.length > 0) return { provider: source.provider, model: typeof source.model === 'string' ? source.model : '' }
+    }
+    return null
+  }
+  const backfillSessionRoute = (sessionId) => {
+    if (typeof sessionId !== 'string' || sessionId.length === 0 || sessionBackfilled.has(sessionId)) return
+    sessionBackfilled.add(sessionId)
+    try {
+      const sessions = ctx.get('sessions')
+      const session = sessions !== null && sessions !== undefined && typeof sessions.get === 'function'
+        ? sessions.get(sessionId)
+        : undefined
+      const events = session !== null && session !== undefined && typeof session.snapshotEvents === 'function'
+        ? session.snapshotEvents()
+        : null
+      if (!Array.isArray(events)) return
+      const start = Math.max(0, events.length - 400)
+      for (let index = start; index < events.length; index += 1) {
+        applySessionRouteEvent(sessionRoute, sessionId, events[index])
+      }
+    } catch (err) { /* 会话未加载/旧宿主：等下一次事件 */ }
+    if (!sessionRoute.has(sessionId)) {
+      const route = routeFromSessionService(sessionId)
+      if (route !== null) sessionRoute.set(sessionId, route)
+    }
+  }
+  const customEntriesForStrip = (cfgNow) => {
+    try {
+      return collectCustomEntries(cfgNow !== null && typeof cfgNow === 'object' ? cfgNow : {}, { allowLegacy: legacyCustomAllowed() })
+    } catch (err) {
+      return []
+    }
+  }
+  const channelForRoute = (route, cfgNow) => {
+    if (route === null || typeof route !== 'object' || typeof route.provider !== 'string') return null
+    return providerToChannel(route.provider, {
+      resolveRoute,
+      customEntries: customEntriesForStrip(cfgNow),
+    })
+  }
+  /**
+   * [终审 B/C] strip 数据的配置代次与同步遮蔽：
+   *   - `stripEpoch` 让配置变化后所有在途结果作废（不写缓存、不发布观察）；
+   *   - `stripConfigPending` 在配置重读完成前同步隐藏 strip，避免停用后旧值闪回。
+   */
+  let stripEpoch = 0
+  let stripConfigPending = false
+  const invalidateStripCaches = () => {
+    stripEpoch += 1
+    stripCache.clear()
+  }
+  const markStripConfigDirty = () => {
+    stripConfigPending = true
+    invalidateStripCaches()
+  }
+  /**
+   * [终审 B｜strip 启用闸门] 全局开关 + 该渠道开关（自定义条目看自身 enabled）。
+   * 停用时必须在**读缓存/投影之前**返回 false，不能先展示旧值再取消。
+   */
+  const stripChannelAllowed = (channel, cfgNow) => {
+    if (channel === null || typeof channel !== 'object') return false
+    const live = cfgNow !== null && cfgNow !== undefined && typeof cfgNow === 'object' ? cfgNow : {}
+    if (cfgValue(live, 'enabled') === false) return false
+    const id = channel.channelId
+    if (typeof id !== 'string' || id.length === 0) return false
+    if (channel.custom === true) {
+      const entry = collectCustomEntries(live, { allowLegacy: legacyCustomAllowed() }).find((item) => item.id === id)
+      return entry !== undefined && entry !== null && entry.enabled !== false
+    }
+    const plan = PLANS.find((item) => item.id === id)
+    if (plan === undefined) return false
+    return cfgValue(live, plan.fields.enabled) !== false
+  }
+  /**
+   * [终审 C] strip 缓存/在途按「渠道 + 来源身份」隔离：
+   * Codex 来源（connect / subscription）、自定义条目的 provider/URL/Key 修订都会改变身份，
+   * 新来源不得复用旧来源的百分比。
+   */
+  const stripChannelKey = (channel) => {
+    const id = channel !== null && typeof channel === 'object' ? channel.channelId : null
+    if (typeof id !== 'string' || id.length === 0) return null
+    let identity = null
+    try { identity = identityOfChannel(id) } catch (err) { identity = null }
+    return id + '|' + (typeof identity === 'string' && identity.length > 0 ? identity : 'unknown')
+  }
+  const invalidateStripChannel = (channel) => {
+    const key = stripChannelKey(channel)
+    if (key === null) return
+    stripCache.delete(key)
+    // 在途任务由 stripEpoch 与身份键守卫，结果不会写回缓存/不会发布。
+  }
+  /** 取一次单渠道数据（strip 专用缓存 + single-flight，按来源身份隔离，30 秒内复用）。 */
+  const ensureStripChannel = (channel) => {
+    const id = channel !== null && typeof channel === 'object' ? channel.channelId : null
+    if (typeof id !== 'string' || id.length === 0) return Promise.resolve()
+    // [终审 B] 触发取数前先过闸门（定时器/缓存缺失路径也要拦住）。
+    if (!stripChannelAllowed(channel, quotaCfg)) {
+      invalidateStripChannel(channel)
+      return Promise.resolve()
+    }
+    const key = stripChannelKey(channel)
+    if (key === null) return Promise.resolve()
+    const cached = stripCache.get(key)
+    if (cached !== undefined && Date.now() - cached.at < STRIP_FRESH_MS) return Promise.resolve()
+    if (stripInflight.has(key)) return stripInflight.get(key)
+    const epoch = stripEpoch
+    const task = Promise.resolve().then(async () => {
+      let wire = null
+      let cfgNow = null
+      let stripTicket = null
+      try {
+        cfgNow = unpackConfig(await liveConfig())
+        if (epoch !== stripEpoch) return
+        quotaCfg = cfgNow
+        // [终审 B] 真正调用 provider 之前**再**检查一次（配置可能在等待期间被停用）。
+        if (!stripChannelAllowed(channel, cfgNow)) {
+          invalidateStripChannel(channel)
+          return
+        }
+        if (channel.custom === true) {
+          const wires = await fetchCustomPlans(ctx, [id], cfgNow, { allowLegacy: legacyCustomAllowed() })
+          wire = Array.isArray(wires) && wires.length > 0 ? wires[0] : null
+        } else {
+          const plan = PLANS.find((item) => item.id === id)
+          if (plan !== undefined) {
+            let shell
+            try { shell = ctx.get('shell') } catch (err) { shell = undefined }
+            const opSeq = beginOp(id)
+            const ticket = quotaObserver.begin({ id, identity: identityOfChannel(id) })
+            ownTicket(id, ticket, opSeq)
+            pendingTickets.set(id, ticket)
+            stripTicket = ticket
+            try {
+              wire = await (id === 'mimo'
+                ? mimoWireWithDisplay(mimoDisplaySource, () => plan.fetch(ctx, shell, cfgNow))
+                : plan.fetch(ctx, shell, cfgNow))
+            } catch (err) {
+              wire = withConfiguredCodexSource(execError(plan), cfgNow)
+            }
+          }
+        }
+      } catch (err) {
+        wire = null
+      }
+      // [终审 B] provider 返回后配置可能已停用/变化：不写缓存、不显示、不发布观察。
+      if (epoch !== stripEpoch) return
+      let gateCfg = cfgNow
+      try { gateCfg = unpackConfig(await liveConfig()) } catch (err) { gateCfg = cfgNow }
+      if (epoch !== stripEpoch || !stripChannelAllowed(channel, gateCfg)) {
+        invalidateStripChannel(channel)
+        return
+      }
+      if (stripTicket !== null) {
+        try { publishObservation(wire, stripTicket) } catch (err) { /* 观察失败不影响 strip */ }
+      }
+      let projected = null
+      if (wire !== null && wire !== undefined) {
+        try {
+          const usage = projectUsage([wire], [id], {
+            enabled: [id], known: [id], semanticsOf: percentSemanticsOf,
+          })
+          projected = usage.channels.length > 0 ? usage.channels[0] : null
+        } catch (err) { projected = null }
+      }
+      const previous = stripCache.get(key)
+      const usable = projected !== null && projected.availability !== 'error' && projected.availability !== 'unknown'
+      /**
+       * [终审 C] `transient !== true` 的失败是**永久失败**：不得 carry 旧 good 值，
+       * 交给上层 emit(null) 隐藏；只有同一身份下的暂时失败才保留旧值并标 stale。
+       */
+      const permanentFailure = projected !== null && projected.availability === 'error' && projected.transient !== true
+      const previousGood = previous !== undefined && previous.good !== null && previous.good !== undefined
+        ? previous.good
+        : null
+      const carried = previousGood === null || permanentFailure
+        ? null
+        : Object.assign({}, previousGood, { stale: true, transient: true })
+      stripCache.set(key, {
+        at: Date.now(),
+        wire,
+        projected,
+        good: usable ? projected : carried,
+      })
+      notifyStripSubs()
+    }).catch(() => {}).finally(() => {
+      if (stripInflight.get(key) === task) stripInflight.delete(key)
+    })
+    stripInflight.set(key, task)
+    return task
+  }
+  /** 计算某会话当前应展示的 strip 载荷；数据缺失时顺便触发一次取数。 */
+  const stripPayloadFor = (scope, locale) => {
+    const sessionId = scope !== null && scope !== undefined ? scope.sessionId : undefined
+    if (typeof sessionId !== 'string' || sessionId.length === 0) return null
+    // [终审 B] 配置重载窗口内同步遮蔽：刷新完成前不显示旧值（停用后不得闪回）。
+    if (stripConfigPending) return null
+    backfillSessionRoute(sessionId)
+    let route = sessionRoute.get(sessionId)
+    if (route === undefined) {
+      const fallback = routeFromSessionService(sessionId)
+      if (fallback === null) return null
+      route = fallback
+      sessionRoute.set(sessionId, fallback)
+    }
+    const cfgNow = quotaCfg !== null && typeof quotaCfg === 'object' ? quotaCfg : {}
+    // [终审 B] 全局开关关闭 ⇒ 立即作废所有 strip 缓存并隐藏。
+    if (cfgValue(cfgNow, 'enabled') === false) {
+      invalidateStripCaches()
+      return null
+    }
+    const channel = channelForRoute(route, cfgNow)
+    if (channel === null) return null
+    // [终审 B] 该渠道停用 ⇒ 清掉该渠道缓存并立即隐藏，绝不先展示旧值。
+    if (!stripChannelAllowed(channel, cfgNow)) {
+      invalidateStripChannel(channel)
+      return null
+    }
+    let identity = null
+    try { identity = identityOfChannel(channel.channelId) } catch (err) { identity = null }
+    const identityKnown = typeof identity === 'string' && identity.length > 0
+    // 优先复用额度策略观察里已有的投影（同一份数据），但必须**同一来源身份**。
+    const observed = channelProjection.get(channel.channelId)
+    const meta = channelMeta.get(channel.channelId)
+    if (observed !== undefined && observed !== null && identityKnown
+      && meta !== undefined && typeof meta.identity === 'string' && meta.identity === identity) {
+      // [终审 C] 同一身份下的永久失败：不沿用旧百分比，立即隐藏并清掉缓存。
+      if (observed.availability === 'error' && observed.transient !== true) {
+        invalidateStripChannel(channel)
+        return null
+      }
+      const payload = formatStripText(channel, observed, { locale })
+      if (payload !== null) {
+        if (typeof meta.sampledAt !== 'number' || Date.now() - meta.sampledAt >= STRIP_FRESH_MS) ensureStripChannel(channel)
+        return payload
+      }
+    }
+    const key = stripChannelKey(channel)
+    const cached = key !== null ? stripCache.get(key) : undefined
+    if (cached === undefined || cached.good === null || cached.good === undefined) {
+      ensureStripChannel(channel)
+      return null
+    }
+    const payload = formatStripText(channel, cached.good, { locale })
+    if (Date.now() - cached.at >= STRIP_FRESH_MS) ensureStripChannel(channel)
+    return payload
+  }
+  const subscribeStrip = (scope, emit, caps) => {
+    const locale = caps !== null && caps !== undefined && typeof caps.locale === 'string' ? caps.locale : 'zh-CN'
+    const sessionId = scope !== null && scope !== undefined ? scope.sessionId : undefined
+    if (typeof sessionId !== 'string' || sessionId.length === 0) {
+      try { emit(null) } catch (err) { /* 桥接已断开 */ }
+      return () => {}
+    }
+    const push = () => {
+      let payload = null
+      try { payload = stripPayloadFor(scope, locale) } catch (err) { payload = null }
+      try { emit(payload) } catch (err) { /* 桥接已断开 */ }
+    }
+        stripSubs.add(push)
+    let subs = sessionRouteSubs.get(sessionId)
+    if (subs === undefined) {
+      subs = new Set()
+      sessionRouteSubs.set(sessionId, subs)
+    }
+    subs.add(push)
+    backfillSessionRoute(sessionId)
+    push()
+    const timer = setInterval(push, 15_000)
+    if (typeof timer.unref === 'function') timer.unref()
+    return () => {
+      try { clearInterval(timer) } catch (err) { /* 已清理 */ }
+      stripSubs.delete(push)
+      const current = sessionRouteSubs.get(sessionId)
+      if (current !== undefined) {
+        current.delete(push)
+        if (current.size === 0) sessionRouteSubs.delete(sessionId)
+      }
+    }
+  }
+  // 会话事件：latest wins 更新路由（模型选择 / 实际请求 / 实际生成）。
+  try {
+    const offSessionEvent = typeof ctx.on === 'function'
+      ? ctx.on('session/event', (session, event) => {
+        const sessionId = session !== null && session !== undefined ? session.id : undefined
+        if (typeof sessionId !== 'string' || sessionId.length === 0) return
+        try { applyRouteEventForSession(sessionId, event) } catch (err) { /* 忽略坏事件 */ }
+        try {
+          const sessions = ctx.get('sessions')
+          const service = sessions !== null && sessions !== undefined ? sessions : null
+          const store = service !== null && typeof service.get === 'function' ? service : null
+          // 会话释放不提供事件时，用 LRU 上限兜底，防止 map 无限增长。
+          if (sessionRoute.size > 64 && store !== null) {
+            const oldest = sessionRoute.keys().next().value
+            if (oldest !== undefined) sessionRoute.delete(oldest)
+          }
+        } catch (err) { /* 忽略 */ }
+      })
+      : null
+    if (typeof offSessionEvent === 'function') {
+      try {
+        ctx.effect(() => () => { try { offSessionEvent() } catch (err) { /* 已失效 */ } })
+      } catch (err) { /* 旧宿主 */ }
+    }
+  } catch (err) { /* 旧宿主没有事件总线：strip 靠 backfill + 定时重算 */ }
+
   // ---- 动态 context：每次请求（含同 step 重试）重新求值 ----
   let quotaContextDispose = null
   /**
@@ -1104,6 +2135,8 @@ export function apply(ctx, config) {
     })
     quotaContextRegistered = typeof quotaContextDispose === 'function'
     if (quotaContextRegistered) quotaContextState = 'registered-no-request-yet'
+    // 原生端没有网页轮询，需要后台把关注渠道的额度喂给策略快照。
+    if (dshGoBridgeSeen) startPolicyRefreshLoop()
   }
   try {
     /**
@@ -1129,7 +2162,17 @@ export function apply(ctx, config) {
     if (typeof ctx.on === 'function') {
       ctx.on('app-boot/config-reload', () => {
         if (typeof liveConfig.invalidate === 'function') liveConfig.invalidate()
-        void refreshQuotaCfg()
+        /**
+         * [终审 A/B/C] 配置一变：legacy 立即失效（不把停用前的余额说成新鲜），
+         * strip 进入同步遮蔽并作废旧缓存/在途结果；配置重读完成后再放行重新计算。
+         */
+        invalidateLegacyMimoState()
+        markStripConfigDirty()
+        if (dshGoBridgeSeen) void restoreLegacyMimo(true)
+        void Promise.resolve().then(() => refreshQuotaCfg()).finally(() => {
+          stripConfigPending = false
+          notifyStripSubs()
+        })
       })
     }
   } catch (err) { /* 旧宿主没有事件总线 */ }
@@ -1443,6 +2486,13 @@ export function apply(ctx, config) {
    * 两条路由都**不接受任何参数**：目标包目录由 `plans/codex-subscription-patch.js` 按自身位置推导，
    * 客户端无法指定路径 / URL / 版本。只读路由不读凭据、不联网；动作路由走与 CLI 同一套实现
    * （`wx` 备份 → 同目录 `wx` 临时文件 → 读回校验 → rename → 校验新哈希），失败不留半改文件。
+   *
+   * [0.10.6] 只读路由的响应字段（闭集，仍全部是只读 metadata）：
+   *   `{ ok:true, data:{ installed, version, state, serviceAvailable, manifestVersion, covered } }`
+   *   - `manifestVersion`：与**已装版本**精确匹配的清单版本（继承链已展开；无匹配 ⇒ `null`）；
+   *   - `covered`：本包清单目录里所有**合法**清单的版本号数组（纯版本号、升序、不含路径）——
+   *     只用于界面提示「本包支持哪些版本」，**不**表示已装版本一定在其中。
+   *   `apply-patch` 路由的行为与响应字段不变。
    */
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
@@ -1455,6 +2505,10 @@ export function apply(ctx, config) {
       try {
         const mod = await import('./plans/codex-subscription-patch.js')
         const state = mod.readPatchState(mod.resolvePackageDir())
+        // [0.10.6] 新增两个只读字段（向后兼容：原有字段语义不变）：
+        //   manifestVersion = 解析命中的清单版本（无则 null）；covered = 所有合法清单版本（纯版本号）。
+        // 旧版模块（混合部署）没有 coveredVersions 时退化为空数组，不让路由整体失败。
+        const covered = typeof mod.coveredVersions === 'function' ? mod.coveredVersions() : []
         json(res, 200, {
           ok: true,
           data: {
@@ -1462,6 +2516,8 @@ export function apply(ctx, config) {
             version: state.version,
             state: state.state,
             serviceAvailable: state.serviceAvailable,
+            manifestVersion: state.manifestVersion === undefined ? null : state.manifestVersion,
+            covered,
           },
         })
       } catch (err) {
@@ -2245,6 +3301,8 @@ export function apply(ctx, config) {
           if (!alive) return
           await refreshQuotaCfg()
         }).catch(() => {})
+        if (dshGoBridgeSeen) void Promise.resolve().then(policyRefreshTick).catch(() => {})
+        void restoreLegacyMimo(true)
       }
 
       // 订阅宿主公开的配置重载事件（`dsh-settings` 自己也用同一个事件名）。
@@ -2264,6 +3322,7 @@ export function apply(ctx, config) {
 
       return () => {
         alive = false
+        policyRefreshStop()
         if (detachConfigReload !== null) {
           try { detachConfigReload() } catch (err) { /* 已解绑 */ }
           detachConfigReload = null

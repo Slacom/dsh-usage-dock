@@ -1,0 +1,18 @@
+{
+  "schema": "dsh-usage-dock/codex-subscription-patch/1",
+  "note": "只读 service 补丁（纯插入）；版本钉死，换版本须重新生成。本清单用 inheritFrom 继承 3.2.13，只覆盖与上一版不同的 hunk（3.2.17 与 3.2.13 的差异仅 revision-bump-on-account-changed 一条锚点）。",
+  "version": "3.2.17",
+  "file": "lib/index.js",
+  "baseSha": "33f07e968ad8df0606b21712d6918e4c5ed658551b52b2303ca4230a00c4df10",
+  "programSha": "687ef5bbdca8de512157f01ecdb7fd4b1a632342fec1402084c7705bdbd2f7fb",
+  "final": true,
+  "inheritFrom": "3.2.13",
+  "hunks": [
+    {
+      "id": "revision-bump-on-account-changed",
+      "why": "3.2.17 在 subagentCatalog.clear() 前新增 remoteBridge.clearUploads()，故锚点收在 handler 首行（其余 3 条 hunk 与 3.2.13 逐字相同，直接继承）",
+      "old": "\t\tvoicePreview,\n\t\tcomposerPredictions,\n\t\tonAccountChanged: () => {\n",
+      "new": "\t\tvoicePreview,\n\t\tcomposerPredictions,\n\t\tonAccountChanged: () => {\n\t\t\tusageBridgeRevision += 1;\n"
+    }
+  ]
+}

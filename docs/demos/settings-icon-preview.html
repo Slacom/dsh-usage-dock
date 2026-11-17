@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>设置主页 Usage Dock 分区图标候选（16 / 20 / 24 px）</title>
+<style>
+  :root {
+    --tile-light-bg: #fff;
+    --tile-dark-bg: #1b1c1d;
+    --tile-light-fg: #1b1c1d;
+    --tile-dark-fg: #f3f4f6;
+    --card-bg: #fff;
+    --text: #1b1c1d;
+    --muted: #5f6368;
+    --line: #e3e5e8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 28px 32px 40px;
+    background: #f5f6f7;
+    color: var(--text);
+    font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+      Arial, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  h1 { font-size: 20px; margin: 0 0 6px; }
+  h2 { font-size: 15px; margin: 0 0 2px; }
+  p { margin: 0; }
+  code { font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; font-size: 12px; }
+  .note {
+    margin: 12px 0 24px;
+    padding: 12px 14px;
+    border-left: 3px solid #1a73e8;
+    background: #fff;
+    border-radius: 4px;
+    color: var(--text);
+  }
+  .note strong { color: #1a73e8; }
+  .candidates {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    align-items: stretch;
+  }
+  .card {
+    flex: 1 1 300px;
+    min-width: 280px;
+    background: var(--card-bg);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px 18px 18px;
+  }
+  .card--current { border-color: #1a73e8; box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.12); }
+  .tag {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 0 8px;
+    border-radius: 999px;
+    background: #e8f0fe;
+    color: #1a73e8;
+    font-size: 12px;
+    vertical-align: 1px;
+  }
+  .meta { color: var(--muted); font-size: 12px; margin: 2px 0 14px; }
+  .meta .lic { color: var(--text); }
+  .matrix {
+    display: grid;
+    grid-template-columns: auto 1fr 1fr;
+    gap: 8px;
+    align-items: center;
+  }
+  .matrix .corner { width: 1px; }
+  .matrix .head {
+    font-size: 12px;
+    color: var(--muted);
+    text-align: center;
+    padding-bottom: 2px;
+  }
+  .matrix .size {
+    font-size: 12px;
+    color: var(--muted);
+    white-space: nowrap;
+    padding-right: 4px;
+    text-align: right;
+  }
+  .tile {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+  }
+  .tile--light { background: var(--tile-light-bg); color: var(--tile-light-fg); border-color: var(--line); }
+  .tile--dark { background: var(--tile-dark-bg); color: var(--tile-dark-fg); }
+  .tile svg { display: block; }
+  .footnote {
+    margin-top: 14px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line);
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .page-foot { margin-top: 26px; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+
+<h1>设置主页 Usage Dock 分区：钱包图标候选</h1>
+<p class="note">
+  <strong>当前实现采用第 1 个（实心款，Material Symbols wallet，Apache-2.0）：24 viewBox、单条 &lt;path fill="currentColor"&gt;，active 只把 opacity 0.85→1、不改尺寸。</strong>
+  本页只做静态并列预览：三种候选各在 16 / 20 / 24 px、浅色与深色背景（<code>#fff</code> /
+  <code>#1b1c1d</code>）下用 <code>currentColor</code> 渲染一次，便于按实际尺寸挑选。
+</p>
+
+<!-- 内联 SVG 源（与仓库文件一致；页面自包含，不引用外部资源） -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <!-- 候选 1：icon.svg（Material Symbols wallet，实心，Apache-2.0） -->
+    <symbol id="wallet-filled" viewBox="0 0 24 24">
+      <path fill="currentColor" d="M6 20q-1.65 0-2.825-1.175T2 16V8q0-1.65 1.175-2.825T6 4h12q1.65 0 2.825 1.175T22 8v8q0 1.65-1.175 2.825T18 20zM6 8h12q.55 0 1.05.125t.95.4V8q0-.825-.587-1.412T18 6H6q-.825 0-1.412.588T4 8v.525q.45-.275.95-.4T6 8m-1.85 3.25l11.125 2.7q.225.05.45 0t.425-.2l3.475-2.9q-.275-.375-.7-.612T18 10H6q-.65 0-1.137.338t-.713.912"/>
+    </symbol>
+    <!-- 候选 2：icon-outline.svg（本仓库自绘描边，MIT；36 viewBox / strokeWidth 2） -->
+    <symbol id="wallet-outline" viewBox="0 0 36 36" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="5" y="10" width="26" height="18" rx="4"/>
+      <path d="M5 15.5h26"/>
+      <rect x="21.5" y="17.5" width="9.5" height="7.5" rx="2.5"/>
+    </symbol>
+    <!-- 候选 3：docs/assets/wallet/wallet-lucide-outline.svg（Lucide wallet，ISC；24 viewBox / strokeWidth 2） -->
+    <symbol id="wallet-lucide" viewBox="0 0 24 24">
+      <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2">
+        <path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/>
+        <path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/>
+      </g>
+    </symbol>
+  </defs>
+</svg>
+
+<div class="candidates">
+
+  <!-- 候选 1 -->
+  <section class="card card--current" aria-labelledby="c1-title">
+    <h2 id="c1-title">1. <code>icon.svg</code>（实心，当前采用）<span class="tag">当前采用</span></h2>
+    <p class="meta">Material Symbols <code>wallet</code>，viewBox 24，<code>fill: currentColor</code>；
+      <span class="lic">许可：Apache-2.0（Google）</span></p>
+    <div class="matrix">
+      <span class="corner"></span>
+      <span class="head">浅色 <code>#fff</code></span>
+      <span class="head">深色 <code>#1b1c1d</code></span>
+
+      <span class="size">16 px</span>
+      <div class="tile tile--light"><svg width="16" height="16" aria-label="icon.svg 16px 浅色"><use href="#wallet-filled"/></svg></div>
+      <div class="tile tile--dark"><svg width="16" height="16" aria-label="icon.svg 16px 深色"><use href="#wallet-filled"/></svg></div>
+
+      <span class="size">20 px</span>
+      <div class="tile tile--light"><svg width="20" height="20" aria-label="icon.svg 20px 浅色"><use href="#wallet-filled"/></svg></div>
+      <div class="tile tile--dark"><svg width="20" height="20" aria-label="icon.svg 20px 深色"><use href="#wallet-filled"/></svg></div>
+
+      <span class="size">24 px</span>
+      <div class="tile tile--light"><svg width="24" height="24" aria-label="icon.svg 24px 浅色"><use href="#wallet-filled"/></svg></div>
+      <div class="tile tile--dark"><svg width="24" height="24" aria-label="icon.svg 24px 深色"><use href="#wallet-filled"/></svg></div>
+    </div>
+    <p class="footnote">实心块在 16 px 仍可辨认，但钱包开口/卡扣等细节会合并成一块色块。</p>
+  </section>
+
+  <!-- 候选 2（当前实现） -->
+  <section class="card" aria-labelledby="c2-title">
+    <h2 id="c2-title">2. <code>icon-outline.svg</code>（描边）</h2>
+    <p class="meta">本仓库自绘描边钱包，viewBox 36、<code>stroke-width 2</code>；
+      <span class="lic">许可：MIT（dsh-usage-dock）</span></p>
+    <div class="matrix">
+      <span class="corner"></span>
+      <span class="head">浅色 <code>#fff</code></span>
+      <span class="head">深色 <code>#1b1c1d</code></span>
+
+      <span class="size">16 px</span>
+      <div class="tile tile--light"><svg width="16" height="16" aria-label="icon-outline.svg 16px 浅色"><use href="#wallet-outline"/></svg></div>
+      <div class="tile tile--dark"><svg width="16" height="16" aria-label="icon-outline.svg 16px 深色"><use href="#wallet-outline"/></svg></div>
+
+      <span class="size">20 px</span>
+      <div class="tile tile--light"><svg width="20" height="20" aria-label="icon-outline.svg 20px 浅色"><use href="#wallet-outline"/></svg></div>
+      <div class="tile tile--dark"><svg width="20" height="20" aria-label="icon-outline.svg 20px 深色"><use href="#wallet-outline"/></svg></div>
+
+      <span class="size">24 px</span>
+      <div class="tile tile--light"><svg width="24" height="24" aria-label="icon-outline.svg 24px 浅色"><use href="#wallet-outline"/></svg></div>
+      <div class="tile tile--dark"><svg width="24" height="24" aria-label="icon-outline.svg 24px 深色"><use href="#wallet-outline"/></svg></div>
+    </div>
+    <p class="footnote">本页展示的是仓库里的 36 viewBox / strokeWidth 2 静态素材；<strong>当前实现已按用户选择改为第 1 个实心款</strong>，
+      本卡片仅保留作候选对比（线条观感仍可参考）。</p>
+  </section>
+
+  <!-- 候选 3 -->
+  <section class="card" aria-labelledby="c3-title">
+    <h2 id="c3-title">3. <code>wallet-lucide-outline.svg</code>（Lucide 描边）</h2>
+    <p class="meta">Lucide <code>wallet</code>，viewBox 24、<code>stroke-width 2</code>；
+      <span class="lic">许可：ISC（Lucide Contributors）</span></p>
+    <div class="matrix">
+      <span class="corner"></span>
+      <span class="head">浅色 <code>#fff</code></span>
+      <span class="head">深色 <code>#1b1c1d</code></span>
+
+      <span class="size">16 px</span>
+      <div class="tile tile--light"><svg width="16" height="16" aria-label="wallet-lucide-outline.svg 16px 浅色"><use href="#wallet-lucide"/></svg></div>
+      <div class="tile tile--dark"><svg width="16" height="16" aria-label="wallet-lucide-outline.svg 16px 深色"><use href="#wallet-lucide"/></svg></div>
+
+      <span class="size">20 px</span>
+      <div class="tile tile--light"><svg width="20" height="20" aria-label="wallet-lucide-outline.svg 20px 浅色"><use href="#wallet-lucide"/></svg></div>
+      <div class="tile tile--dark"><svg width="20" height="20" aria-label="wallet-lucide-outline.svg 20px 深色"><use href="#wallet-lucide"/></svg></div>
+
+      <span class="size">24 px</span>
+      <div class="tile tile--light"><svg width="24" height="24" aria-label="wallet-lucide-outline.svg 24px 浅色"><use href="#wallet-lucide"/></svg></div>
+      <div class="tile tile--dark"><svg width="24" height="24" aria-label="wallet-lucide-outline.svg 24px 深色"><use href="#wallet-lucide"/></svg></div>
+    </div>
+    <p class="footnote">线条最轻，16 px 下卡扣与钱包开口仍分得开；边角观感比候选 2 更圆。</p>
+  </section>
+
+</div>
+
+<p class="page-foot">
+  页面自包含：三份 SVG 已内联为 <code>&lt;symbol&gt;</code>，不加载任何外部文件/字体/脚本，不联网。
+  素材来源与完整许可说明见仓库 <code>docs/assets/wallet/NOTICE.md</code>。
+</p>
+
+</body>
+</html>

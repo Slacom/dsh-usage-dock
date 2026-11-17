@@ -318,25 +318,71 @@ export function loadClient(runtime, options) {
   // 通过 apply(ctx) 取到胶囊组件与席位注册规格（两者都只经 ctx 暴露，不直接导出）。
   let Badge = null
   let SettingsPage = null
+  /** [0.11.0] `settings.section.icon` 槽位的图标组件（顶层设置分区图标）。 */
+  let SectionIcon = null
   let registration = null
+  /**
+   * [0.11.0] 把**所有** `slots.register` 的 spec 按注册顺序收集起来，供测试断言
+   * 名字 / id / order / label（此前只捕获两个已知名字，无法证明「没有注册其它槽位」）。
+   */
+  const slotSpecs = []
+  /**
+   * [0.11.0] `slots.inject` 收到的槽位名（按调用顺序）。设置壳动态声明分区/图标槽位，
+   * 生产实现必须「先 inject 等声明、再 register」，这里记录名字供测试断言。
+   */
+  const injectedSlots = []
+  /** 已注册槽位的 disposer 调用记录（卸载语义回归用）。 */
+  const disposedSlots = []
+  /** `ctx.effect` 返回的 disposer：测试可调用 `disposeEffects()` 模拟插件卸载。 */
+  const effectDisposers = []
   exportedModule.apply({
     configForms: { get: () => opts.form || null, whileServed: (_names, fn) => opts.form ? fn() : () => {} },
     slots: {
-      inject: (_name, cb) => cb(),
+      // [0.11.0] 记录被 inject 的槽位名，并照旧**立即执行**回调；回调返回的（register）disposer
+      // 原样作为 inject 的返回值 —— 生产组合 disposer 依赖这一点。
+      inject: (name, cb) => {
+        injectedSlots.push(name)
+        return cb()
+      },
       register: (spec, Comp) => {
+        slotSpecs.push(spec)
         if (spec.name === 'sidebar.footer.action') { registration = spec; Badge = Comp }
+        // [0.11.0] 设置入口已从 `settings.plugins.tab` 搬到设置主页顶层分区：
+        // 新实现只注册 `settings.section` + `settings.section.icon`；旧名字保留捕获仅为
+        // 兼容「混合部署/旧字节」测试，不再代表当前实现。
         if (spec.name === 'settings.plugins.tab') SettingsPage = Comp
-        return () => {}
+        if (spec.name === 'settings.section') SettingsPage = Comp
+        if (spec.name === 'settings.section.icon') SectionIcon = Comp
+        return () => { disposedSlots.push(spec.name) }
       },
     },
-    effect: (fn) => fn(),
+    effect: (fn) => {
+      const disposer = fn()
+      if (typeof disposer === 'function') effectDisposers.push(disposer)
+      return disposer
+    },
   })
+
+  /** [0.11.0] 模拟插件卸载：调用 apply 期间 `ctx.effect` 收集到的全部 disposer。 */
+  function disposeEffects() {
+    const queued = effectDisposers.splice(0, effectDisposers.length)
+    const errors = []
+    for (const dispose of queued) {
+      try { dispose() } catch (err) { errors.push(err) }
+    }
+    if (errors.length > 0) throw errors[0]
+  }
 
   return {
     module: exportedModule,
     Badge,
     SettingsPage,
+    SectionIcon,
     registration,
+    slotSpecs,
+    injectedSlots,
+    disposedSlots,
+    disposeEffects,
     styleTags,
     windowEvents: fakeWindowEvents,
     documentEvents: fakeDocEvents,

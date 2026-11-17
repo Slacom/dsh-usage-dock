@@ -430,7 +430,11 @@ function verifiedSnapshot(over) {
   const guiHook = /plan\.id === 'mimo'[\s\S]{0,120}?mimoWireWithDisplay\(mimoDisplaySource, \(\) => plan\.fetch\(ctx, shell, cfgNow\)\)/
   check('G3a 接线守卫：GUI 路由的逐渠道取数经 mimoWireWithDisplay 分流（源码断言）', guiHook.test(hostSrcG))
   const uses = (hostSrcG.match(/mimoWireWithDisplay\(/g) || []).length
-  check('G3b 接线守卫：恰好两处调用（usage_status + GUI 路由），没有第三套实现', uses === 2, uses)
+  // [dsh-go 原生适配] 第三处是原生面板的取数入口；第四处是额度策略快照的后台刷新；
+  // 第五处是 composer.strip 的单渠道取数。五处都复用同一 helper，不允许出现第六套实现。
+  const nativeHook = /plan\.id === 'mimo'[\s\S]{0,160}?mimoWireWithDisplay\(mimoDisplaySource, \(\) => plan\.fetch\(ctx, shell, cfgSnapshot\)\)/
+  check('G3c 接线守卫：dsh-go 原生面板也经 mimoWireWithDisplay 分流（源码断言）', nativeHook.test(hostSrcG))
+  check('G3b 接线守卫：恰好五处调用（usage_status + GUI + 原生面板 + 策略刷新 + strip），没有第六套实现', uses === 5, uses)
 }
 
 
@@ -448,8 +452,8 @@ function verifiedSnapshot(over) {
   for (const bad of ['复制新的 Cookie', '控制台登录态已过期', '手工 Cookie 路径', 'API error code 401', '实验性：临时扫码登录', '合成边界；生产未启用']) {
     check('M3 用户可见源码不含「' + bad + '」', !clientSrc2.includes(bad))
   }
-  check('M4 GUI 与 usage_status 都经同一个 helper（index.js 恰好两处调用）',
-    (hostSrc.match(/mimoWireWithDisplay\(/g) || []).length === 2)
+  check('M4 GUI、usage_status、原生面板、策略刷新与 strip 都经同一个 helper（index.js 恰好五处调用）',
+    (hostSrc.match(/mimoWireWithDisplay\(/g) || []).length === 5)
 }
 
 console.log('')

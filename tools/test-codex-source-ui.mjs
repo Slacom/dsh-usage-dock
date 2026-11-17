@@ -679,6 +679,8 @@ console.log((pass + fail) + ' 项：' + pass + ' 通过, ' + fail + ' 失败')
 // Q — [0.10.2] 「应用本地适配」块：组件层（直接挂 PatchBlock）+ 接线层（设置页树里查元素）
 // ===========================================================================
 const PATCH_URL = '/api/plan-usage/codex-subscription/apply-patch'
+/** [0.10.6] 挂载时先发的只读探测（版本感知三态）路由。 */
+const PATCH_STATE_URL = '/api/plan-usage/codex-subscription/patch-state'
 
 /** 递归找出所有「函数组件元素」中 type 等于给定组件的节点（不展开其内部）。 */
 function findComponentNodes (node, comp, out = [], depth = 0) {
@@ -728,14 +730,25 @@ async function mountPatchBlock (props, response) {
   check('Q2 active:true ⇒ 出现 apply 按钮与适配提示',
     byAttr(b2.tree, 'data-cs-patch', 'apply') !== undefined && textAll(b2.tree).includes('Codex 订阅额度需要在本机做一次适配才能读取。'),
     textAll(b2.tree).slice(0, 160))
-  // Q3：点击 ⇒ 仅一次 POST，URL 精确、无 body
+  // Q3：[0.10.6] 挂载时先发**一次** patch-state GET；真正的 POST **只在用户点击后**发生、且只一次。
+  // 旧断言按「挂载只发一次调用」计数，新增探测后会把那次 GET 也算进去，因此改为按 URL 分流统计：
+  //   ① 点击前：恰好一次 GET、零 POST（保持「不自动写」语义）；
+  //   ② 点击后：恰好一次 POST（URL 精确、无 body），且探测 GET 不因点击/重渲染重复发送。
+  const beforeClick = b2.calls.slice()
+  check('Q3a 点击前只发一次 patch-state GET、没有任何 POST（不自动应用）',
+    beforeClick.length === 1 && beforeClick[0].url === PATCH_STATE_URL
+    && beforeClick[0].init.method === undefined
+    && beforeClick.filter((c) => c.url === PATCH_URL).length === 0, beforeClick)
   const btn2 = byAttr(b2.tree, 'data-cs-patch', 'apply')
   btn2.props.onClick()
   await b2.settle()
-  check('Q3 点击 ⇒ 恰好一次 POST，URL 精确且 init 无 body 字段',
-    b2.calls.length === 1 && b2.calls[0].url === PATCH_URL
-    && String(b2.calls[0].init.method).toUpperCase() === 'POST'
-    && b2.calls[0].init.body === undefined, b2.calls)
+  const posts = b2.calls.filter((c) => c.url === PATCH_URL)
+  const probes = b2.calls.filter((c) => c.url === PATCH_STATE_URL)
+  check('Q3b 点击后真实 POST 恰好一次，URL 精确且 init 无 body 字段',
+    posts.length === 1 && String(posts[0].init.method).toUpperCase() === 'POST'
+    && posts[0].init.body === undefined, b2.calls)
+  check('Q3c 全程探测 GET 只发一次（点击/重渲染不重复发送），总调用 = GET + POST 各一次',
+    probes.length === 1 && b2.calls.length === 2, b2.calls)
   // Q4：成功文案
   const txt4 = textAll(b2.tree)
   check('Q4 成功 ⇒ 出现「已应用，重启 DSH 后可读取订阅额度」且按钮消失',

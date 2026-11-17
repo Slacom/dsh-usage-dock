@@ -285,15 +285,96 @@ function parseCodexSourcesPayload(body) {
  *   incompatible enabled:true  + compatible:false → 接口暂不可用（需适配）
  *   unknown      没拿到可信 metadata              → 状态暂不可用
  */
+/** [0.10.6] 只读补丁状态路由（GET，0 上游：只统计本机第三方包与已收录清单）。 */
+var CODEX_PATCH_STATE_ROUTE = '/api/plan-usage/codex-subscription/patch-state'
+/** [0.10.2] 一键应用补丁（POST，空 body）。 */
+var CODEX_PATCH_APPLY_ROUTE = '/api/plan-usage/codex-subscription/apply-patch'
+
+/**
+ * [0.10.6] 版本号白名单：只接受「包版本」形态的短字符串（3.2.17 / 3.2.17-beta.1）。
+ *
+ * patch-state 的 version / covered 来自本机第三方包清单，理论上可信；但这段文字会直接
+ * 进入界面，因此仍然按**白名单**过滤——任何不符合形态的值一律降级为 null（显示不带版本
+ * 号的原句），绝不把任意上游文本渲染给用户。
+ */
+function safePatchVersion(raw) {
+  if (typeof raw !== 'string') return null
+  var text = raw.trim()
+  if (text.length === 0 || text.length > 32) return null
+  return /^[0-9A-Za-z][0-9A-Za-z._+-]*$/.test(text) ? text : null
+}
+
+/** 已收录清单：逐项白名单过滤 + 去重，最多显示 8 个（防止长列表撑爆设置页）。 */
+function safePatchCovered(raw) {
+  if (!Array.isArray(raw)) return []
+  var out = []
+  for (var i = 0; i < raw.length && out.length < 8; i++) {
+    var version = safePatchVersion(raw[i])
+    if (version !== null && out.indexOf(version) === -1) out.push(version)
+  }
+  return out
+}
+
+/**
+ * [0.10.6] 解析 `GET …/patch-state`：只接受**闭集**状态 + 安全版本字段。
+ * 信封不对 / state 不在三态之内 / data 不是对象 → null，调用方走原有兜底（显示按钮）。
+ *
+ * `manifestVersion` = 与已装版本**精确匹配**的清单版本（Host 语义：清单命中但文件与基线不符时
+ * 它仍等于已装版本；完全没有清单才为 null）。客户端据此区分 unsupported 的两种真实原因，
+ * 避免拼出「暂无适配清单（已收录：…含本版本）」这种自相矛盾的话。字段非法按缺失处理。
+ */
+function parseCodexPatchState(body) {
+  if (body === null || body === undefined || typeof body !== 'object' || body.ok !== true) return null
+  var data = body.data
+  if (data === null || data === undefined || typeof data !== 'object' || Array.isArray(data)) return null
+  var state = data.state
+  if (state !== 'patched' && state !== 'appliable' && state !== 'unsupported') return null
+  return {
+    state: state,
+    version: safePatchVersion(data.version),
+    covered: safePatchCovered(data.covered),
+    manifestVersion: safePatchVersion(data.manifestVersion),
+  }
+}
+
+/**
+ * [0.10.6] 「需适配」时的一句话。按 `manifestVersion` 区分两种 unsupported：
+ *   - 有清单（`manifestVersion === version`）：本机第三方文件与已知基线不一致，**不能说**
+ *     「暂无适配清单」——改为说明基线不一致并建议重装/升级或走命令行检查；
+ *   - 无匹配清单（`manifestVersion !== version`）：显示已装版本 + 本插件已收录清单。
+ * 任一关键字段缺失/非法 → 统一退化成不带版本号的原句（无法可靠判断是哪种原因，不猜）。
+ * 两种 unsupported 都**不给**「应用本地适配」按钮（Host 端同样会拒绝）。
+ */
+function codexPatchUnsupportedText(info) {
+  var version = info !== null && info !== undefined ? info.version : null
+  var manifestVersion = info !== null && info !== undefined ? info.manifestVersion : null
+  var covered = info !== null && info !== undefined && Array.isArray(info.covered) ? info.covered : []
+  if (version === null || manifestVersion === null || covered.length === 0) {
+    return '当前第三方插件版本暂不支持一键适配，请升级本插件。'
+  }
+  if (manifestVersion === version) {
+    return '第三方插件 ' + version + ' 已收录，但本机第三方文件与已知基线不一致，无法一键适配；'
+      + '建议重装或升级该第三方插件，或用命令行工具检查。'
+  }
+  return '第三方插件 ' + version + ' 暂无适配清单（本插件已收录：' + covered.join(' / ') + '），请升级 dsh-usage-dock。'
+}
+
 /**
  * [0.10.2] 「应用本地适配」块：Codex Subscription 未适配时，让用户**一键**打上第三方插件所需的
  * 本地只读接口补丁（对应 Host 路由 POST /api/plan-usage/codex-subscription/apply-patch）。
  *
+ * [0.10.6] 版本感知：挂载（active 为 true）时先读一次 GET `…/patch-state`，据此区分三态：
+ *   - patched     → 「已适配，重启 DSH 后可读取订阅额度」，不给按钮；
+ *   - appliable   → 显示已装版本 + 「应用本地适配」按钮；
+ *   - unsupported → 按 `manifestVersion` 区分「无匹配清单」与「有清单但基线不一致」两种文案，
+ *                   **都不给**按钮（Host 端同样会拒绝）。
+ * GET 失败 / 字段不可信 → 保持原有兜底（直接显示按钮，POST 后按固定文案分流）。
+ *
  * 关键约束：
  *   - hooks 必须在组件**顶部无条件**调用，`active` 只影响返回值、不影响 hook 顺序（否则白屏级事故）；
- *   - 只发**一次** POST（空 body），不重试、不轮询；
+ *   - GET 只发**一次**（不重试、不轮询），POST 同样只发一次（空 body）；
  *   - 卸载后不再 setState（mounted ref）；
- *   - 失败只显示固定文案，绝不回显错误码 / 堆栈 / 上游正文。
+ *   - 失败只显示固定文案，绝不回显错误码 / 堆栈 / 上游正文 / 任意上游文本。
  */
 function CodexSubscriptionPatchBlock(props) {
   var active = props !== null && props !== undefined && props.active === true
@@ -301,11 +382,43 @@ function CodexSubscriptionPatchBlock(props) {
   var statusHook = React.useState('idle')
   var status = statusHook[0]
   var setStatus = statusHook[1]
+  /**
+   * 探测结果：phase = 'checking'（首次读取中）| 'ready'（拿到可信三态）| 'fallback'（读取失败/不可信）。
+   * 与 POST 状态分开保存：POST 一旦开始/结束，结果文案优先于探测结果。
+   */
+  var infoHook = React.useState({ phase: 'checking', state: null, version: null, covered: [], manifestVersion: null })
+  var info = infoHook[0]
+  var setInfo = infoHook[1]
   var aliveRef = React.useRef(true)
+  var probeStartedRef = React.useRef(false)
   React.useEffect(function () {
     aliveRef.current = true
     return function () { aliveRef.current = false }
   }, [])
+  React.useEffect(function () {
+    // active 由 false → true（来源 metadata 异步到位）时才需要探测；组件生命周期内最多一次。
+    if (active !== true) return
+    if (probeStartedRef.current === true) return
+    probeStartedRef.current = true
+    var doFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch : null
+    if (doFetch === null) { setInfo({ phase: 'fallback', state: null, version: null, covered: [], manifestVersion: null }); return }
+    Promise.resolve()
+      .then(function () { return doFetch(CODEX_PATCH_STATE_ROUTE, { headers: { accept: 'application/json' } }) })
+      .then(function (res) {
+        var httpStatus = res !== null && res !== undefined && typeof res.status === 'number' ? res.status : null
+        if (httpStatus !== null && httpStatus !== 200) throw new Error('http-status')
+        return res !== null && res !== undefined && typeof res.json === 'function' ? res.json() : null
+      })
+      .then(function (body) {
+        if (aliveRef.current !== true) return
+        var parsed = parseCodexPatchState(body)
+        if (parsed === null) { setInfo({ phase: 'fallback', state: null, version: null, covered: [], manifestVersion: null }); return }
+        setInfo({ phase: 'ready', state: parsed.state, version: parsed.version, covered: parsed.covered, manifestVersion: parsed.manifestVersion })
+      }, function () {
+        // 失败只降级、不报错：交给原有「显示按钮」的兜底路径，不渲染任何错误细节。
+        if (aliveRef.current === true) setInfo({ phase: 'fallback', state: null, version: null, covered: [], manifestVersion: null })
+      })
+  }, [active])
   if (active !== true) return null
   var busy = status === 'sending'
   var applyOnce = function () {
@@ -314,7 +427,7 @@ function CodexSubscriptionPatchBlock(props) {
     var doFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch : null
     if (doFetch === null) { setStatus('failed'); return }
     Promise.resolve()
-      .then(function () { return doFetch('/api/plan-usage/codex-subscription/apply-patch', { method: 'POST' }) })
+      .then(function () { return doFetch(CODEX_PATCH_APPLY_ROUTE, { method: 'POST' }) })
       .then(function (res) {
         return res !== null && res !== undefined && typeof res.json === 'function' ? res.json() : null
       })
@@ -327,6 +440,7 @@ function CodexSubscriptionPatchBlock(props) {
         if (aliveRef.current === true) setStatus('failed')
       })
   }
+  // POST 结果优先（用户已点击过，结果必须稳定可见）。
   if (status === 'done') {
     return h('p', { key: 'cs-patch-result', style: settingsHintStyle, 'data-cs-patch-result': 'done', 'data-codex-source-patch': 'done' },
       '已应用，重启 DSH 后可读取订阅额度')
@@ -340,14 +454,26 @@ function CodexSubscriptionPatchBlock(props) {
     return h('p', { key: 'cs-patch-result', style: settingsHintStyle, 'data-cs-patch-result': 'failed', 'data-codex-source-patch': 'failed' },
       '应用失败，请稍后重试或用命令行工具')
   }
-  // [0.10.3] 版本无对应补丁清单：一句人话，不回显固定码。
-  if (status === 'unsupported') {
-    return h('p', { key: 'cs-patch-result', style: settingsHintStyle, 'data-cs-patch-result': 'unsupported', 'data-codex-source-patch': 'unsupported' },
-      '当前第三方插件版本暂不支持一键适配，请升级本插件。')
+  // [0.10.6] 探测中：只给中性提示，不闪出一个可能不该出现的按钮。
+  if (info.phase === 'checking') {
+    return h('p', { key: 'cs-patch-checking', style: settingsHintStyle, 'data-codex-source-patch': 'checking' },
+      '正在检查本地适配状态…')
   }
+  if (info.phase === 'ready' && info.state === 'patched') {
+    return h('p', { key: 'cs-patch-result', style: settingsHintStyle, 'data-cs-patch-result': 'done', 'data-codex-source-patch': 'patched' },
+      '已适配，重启 DSH 后可读取订阅额度')
+  }
+  if (info.phase === 'ready' && info.state === 'unsupported') {
+    return h('p', { key: 'cs-patch-result', style: settingsHintStyle, 'data-cs-patch-result': 'unsupported', 'data-codex-source-patch': 'unsupported' },
+      codexPatchUnsupportedText(info))
+  }
+  var appliableHint = info.phase === 'ready' && info.state === 'appliable' && info.version !== null
+    ? '第三方插件 ' + info.version + '，可一键适配'
+    : (info.phase === 'ready' && info.state === 'appliable'
+      ? '该第三方插件可一键适配'
+      : 'Codex 订阅额度需要在本机做一次适配才能读取。')
   return h('div', { key: 'cs-patch-block', 'data-cs-patch-block': '1', 'data-codex-source-patch': 'appliable', style: { display: 'flex', flexDirection: 'column', gap: 4 } },
-    h('p', { style: settingsHintStyle, 'data-cs-patch-hint': '1' },
-      'Codex 订阅额度需要在本机做一次适配才能读取。'),
+    h('p', { style: settingsHintStyle, 'data-cs-patch-hint': '1' }, appliableHint),
     h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
       h('button', {
         type: 'button',
@@ -3187,8 +3313,10 @@ function PlanUsageConfigCard(props) {
 }
 
 // ===========================================================================
-// 「内置插件」里的设置页（settings.plugins.tab 席位）
+// 设置主页顶层分区（settings.section）里的设置页
 // ===========================================================================
+// [0.11.0] 从「设置 → 内置插件 → Usage Dock」的 tab（settings.plugins.tab）
+// 搬到**设置主页顶层分区**，与「Codex 订阅」并列；图标走 `settings.section.icon`。
 // 配置由 DSH 托管：Host 半导出 Config schema，客户端通过 configForms 服务
 // 读写当前 profile 条目的配置（命名空间 = 条目 id，即 plan-usage）。
 // 表单控制器负责修订号校验、写队列与持久化，这里只负责渲染。
@@ -9806,6 +9934,42 @@ function PlanUsageSettingsPage(props) {
       : null,
   )
 }
+
+/**
+ * [0.11.0] 设置主页顶层分区图标：**实心钱包**。
+ *
+ * 素材来源：仓库根 `icon.svg`（Material Symbols「wallet」，**Apache-2.0**；
+ * 来源与许可见 `docs/assets/wallet/NOTICE.md`）——**不是** App 原始资源。
+ * 24 viewBox、**单个 path**、`fill:currentColor`；不读文件、不用 `<img>`/外链、不新增依赖。
+ *
+ * 契约（与 dsh-codex-subscription 的 `SubscriptionSettingsIcon` 同构）：
+ *   - 外壳负责按钮/文字/装饰，本组件**只渲染 `svg`**；颜色走 `currentColor`；
+ *   - 接收 `size`（像素，默认 16）与 `active`；
+ *   - `active` 只**略增视觉权重**（实心图没有描边，改用 opacity 1 → 0.85），**绝不改变尺寸**；
+ *   - 纯展示：无 hooks、无副标题、无事件。
+ */
+/** `icon.svg` 里的 Material Symbols「wallet」路径（24 网格，Apache-2.0）。 */
+var USAGE_DOCK_WALLET_PATH = 'M6 20q-1.65 0-2.825-1.175T2 16V8q0-1.65 1.175-2.825T6 4h12q1.65 0 2.825 1.175T22 8v8q0 1.65-1.175 2.825T18 20zM6 8h12q.55 0 1.05.125t.95.4V8q0-.825-.587-1.412T18 6H6q-.825 0-1.412.588T4 8v.525q.45-.275.95-.4T6 8m-1.85 3.25l11.125 2.7q.225.05.45 0t.425-.2l3.475-2.9q-.275-.375-.7-.612T18 10H6q-.65 0-1.137.338t-.713.912'
+function UsageDockSectionIcon(props) {
+  var rawSize = props !== null && props !== undefined ? props.size : undefined
+  var size = typeof rawSize === 'number' && isFinite(rawSize) && rawSize > 0 ? rawSize : 16
+  var active = props !== null && props !== undefined && props.active === true
+  return h('svg', {
+    width: size,
+    height: size,
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    opacity: active === true ? 1 : 0.85,
+    'aria-hidden': 'true',
+    focusable: 'false',
+    'data-usage-dock-icon': '1',
+    'data-usage-dock-icon-active': active === true ? '1' : '0',
+    style: { display: 'block' },
+  },
+    // 实心钱包：单条 path（与 icon.svg 完全同一形状），颜色随宿主 currentColor。
+    h('path', { key: 'wallet', fill: 'currentColor', d: USAGE_DOCK_WALLET_PATH }),
+  )
+}
 // ===========================================================================
 // apply
 // ===========================================================================
@@ -9836,20 +10000,43 @@ function apply(ctx) {
       inject: function () { return { configForm: form } },
     }, PlanUsageBadge)
   })
-  // 设置页：注册进「内置插件」页面的 tab 席位 settings.plugins.tab，
-  // 与 Codex Connect 的做法一致。configForms 提供该条目的配置表单，
-  // whileServed 保证只有 Host 真正提供该命名空间时才出现这个页面。
+  // [0.11.0] 设置入口改到**设置主页顶层分区**（`settings.section`），与「Codex 订阅」并列：
+  //   - 分区：id `plan-usage`、label `Usage Dock`、order **16**（Codex 订阅是 15，我们排它之后、
+  //     Agent 预设之前）；组件沿用现有 `PlanUsageSettingsPage`，inject 仍只给 `{ form }`；
+  //   - 图标：独立槽位 `settings.section.icon`，**id 必须与分区相同**；
+  //   - 生命周期：设置壳是**动态声明**这两个槽位的，因此必须像 dsh-codex-subscription 那样
+  //     **先 `ctx.slots.inject('<槽位名>', () => ctx.slots.register(...))` 等槽位声明后再注册**；
+  //     直接 register 可能在槽位尚未声明时丢失，或在设置壳重挂后不恢复；
+  //   - configForms 提供该条目的配置表单；whileServed 保证只有 Host 真正提供该命名空间时才出现；
+  //   - 两个槽位都要注册、也都要能卸载：`slots.inject` 的返回值即 disposer，组合起来一起撤
+  //     （本文件不再注册 settings.plugins.tab）。
   ctx.effect(function () {
     return ctx.configForms.whileServed(['plan-usage'], function () {
-      return ctx.slots.register({
-        name: 'settings.plugins.tab',
-        id: 'plan-usage',
-        order: 40,
-        label: function () { return 'Usage Dock' },
-        inject: function () { return { form: form } },
-      }, PlanUsageSettingsPage)
+      var disposeSection = ctx.slots.inject('settings.section', function () {
+        return ctx.slots.register({
+          name: 'settings.section',
+          id: 'plan-usage',
+          order: 16,
+          label: function () { return 'Usage Dock' },
+          inject: function () { return { form: form } },
+        }, PlanUsageSettingsPage)
+      })
+      var disposeIcon = ctx.slots.inject('settings.section.icon', function () {
+        return ctx.slots.register({
+          name: 'settings.section.icon',
+          id: 'plan-usage',
+        }, UsageDockSectionIcon)
+      })
+      return function () {
+        // 与注册顺序相反地释放；两个都调用、互不短路（一个抛错不吞掉另一个的清理）。
+        try {
+          if (typeof disposeIcon === 'function') disposeIcon()
+        } finally {
+          if (typeof disposeSection === 'function') disposeSection()
+        }
+      }
     })
-  }, 'plan-usage: settings page')
+  }, 'plan-usage: settings section')
 }
 
 // [V2] 额外导出「作废某条已显示余额」：设置页保存 Key 后内部走同一条路径。

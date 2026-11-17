@@ -30,12 +30,16 @@ DeepSeek Harness（DSH）的**侧栏用量/余额插件**：在 Web/桌面端左
 用量与余额，点击可展开详情面板。fork 自 `chendefine/dsh-plugins-plan-usage`，改名 `dsh-usage-dock`
 以避免与上游混淆，并做了一系列定制（见第 6 节）。
 
-**当前版本**：0.10.5（MiMo 登录收敛为「扫码 → 确认账号 → 读余额」+ 显示层修复「真实余额被读取中占位盖掉」+
-OpenCode Go 百分比口径（已用→剩余）+ Codex `Subscription` 补丁支持 3.2.13 与 pnpm 布局 +
-额度策略注入修复（`opencode-go` 路由映射缺失、`ctx.inject` 注册）+ 详情卡片重置时间两段精度与列对齐；
-承接 0.10.0 的双来源手选 / WorkBuddy 只读 cn / MiMo 与 `usage_status` 同源）。
+**当前版本**：0.11.0（DSH Go 原生半：原生额度面板 + 原生设置页 + 输入框上方 `composer.strip` 额度条 +
+MiMo 扫码登录持久化；承接 0.10.6 的 Codex `Subscription` 支持第三方 3.2.17 与清单 `inheritFrom` 继承、
+`patch-state` 增加 `covered` / `manifestVersion`、设置页「需适配」块区分三态并区分两种
+unsupported 文案；再承接 0.10.5 的 MiMo 登录收敛为「扫码 → 确认账号 → 读余额」+
+显示层修复「真实余额被读取中占位盖掉」+ OpenCode Go 百分比口径（已用→剩余）+
+Codex `Subscription` 补丁支持 3.2.13 与 pnpm 布局 + 额度策略注入修复（`opencode-go` 路由映射缺失、
+`ctx.inject` 注册）+ 详情卡片重置时间两段精度与列对齐；0.10.0 的双来源手选 / WorkBuddy 只读 cn /
+MiMo 与 `usage_status` 同源不变）。
 **0.10.3 / 0.10.4 是本地构建、从未发布**，不要把它们当作已发布版本。　|　
-**上一公开版**：0.10.2（GitHub Release + npm；0.10.1 已撤回、npm 上已 deprecate）
+**上一公开版**：0.10.5（GitHub Release + npm；0.10.3 / 0.10.4 从未发布）
 
 > **审核入口（先读这条）**：当前**权威**记录是
 > [0.9.0 发布状态](docs/release-status-v0.9.0-20261024.md)（程序已部署、用户已确认本地验收；
@@ -300,6 +304,21 @@ tools/test-workbuddy-gateway.mjs     [0.9.1] WorkBuddy2API 网关：根路径/�
 plans/usage-tool.js                  [方向6/T1] usage_status 投影（纯函数，无 IO）
 plans/usage-tool-register.js         [方向6/T2] 工具注册/缓存/预算（不 import 宿主包）
 plans/usage-policy.js                [方向6/T3] 可选收尾策略（默认关闭）
+plans/dsh-go-native.js               [0.11.0] DSH Go 原生半：`panels`（quota / settings / mimo-login）的
+                  静态视图骨架 + 数据投影 + 失败回退 + 复制摘要 + `ctx.dshGo.panel()` 注册；
+                  面板打开才启动 30 秒 feed，关闭即取消
+plans/strip.js                       [0.11.0] `composer.strip` 纯函数：会话路由事件（latest wins）→
+                  provider → 渠道 → ≤24 字文本 / tone / 隐藏规则（不读网络、不读磁盘）
+plans/mimo-legacy-store.js           [0.11.0] MiMo legacy 扫码登录凭据：平台 4 个 cookie 的白名单提取 /
+                  凭据记录存储 / 重启后重放余额接口（纯逻辑 + 可注入 fetch）
+tools/test-dsh-go-native.mjs         [0.11.0] DSH Go 原生半契约（40 项：清单/视图/数据/动作/设置页/
+                  MiMo 登录/strip 注册/无桥接回退）
+tools/test-dsh-go-boundaries.mjs     [0.11.0 终审整改] DSH Go 边界（47 项：启用/桥接闸门、
+                  来源身份隔离与永久失败清值、定时器生命周期、原生 collect 身份采样前固化/
+                  采样后复核 E1–E3、legacy 余额选择顺序 F1–F9）
+tools/test-dsh-go-strip.mjs          [0.11.0] strip 纯函数（17 项：路由事件/映射/文本/截断/隐藏）
+tools/test-mimo-legacy-store.mjs     [0.11.0] MiMo legacy 持久化（12 项：cookie 白名单/记录年龄/
+                  重放/失败枚举/稳定采样时间）
 ```
 
 **已接入渠道**（0.10.0 起）：OpenCode Go、DeepSeek（账号余额优先/API Key 回退）、
@@ -448,9 +467,101 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
 ## 7. 已知限制
 
 > 📌 **用户已确认要做、但尚未实施的事项统一记在 [docs/backlog.md](docs/backlog.md)**（含
-> MiMo「平台票据缺失」的 3 次有限自动重试、安卓移动端适配、策略表口径等）。动手前先看那份清单，
-> 不要凭记忆重推需求。
+> MiMo「平台票据缺失」的 3 次有限自动重试、安卓移动端适配、DSH Go 原生面板后续项、策略表口径等）。
+> 动手前先看那份清单，不要凭记忆重推需求。
 
+- **DSH Go 原生半**（0.11.0）：`package.json` 新增 `dshGo` 清单（v1；`title` 额度 / Usage、
+  `"icon":"wallet"`），与既有 `dsh`（Web 半）**并存互不影响**：
+  - `contributes["composer.strip"]` **1 条**（`{id:"strip", icon:"wallet", panel:"quota"}`）——
+    输入框上方一行额度摘要，点按打开 `quota` 面板（`presentation:"sheet"` 底部弹层）。
+  - `contributes.panels` **3 个**：`quota`（`session.tab` + `features`，即对话详情「插件」页签 /
+    全部功能）、`settings`（原生设置页，`placement:["plugin"]`）、`mimo-login`（MiMo 扫码登录面板，
+    `placement:["plugin"]`）。
+  - 顶层 `"icon": "./icon.svg"` 与 `files` 加入 `icon.svg`（桌面 Cordis 插件同款约定）；根目录
+    `icon.svg` / `icon-outline.svg` / `preview.png` 与 `docs/assets/wallet/**` 是给**桌面端复用**的
+    视觉近似素材——DSH Go App 胶囊上的钱包图是 **App 内置图标名** `wallet`，不在本包发布内容里
+    （见 `WALLET-ICON.md`、`docs/capsule-wallet-icon.md`）。
+  - 只在装了 dsh-go 桥接的主机注册原生半（`ctx.inject(['dshGo'])`）；没有 `dshGo` 服务时
+    `apply` 照旧；官方插件检查器的隔离宿主没有 `webServer`，`apply` 注册完原生面板即返回，
+    `check --load` 才能加载校验视图。**「Web / 桌面端行为不变」在启用闸门整改后成立**
+    （此前缺闸门：无桥 / 停用时仍可能读凭据或取数）：legacy 记忆登录要求
+    `桥存在 && enabled !== false && mimoEnabled !== false && mimoRememberLogin !== false`，
+    strip 在总开关 / 渠道停用时**不调 provider、不显示旧值**，见下面条目的整改说明。
+- **原生设置页入口**（0.11.0）：额度面板底部是「刷新 / 设置」，点「设置」发 `{ open: "panel:settings" }`
+  打开本插件的原生设置面板。它只编辑**非密钥**字段（插件总开关、各渠道开关、Codex 来源、
+  余额提醒阈值、额度策略阈值）；密钥 / Cookie / 自定义余额仍走网页版设置页。设置页按渠道分组，
+  「启用额度策略 / 关注额度策略」开关是 onChange 即时保存 + refresh 重建视图——**切换开关会重建
+  表单，未保存的其它编辑会被刷新**；保存时只提交当前视图实际渲染的字段（隐藏的策略输入不写，
+  保留原配置）。
+  **终审整改**（首轮未通过）：此前控件定义的 `onChange` **没有被透传**，6 个策略 toggle 全无绑定
+  （切换既不保存也不展开条件字段），现已补透传与 `policyToggle` 动作；且 `policyToggle`
+  **只增删本次切换的目标渠道**，保留其它关注项（含 `codex` / `mimo` 等其它内置渠道、`custom:*`
+  与未知 id）——旧实现用「当前视图渲染的关注项」当全集重写，切一次 DeepSeek 会静默删掉 codex / mimo。
+- **`composer.strip` 与路由判定**（0.11.0）：`plans/strip.js` 是纯函数（路由事件解析、provider→渠道、
+  ≤24 字文本、tone、隐藏规则），`index.js` 负责订阅、回填与缓存。订阅 `session/event` 三类事件
+  **latest wins**：`model/selection` → `request/header`（`data.header.config.provider`）→
+  `assistant/message`（`data.message.source`）；strip 首次订阅 / 换会话时用
+  `sessions.get(id).snapshotEvents()` 回填最近 400 条事件；只按 `sessionId` 隔离，多会话不串；
+  拿不到路由就 `emit(null)` **隐藏、不猜渠道**。内置 provider 走与网页同一张 `ROUTE_TABLE` 精确匹配，
+  自定义余额渠道按条目的 `provider` 精确匹配；**MiMo 的 provider id 尚未进 `ROUTE_TABLE`**
+  （当前手机 profile 没有 MiMo 模型路由，待真机确认后再补），因此手机端 MiMo 不出 strip。
+  strip 文本 ≤24 字、单行无法真正右对齐（宿主会折叠空白，数值只能跟在名字后）是 slot 限制；
+  单渠道 30 秒缓存 + single-flight，优先复用额度策略观察里的投影（不重复请求上游）；
+  失败 / 未知 / 无窗口 / 无余额 → `null`（有上次可用值则继续显示旧值并后台刷新）。
+  **终审整改**：总开关 / 渠道开关停用时**不调 provider、不显示旧值**——在读缓存/投影前与调用取数前
+  各判一次闸门，配置重载窗口内同步遮蔽（`stripConfigPending`）并清缓存；缓存/在途 key =
+  `channelId|identityOfChannel(id)`（Codex 含 `codexSource`，自定义含 provider/端点/修订号），
+  **永久失败清旧值**，只有**同一身份**下的暂时失败才 carry 并标 `stale`。
+- **MiMo legacy 登录持久化**（0.11.0，默认开 `mimoRememberLogin`）：扫码登录成功后把**平台侧 4 个
+  cookie**（`api-platform_serviceToken` / `userId` / `api-platform_slh` / `api-platform_ph`）交给
+  `ctx.credentials` 保管（凭据记录，不含账号密码 / 账号 cookie / 上游原文）；引擎重启后重放
+  `GET https://platform.xiaomimimo.com/api/v1/balance`，200 / code=0 即恢复余额，401 / 403 / 结构异常
+  则删除记录并回落重新扫码。设置页 MiMo 分组可关闭（关闭即删除记录）。真机已验证「扫码写入记录 →
+  重启引擎免扫码恢复余额」。**残余风险**：`serviceToken` 实际有效期、设备/IP 绑定是否会失效均未知，
+  过期需重新扫码。实现坑：登录流程结束会 `jar.clear()`，cookie 必须在读余额时（`askBalanceMatch`）
+  抓取；`serviceToken` 的 `Path` 可能是 `/api`，要用余额接口完整 URL 取 cookie。
+  **终审整改**：保存/恢复统一过四层闸门（桥存在、`enabled`、`mimoEnabled`、`mimoRememberLogin`
+  均非 `false`），无桥/停用时**不读凭据、不重放**，桥未就绪直接返回不排队；
+  `legacyDoneBalance()` 返回**稳定采样时间**（真正拿到余额那一刻，多次 peek 不变），超过 **5 分钟**
+  或缺时间戳不再当 fresh，而是触发一次记录重放并返回「读取中 / 缺失」，不拿旧余额冒充当前值。
+- **DSH Go 第二轮整改（0.11.0，终审三轮中的第二轮）**：首轮 5 类问题整改后，第二轮又发现 2 项并修复：
+  - **原生 collect 身份采样前固化 / 采样后复核**（E1–E3）：取数**前**先固化每个渠道的
+    `identityOfChannel(id)`，采样结束后用同一时刻的期望值复核；期间身份漂移（改 Codex 来源 /
+    自定义端点或 Key 修订）的旧 wire **不带 identity**，原生面板按「缺身份不复用」处理——下一轮
+    暂时失败**不会 carry 旧百分比**，第二轮会重新采样（断言 provider 调用 2 次）。
+  - **legacy 余额选择顺序**（F1–F9，`pickLegacyBalanceView`）：「done 新鲜优先 → record 新鲜 →
+    都不新鲜才限频重放」；**过期 done 只失去优先权、不短路**已重放成功的新余额（记录缓存的新余额
+    19 CNY 最终显示在原生额度面板）。此前 stale done 会提前 return，挡住已重放成功的新记录余额。
+  - **终审状态**：首轮不通过（5 类）→ 整改；第二轮不通过（上述 2 项）→ 整改；
+    **第三轮定向复审通过（定向范围）**——GPT-6.1-Sol Max 判定 E（collect 身份采样前固化 / 采样后复核）
+    与 F（`pickLegacyBalanceView` 顺序、过期 done 不短路）两项阻断均已闭合，未发现新阻断；
+    还额外验证「身份稳定后能自愈（29% 再 carry）」「记录缓存再次过期会重新重放」
+    「恰好 5 分钟仍新鲜、+1ms 重放」。
+    **验收边界：这是离线代码与定向行为复审通过，不等同手机真机、原生视觉或发布验收。**
+    守门测试 `tools/test-dsh-go-boundaries.mjs` 已扩到 **47** 项（含 E1–E3 / F1–F9）。
+- **mimo-auth 官方接口变化兼容**（0.11.0）：按 2026-11-14 真机联调做的最小兼容（不改流程，
+  网页版同样受益）：① 官方子域（`account.xiaomi.com` 及其子域）放宽域名 / 用途校验；
+  ② quoted cookie 值与账号域 cookie（CookieJar `allowQuotedValues` + 白名单补 `account.xiaomi.com`）；
+  ③ 格式非法的 `Set-Cookie` 行按浏览器语义**忽略并继续**（固定枚举诊断，不再整次
+  `E_SET_COOKIE_REJECTED`）；④ 扫码回执字段可为严格引号包裹（原样出站、不 decode / unescape）；
+  ⑤ 回执 `userId` 可为 JSON **number**（只接受安全非负整数并转十进制字符串）；
+  ⑥ 移动网络瞬时断连的 GET **单次重试（300ms）**；⑦ 所有网络失败点带固定枚举诊断
+  `step + networkCode`，不再有「无信息 E_NETWORK」。
+- **DSH Go 原生半未验证 / 未搬项**（0.11.0）：
+  - **第三轮定向复审通过（定向范围），但不等同手机真机、原生视觉或发布验收**；前两轮整改后也
+    没有重新上手机验收（只做了离线测试、主代理实跑与定向行为复审）；策略刷新定时器、strip 闸门、
+    身份隔离、原生面板 carry、collect 身份固化等改动都还没有手机上的运行验证。
+  - **`composer.strip` 尚未在真机确认观感**：slot 是单行文本、空白会被折叠，数值只能跟在名字后；
+    用户还没在手机上看过实际效果。
+  - **原生面板不是真机渲染验证**：视图结构只由官方 `check --load` 的 App 解析器副本验证过
+    （视图约 2196 字节 / 27 组件 / 4 层，上限 32 KiB / 120 / 8）；MiMo 登录持久化另有
+    2026-11-16 真机验收，但面板 / 设置页的视觉观感仍待用户确认。
+  - **面板未搬 Web 卡片细节**：DeepSeek 峰谷条、充值入口、赠金明细、Codex `Subscription`
+    适配入口等只在 Web 详情卡片里，原生面板本轮只做额度总览。
+  - 面板打开期间与 Web GUI 可能各自请求一次（30 秒节奏，暂不共用缓存）；视图骨架在面板打开时生成，
+    运行中改配置 / 排序后需**重新打开面板**才会更新分块。
+  - MiMo「登录不可用（需要新版宿主）」与 Codex Subscription 版本 / 补丁问题仍按
+    `docs/backlog.md` §2 单独处理，与本面板无耦合。
 - **Codex `Subscription` 来源依赖第三方本地补丁**（0.10.0）：需要在第三方包
   `dsh-codex-subscription` 上打**本地只读 service 补丁**才拿得到订阅额度，该补丁**不在本包发布内容里**。
   没打补丁时该来源显示「接口暂不可用（需适配）」；`Codex Connect` 来源不受影响、照常可用。
@@ -468,6 +579,21 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
   `plans/patches/codex-subscription-<version>.json`，不要指望模糊匹配。
   **0.10.5**：已带 `3.2.6` 与 `3.2.13` 两份清单，补丁模块按**已装版本**精确选清单；
   目标目录解析支持 pnpm 布局（`.pnpm/<pkg>@<ver>/node_modules/<pkg>`），修复新装环境误判「版本不支持」。
+  **0.10.6**：清单新增 `3.2.17`（`3.2.6` / `3.2.13` / `3.2.17` 三份并存），并支持
+  `"inheritFrom": "<父清单 version>"` **继承**：子清单的 `hunks` 只写覆盖项，按 `id` **原位替换**
+  父清单（父链已展开）的 hunk，父清单其余 hunk 原样继承；缺父清单 / 成环 / **继承链超过 4 条继承边**
+  / 覆盖 `id` 不在父清单 ⇒ 该清单 **fail-closed** 判为非法并跳过（绝不「追加」hunk）。
+  深度上限按**当次递归路径**累计（**不做 memo 缓存**：终审发现旧实现的 memo 会让「父先文件名序」
+  场景先以 depth 0 缓存父链、子清单命中缓存而绕过上限，修复前 6 条继承边被全部接受；现由 W13–W15 守门）。
+  `3.2.17` 清单即继承 `3.2.13`，只覆盖 `revision-bump-on-account-changed` 一条锚点（3.2.17 在
+  `onAccountChanged` 首行新增 `remoteBridge.clearUploads()`，使 3.2.13 那条含后续清理行的锚点失配，
+  故 `3.2.17` 的锚点收在 handler 开口处、只插入 `usageBridgeRevision += 1;`）。只读路由
+  `GET /api/plan-usage/codex-subscription/patch-state` 新增两个只读字段：`manifestVersion`
+  （与**已装版本**精确匹配的清单版本；清单命中但文件与基线不符时**仍等于已装版本**，只有完全无匹配
+  清单才为 `null`）与 `covered`（本包所有合法清单的版本号，升序、纯版本号、不含路径）；
+  设置页「需适配」块据此显示已装版本与本包已收录清单，并区分两种 unsupported：`manifestVersion === version`
+  时提示「已收录但本机文件与已知基线不一致」（建议重装/升级或命令行检查），否则提示「暂无适配清单
+  （已收录 …）」；两种都不给「应用本地适配」按钮。
 - **额度策略的提示词注入是有条件的**（0.10.5）：只有「当前对话模型的路由」命中**关注渠道**时才会输出
   `[当前额度快照]`；`ROUTE_TABLE` 必须认得该 provider（0.10.5 补了 `opencode-go`）。
   排障用 `/api/plan-usage` 的只读字段 `quotaContext: { registered, state, channelId }`

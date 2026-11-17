@@ -2,11 +2,16 @@
  * [0.10.2] `dsh-codex-subscription` 只读 service 补丁的**共用实现**（CLI 与 Host 路由同构）。
  * [0.10.3] 清单改为**按版本选择**：`plans/patches/codex-subscription-<version>.json` 多版并存，
  *          用**已装 `package.json` 的 version 精确匹配**；无匹配 ⇒ `unsupported`（拒绝且零写入）。
+ * [0.10.6] 清单可**继承**：`"inheritFrom": "<父清单 version>"` 时，`hunks` 只写覆盖项
+ *          （`{ id, old, new }`），父清单的 hunks 作基底、按 id 原位替换——相邻版本只差一条锚点时
+ *          不必复制整份插入文本。继承链解析失败（缺父/成环/超深/覆盖 id 不在父清单）⇒ 该清单非法。
  *
  * 设计要点：
  *   - 清单（hunk 原文 + baseSha/programSha/version）放在 `plans/patches/` 下随包发布；
  *   - 目标包目录**由调用方按自身位置推导**，本模块不接受任何客户端传入的路径/版本参数；
  *   - 版本钉死：清单 version 必须与已装 package.json 的 version **完全相等**，否则 `unsupported`；
+ *   - 所有对外函数（list/manifestForVersion/loadManifest/hunkHits/readPatchState/applyPatch/revertPatch）
+ *     一律基于**解析后**的清单（继承链已展开），调用方看不到「未展开」的中间态；
  *   - 写入纪律：全部前置检查通过后才写；`wx` 备份 → 同目录 `wx` 临时文件 → 读回校验 → `rename` → 校验新哈希；
  *   - 任何失败都不留半改文件；已适配时幂等返回 `applied:false`。
  */
@@ -44,15 +49,17 @@ function parseManifestFile(file) {
     if (!h || typeof h !== 'object') return null
     if (!isNonEmpty(h.id) || !isNonEmpty(h.old) || typeof h.new !== 'string') return null
   }
+  // [0.10.6] 继承清单的标记：出现时必须是**非空字符串**（父清单按 version 精确匹配）。
+  // 覆盖项本身沿用上面的 hunk 形状（id/old/new 缺一即非法），所以这里不再区分两种写法。
+  if (m.inheritFrom !== undefined && !isNonEmpty(m.inheritFrom)) return null
   return m
 }
 
 /**
- * 目录里所有**合法**清单（{ path, manifest }[]，按文件名排序）。目录不存在 ⇒ []。
- * `dir` 仅供同进程内部/测试指定清单目录；不来自 HTTP、不来自客户端。
+ * 读目录里所有**形状合法**的清单文件（{ path, manifest }[]，按文件名排序）。目录不存在 ⇒ []。
+ * 这里只做单文件校验，**不解析**继承链。
  */
-export function listManifests(dir) {
-  const root = isNonEmpty(dir) ? dir : MANIFEST_DIR
+function readManifestEntries(root) {
   let names
   try { names = readdirSync(root) } catch { return [] }
   const out = []
@@ -63,6 +70,96 @@ export function listManifests(dir) {
     if (manifest) out.push({ path, manifest })
   }
   return out
+}
+
+/** [0.10.6] 继承链深度上限（4 层：子 → 父 → 祖父 → …）。成环由 `seen` 另行判定。 */
+const MAX_INHERIT_DEPTH = 4
+
+/**
+ * [0.10.6] 把父清单的 hunks 作基底，用子清单的覆盖项按 `id` **原位替换**。
+ * 覆盖项 id 不在父清单里 ⇒ 返回 null（该清单非法/跳过，绝不做「追加」）。
+ * 父清单可能本身也是继承解析后的结果（链式继承），所以这里拿到的已是展开态。
+ */
+function mergeInherited(parent, child) {
+  const hunks = parent.hunks.map((h) => ({ ...h }))
+  for (const override of child.hunks) {
+    const at = hunks.findIndex((h) => h.id === override.id)
+    if (at < 0) return null
+    // 覆盖项没写 why 时沿用父清单的说明（纯追溯信息，不参与哈希/匹配）。
+    hunks[at] = { ...hunks[at], ...override }
+  }
+  // `inheritFrom` 原样保留（可追溯）；其余字段（version/file/baseSha/programSha/schema/note/final）以子清单为准。
+  return { ...child, hunks }
+}
+
+/**
+ * [0.10.6] 解析单条清单的继承链。返回展开后的清单；任何一环不合法 ⇒ null（**fail-closed**）。
+ * 失败条件：父清单不存在/本身非法、继承成环、递归超深、覆盖 id 不在父清单。
+ *
+ * [0.10.6 整改] **不做 memo 缓存**：深度必须在**本次递归路径**上累计。若按清单缓存父链的展开结果，
+ * 「父先子后」的文件名顺序会让每个父清单先以 depth 0 解析并缓存，子清单随后直接命中缓存，
+ * 从而绕过 `MAX_INHERIT_DEPTH`（终审实测 6 条继承边会被全部接受）。目录里清单只有个位数，
+ * 每次从 depth 0 重新递归的成本可忽略，换来上限一定生效。
+ */
+function resolveManifestEntry(entry, depth, seen, byVersion) {
+  const manifest = entry.manifest
+  if (manifest.inheritFrom === undefined) return manifest
+  if (depth >= MAX_INHERIT_DEPTH) return null
+  if (seen.has(manifest.version)) return null
+  const parentEntry = byVersion.get(manifest.inheritFrom)
+  if (!parentEntry) return null
+  const nextSeen = new Set(seen)
+  nextSeen.add(manifest.version)
+  const parent = resolveManifestEntry(parentEntry, depth + 1, nextSeen, byVersion)
+  if (!parent) return null
+  return mergeInherited(parent, manifest)
+}
+
+/**
+ * 目录里所有**合法**清单（{ path, manifest }[]，按文件名排序，manifest 已展开继承链）。目录不存在 ⇒ []。
+ * `dir` 仅供同进程内部/测试指定清单目录；不来自 HTTP、不来自客户端。
+ */
+export function listManifests(dir) {
+  const root = isNonEmpty(dir) ? dir : MANIFEST_DIR
+  const entries = readManifestEntries(root)
+  // 父清单按 version 精确匹配（同名版本重复出现时取文件名序里的第一个）。
+  const byVersion = new Map()
+  for (const entry of entries) {
+    if (!byVersion.has(entry.manifest.version)) byVersion.set(entry.manifest.version, entry)
+  }
+  const out = []
+  for (const entry of entries) {
+    const manifest = resolveManifestEntry(entry, 0, new Set(), byVersion)
+    if (manifest) out.push({ path: entry.path, manifest })
+  }
+  return out
+}
+
+/** [0.10.6] 版本号比较（纯展示排序用：3.2.6 < 3.2.13 < 3.2.17）。 */
+function compareVersions(a, b) {
+  const pa = String(a).split('.')
+  const pb = String(b).split('.')
+  for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
+    const na = Number(pa[i])
+    const nb = Number(pb[i])
+    if (Number.isFinite(na) && Number.isFinite(nb)) {
+      if (na !== nb) return na - nb
+    } else {
+      const sa = pa[i] === undefined ? '' : pa[i]
+      const sb = pb[i] === undefined ? '' : pb[i]
+      if (sa !== sb) return sa < sb ? -1 : 1
+    }
+  }
+  return 0
+}
+
+/**
+ * [0.10.6] 本包清单目录里**所有合法**清单覆盖的版本号（已去重、按版本升序；纯版本号、不含路径）。
+ * 仅供提示与路由使用，是只读 metadata：不读包、不读凭据、不联网。
+ */
+export function coveredVersions(dir) {
+  const versions = new Set(listManifests(dir).map((entry) => entry.manifest.version))
+  return [...versions].sort(compareVersions)
 }
 
 /** 已装版本 → 清单（精确匹配 package.json 的 version 字段；不做范围/模糊匹配）。 */
