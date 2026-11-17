@@ -2,22 +2,39 @@
 
 供本项目后续会话、接手主代理及子代理恢复协作规则；以用户最新明确指令和[项目规范](AGENTS.md)为准。这里不保存凭据、金额、认证URL或临时许可。
 
-## 2026-11-16 晚间：关机前交接（0.11.0 未提交、client.js 未部署）
+## 2026-11-17：**0.11.0 已发布**（GitHub Release + npm）
+
+1. **仓库**：`main` 提交 **`c54e0ea`**（`0.11.0: DSH Go 原生面板/strip/MiMo 登录持久化；设置页迁到顶层
+   Usage Dock 分区（实心钱包图标）；Codex Subscription 支持 3.2.17`），已 push `origin/main`；
+   标签 **`v0.11.0`**（annotated，已 push）。
+2. **GitHub Release**：id **448193666**，标题 **`v0.11.0`**，`make_latest: true`；
+   URL `https://github.com/Slacom/dsh-usage-dock/releases/tag/v0.11.0`；
+   正文取 [docs/release-notes-v0.11.0.md](docs/release-notes-v0.11.0.md) 的「更新摘要」段 + 完整说明链接。
+3. **npm**：**`dsh-usage-dock@0.11.0`**，**48 文件 / 533.1 kB**，
+   `dist.shasum = fe78c06c403cb07502d965653bc792965331f73b`（与 dry-run 一致），
+   `dist-tags.latest = 0.11.0`；registry 初始约 **2 分钟延迟**后可用。
+4. **0.10.6 没有单独发布**：其内容（Codex Subscription 3.2.17 + `inheritFrom` 清单继承 +
+   `patch-state` 的 `covered` / `manifestVersion` 两字段）随 0.11.0 一起发布。
+5. **部署**：desktop profile 的 `client.js` 已于 2026-11-17 部署（含设置页搬迁与实心钱包图标）；
+   其余 0.11.0 文件此前已部署（备份 `.diagnostics\deploy-0.11.0-20261116\before`）。
+   仍需用户重启 DSH + 硬刷新完成运行时验证（磁盘已部署 ≠ 运行时已激活；发布 ≠ 真机验收）。
+
+## 2026-11-16 晚间：关机前交接（历史；0.11.0 已于 2026-11-17 发布）
 
 1. 完整交接见 [docs/handoff-2026-11-16-0.11.0.md](docs/handoff-2026-11-16-0.11.0.md)。
 2. 代码：0.11.0（DSH Go 原生半合入 + 桌面设置页搬到顶层 `settings.section` 分区「Usage Dock」+
    实心钱包图标（Material Symbols，Apache-2.0）），
-   **全部未 git 提交**；测试全绿（native 40、boundaries 47、strip 17、legacy 12、patch 49/0、settings 17、
-   line-endings 71 等）。
+   **已提交 `c54e0ea` 并发布（见上方 2026-11-17 条目）**；测试全绿（native 40、boundaries 47、strip 17、
+   legacy 12、patch 49/0、settings 17、line-endings 71 等）。
 3. 终审：GPT-6.1-Sol Max——DSH Go 三轮（首轮 5 类、二轮 2 项，三轮定向通过）；设置页搬迁**通过**
    （槽位未声明前 register 会同步抛错，已改 `slots.inject` 闭合）。
-4. 部署：desktop profile 已是 0.11.0 的 `index.js`/`plans`/`package.json`；**最新 `client.js` 未部署**
-   （关机前用户拒绝了复制命令），下次开工先复制 `client.js` 再重启 DSH。
+4. 部署：desktop profile 已是 0.11.0 的 `index.js`/`plans`/`package.json`；`client.js` 已于
+   **2026-11-17 部署**（含设置页搬迁与实心图标），此前关机前未部署。
 5. 未决：真机/视觉验收、`workbuddy` 渠道在本会话被平台拒绝（只能用 `opencode-go/deepseek-v4.1-flash`，
-   用户要求后续切 `workbuddy/cn:deepseek-v4.1-flash`，需先放开 provider）、0.10.6/0.11.0 发布（推送闸门）、
-   `mimoRememberLogin` 在 Web 设置页仍无开关。
+   用户要求后续切 `workbuddy/cn:deepseek-v4.1-flash`，需先放开 provider）、
+   `mimoRememberLogin` 在 Web 设置页仍无开关。（0.11.0 已于 2026-11-17 发布，见上。）
 
-## 2026-11-16：0.11.0 DSH Go 原生适配（本地构建，未发布）——原生面板 / strip / MiMo 登录持久化
+## 2026-11-16：0.11.0 DSH Go 原生适配（本地构建；**2026-11-17 已发布**，见顶部条目）——原生面板 / strip / MiMo 登录持久化
 
 > **记录来源**：DSH Go 侧（手机 App）适配包（基于 0.10.5）自带的 `docs/dsh-go-native-panel.md`
 > §3 / §4.4 / §4.5 与 `docs/backlog.md`「进展（2026-11-14～16）」。**适配包的 MEMORY.md 只到
@@ -129,9 +146,10 @@
 11. **部署（2026-11-16，主代理执行）**：0.11.0 已复制到 desktop profile 插件目录
     （`C:\Users\Slacom\.dsh\profiles\desktop\node_modules\dsh-usage-dock`），部署前备份在
     `.diagnostics\deploy-0.11.0-20261116\before`；**待用户重启 DSH 验证**（磁盘已部署 ≠ 运行时已激活，
-    需重启 + 硬刷新后确认原生面板 / strip / 设置页与桌面端回归）。**未 git 提交、未发布**。
+    需重启 + 硬刷新后确认原生面板 / strip / 设置页与桌面端回归）。**当时未提交未发布；2026-11-17 已提交
+    `c54e0ea` 并发布**（见顶部条目）。
 
-## 2026-11-16：0.10.6 本地构建（未发布）——Codex Subscription 适配 3.2.17
+## 2026-11-16：0.10.6 本地构建（**未单独发布；内容随 0.11.0 发布**）——Codex Subscription 适配 3.2.17
 
 1. **根因**：第三方 `dsh-codex-subscription` 升到 **3.2.17**，本插件 0.10.5 只收录 3.2.6 / 3.2.13 清单
    ⇒ 设置页「需适配」点「应用本地适配」返回 `E_CS_PATCH_UNSUPPORTED`。3.2.17 与 3.2.13 的差异**只有一处**：
@@ -156,7 +174,7 @@
    `C:\Users\Slacom\.dsh\profiles\desktop\node_modules\dsh-usage-dock`；真实第三方包已由 CLI 打上补丁
    （备份 `tools/patches/backup/2026-11-16T13-01-43-361Z/`）；**等待用户重启 DSH 验证**
    （磁盘已部署 ≠ 运行时已激活，需重启 + 硬刷新后确认设置页三态与订阅额度读取）。
-   **未 git 提交、未发布。**
+   **当时未 git 提交、未发布；0.10.6 没有单独发布，其代码随 0.11.0（commit `c54e0ea`）一起发布。**
 
 ## 2026-11-12 15:30：**0.10.2 已发布；0.10.1 已撤（npm 用 deprecate + 删 GitHub Release/tag）**
 

@@ -6,7 +6,8 @@
 > - 适配包（下称 **src**）：`.diagnostics/dshgo-20261116/unpacked/dsh-usage-dock`，
 >   基于 0.10.5 的完整插件包，由 DSH Go 侧完成原生界面适配。
 > - 干净 0.10.5 检出（下称 **base**）：`.diagnostics/dshgo-20261116/base`。
-> - 本仓库工作区 = 0.10.6（未发布）+ 0.11.0 合入内容；版本号已升 **0.11.0**。
+> - 本仓库工作区 = 0.10.6（未单独发布，内容随 0.11.0）+ 0.11.0 合入内容；版本号 **0.11.0**，
+>   已于 2026-11-17 发布（tag `v0.11.0` / commit `c54e0ea` / npm `dsh-usage-dock@0.11.0`）。
 > - 设计/实现/真机验证细节见 [dsh-go-native-panel.md](dsh-go-native-panel.md)。
 
 ## 1. 适配包结构总览
@@ -205,9 +206,11 @@ GET 单次重试、固定枚举诊断）与 MiMo 登录持久化的接线都在 
 
 ## 5. 风险与未搬项（摘要）
 
-- **部署状态（2026-11-16）**：0.11.0 已部署到 desktop profile（部署前备份
-  `.diagnostics/deploy-0.11.0-20261116/before`），**待用户重启 DSH 验证**——磁盘已部署 ≠ 运行时已激活；
-  **未 git 提交、未发布**，按 `AGENTS.md` §8 推送闸门等用户真机确认。
+- **发布与部署（2026-11-17）**：**已发布**——tag `v0.11.0`（commit `c54e0ea`，push `origin/main`）、
+  GitHub Release id **448193666**（`make_latest: true`）、npm **`dsh-usage-dock@0.11.0`**
+  （48 文件 / 533.1 kB，`dist.shasum` 前缀 `fe78c06c…`）；desktop profile 已部署
+  （2026-11-16 备份 `.diagnostics/deploy-0.11.0-20261116/before`，`client.js` 于 2026-11-17 补部署），
+  **仍需用户重启 DSH + 硬刷新完成运行时验证**——发布 ≠ 真机/视觉验收。
 - **第三轮定向复审通过（定向范围），但不等同手机真机、原生视觉或发布验收**：复审只覆盖离线代码与
   定向行为（E/F 两项阻断闭合、未发现新阻断；额外验证自愈 / 再次过期重放 / 5 分钟边界）；
   前两轮整改后也**没有重新上手机验收**。「Web/桌面行为不变」在**启用闸门整改后**才成立
@@ -234,6 +237,8 @@ GET 单次重试、固定枚举诊断）与 MiMo 登录持久化的接线都在 
 > 方案 A 已实现（图标按用户选择为实心款）；B/C 未采用。候选对比（16/20/24 px × 浅/深色）保留在
 > `docs/demos/settings-icon-preview.html` 供以后参考。
 
-> 版本状态：0.11.0 为**本地构建**，**已部署到 desktop profile**（2026-11-16，部署前备份
-> `.diagnostics/deploy-0.11.0-20261116/before`），**待用户重启 DSH 验证**；未 git 提交、未发布。
-> 推送 / 打标签 / GitHub Release / npm 仍受 `AGENTS.md` §8 的推送闸门约束（用户真机确认之后再发）。
+> 版本状态：**已发布**——tag **`v0.11.0`**（commit **`c54e0ea`**，push `origin/main`）、
+> GitHub Release id **448193666**（`make_latest: true`）、npm **`dsh-usage-dock@0.11.0`**
+> （48 文件 / 533.1 kB，`dist.shasum` 前缀 **`fe78c06c…`**；registry 初始约 2 分钟延迟后可用）。
+> 此前已部署到 desktop profile（2026-11-16 备份 `.diagnostics/deploy-0.11.0-20261116/before`；
+> `client.js` 于 2026-11-17 补部署），运行时验收仍需用户重启 DSH + 硬刷新确认。

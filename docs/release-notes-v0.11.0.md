@@ -90,6 +90,9 @@
   卡片细节（DeepSeek 峰谷条、充值入口、赠金明细、Codex `Subscription` 适配入口）；面板与 Web GUI
   可能各请求一次（不共用缓存）；运行中改配置/排序需重开面板才更新分块。MiMo / Codex 两条平台问题
   仍按 `docs/backlog.md` §2 单独处理。
-- 版本状态：**0.11.0 为本地构建，已部署到 desktop profile**（2026-11-16，部署前备份
-  `.diagnostics/deploy-0.11.0-20261116/before`），**待用户重启 DSH 验证**；未 git 提交、未发布。
-  按 `AGENTS.md` §8 的推送闸门，用户真机确认后再 push / 打标签 / 发 Release / npm publish。
+- 版本状态：**已发布**——tag **`v0.11.0`**（commit **`c54e0ea`**，已 push origin/main）、
+  GitHub Release id **448193666**（标题 `v0.11.0`，`make_latest: true`）、
+  npm **`dsh-usage-dock@0.11.0`**（48 文件 / 533.1 kB，`dist.shasum` 前缀 **`fe78c06c…`**，
+  `dist-tags.latest = 0.11.0`；registry 初始约 2 分钟延迟后可用）。此前本地构建已部署到 desktop
+  profile（2026-11-16，备份 `.diagnostics/deploy-0.11.0-20261116/before`；`client.js` 于 2026-11-17 补部署），
+  运行时验收仍需用户重启 DSH + 硬刷新确认。0.10.6 未单独发布，内容随本版发布。
