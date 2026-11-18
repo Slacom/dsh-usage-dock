@@ -19,8 +19,12 @@
    Codex 不再显示月额度（`monthlyUsage` 恒 null、原生 `scopes` 两项）。
 4. 测试（主代理实跑全绿）：mimo-api-key 13、dsh-go-native 46、codex-adapt-ui 24、codex-patch-2323 5、
    其余 22 组不变（codex-patch-ui 35、patch-subscription 49、source-ui 91、sources 89 …）。
-5. **发布（2026-11-18）**：commit `b727cba`、tag `v0.11.2`、GitHub Release id **450041396**（latest）、
-   npm `dsh-usage-dock@0.11.2`（49 文件、shasum `1c2859fac0cd3d323b8ccac807c4e8771fa7f615`）；
+5. **发布（2026-11-18）**：commit `b727cba`、tag `v0.11.2`、GitHub Release id **450041396**
+   —— 用户要求标为 **pre-release**（`prerelease: true`，`/releases/latest` 仍为 v0.11.1）；
+   npm `dsh-usage-dock@0.11.2`（49 文件、shasum `1c2859fac0cd3d323b8ccac807c4e8771fa7f615`），
+   但 **`latest` dist-tag 已回退到 `0.11.1`**，`0.11.2` 只挂 `prerelease`。
+   **原因：MiMo API Key 取余额尚未移动端真机验证；用户验证通过后再转正式版**（届时
+   `npm dist-tag add dsh-usage-dock@0.11.2 latest` + PATCH release `prerelease:false`、`make_latest:"true"`）。
    已部署到 desktop profile（待重启验证）。
 
 ## 2026-11-18：MiMo 已支持 API Key 直接查余额（0.11.2 计划项，等 DSH Go 适配按钮）

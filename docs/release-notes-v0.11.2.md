@@ -69,5 +69,6 @@
 
 ---
 
-版本状态：**已发布** —— tag `v0.11.2`（commit `b727cba`）、GitHub Release id **450041396**（`make_latest: true`）、npm `dsh-usage-dock@0.11.2`（49 文件，`dist.shasum` 前缀 `1c2859fa…`）。
+版本状态：**预发布（prerelease）** —— tag `v0.11.2`（commit `b727cba`）、GitHub Release id **450041396** 已标为 `prerelease: true`（`/releases/latest` 仍是 v0.11.1）、npm `dsh-usage-dock@0.11.2`（49 文件，shasum 前缀 `1c2859fa…`）但 `latest` dist-tag 仍指向 `0.11.1`，0.11.2 只挂 `prerelease`。**转为正式版的条件：MiMo 的 API Key 取余额在移动端真机验证通过。**
+
 
