@@ -660,7 +660,8 @@ check('设置视图：按渠道分组；策略输入默认隐藏（关注开关�
   const form = nodesOf(view).find((node) => node.type === 'form')
   assert.equal(form.submit, 'save')
   assert.equal(form.children.length, 6) // 6 个分组 stack
-  for (const heading of ['**通用**', '**OpenCode Go**', '**DeepSeek**', '**Codex**', '**MiMo**', '**WorkBuddy**']) {
+  // [0.11.4 用户要求] 渠道顺序：DeepSeek → MiMo → WorkBuddy → Codex → OpenCode Go。
+  for (const heading of ['**通用**', '**DeepSeek**', '**MiMo**', '**WorkBuddy**', '**Codex**', '**OpenCode Go**']) {
     assert.notEqual(groupOf(view, heading), undefined, heading)
   }
   const controls = inputControlsOf(view)
@@ -672,12 +673,12 @@ check('设置视图：按渠道分组；策略输入默认隐藏（关注开关�
   for (const control of controls) {
     assert.equal(/^data\.form\.[A-Za-z][A-Za-z0-9]*$/.test(control.bind), true, control.bind)
   }
-  // [0.11.3] MiMo 分组不再有扫码登录按钮，改为提示「余额来自 设置 → 模型 的 API Key」。
+  // [0.11.4 用户要求] MiMo 分组不再有扫码按钮，也不再单独加说明（与其它渠道一致）。
   const mimo = groupOf(view, '**MiMo**')
   assert.equal(mimo.children.some((node) => node.type === 'actions'), false)
-  assert.equal(JSON.stringify(mimo).includes('XIAOMI_API_KEY'), true)
   assert.equal(JSON.stringify(mimo).includes('mimoLogin'), false)
-  assert.equal(JSON.stringify(mimo).includes('无需扫码登录'), true)
+  assert.equal(JSON.stringify(mimo).includes('XIAOMI_API_KEY'), false)
+  assert.equal(JSON.stringify(mimo).includes('无需扫码登录'), false)
   const text = JSON.stringify(view)
   for (const forbidden of ['apiKey', 'ApiKey', 'mimoCookie', 'secret', 'customBalances', 'customKeys']) {
     assert.equal(text.includes(forbidden), false, forbidden)
@@ -732,7 +733,7 @@ check('策略开关打开：OpenCode Go 三个窗口各一行两框；其它渠�
   assert.equal(binds.includes('data.form.policyOpencodeCloseMonth'), true)
   // 其它渠道：打开关注后出现自己的策略输入。
   assert.equal(binds.includes('data.form.policyDeepseekWarn'), true)
-  assert.equal(binds.includes('data.form.policyDeepseekCurrency'), true)
+  assert.equal(binds.includes('data.form.policyDeepseekCurrency'), false) // [0.11.4] DeepSeek 固定 CNY，无币种选择
   assert.equal(binds.includes('data.form.policyMimoClose'), true)
   assert.equal(binds.includes('data.form.policyWorkbuddyWarn'), true)
   // Codex 只保留关注开关（每视图最多 32 个输入字段，细阈值仍在网页版设置页）。

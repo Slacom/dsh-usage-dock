@@ -537,13 +537,12 @@ function settingControl(def, locale) {
 
 /** 单个渠道分组的展示顺序与固定字段。 */
 const CHANNEL_SECTIONS = [
-  { id: 'opencode-go', titleZh: 'OpenCode Go', titleEn: 'OpenCode Go', enabled: FIELD.opencodeGoEnabled, middle: [] },
+  // [0.11.4 用户要求] 设置页渠道顺序：DeepSeek → MiMo → WorkBuddy → Codex → OpenCode Go。
   { id: 'deepseek', titleZh: 'DeepSeek', titleEn: 'DeepSeek', enabled: FIELD.deepseekEnabled, middle: [FIELD.deepseekWarnThreshold] },
-  { id: 'codex', titleZh: 'Codex', titleEn: 'Codex', enabled: FIELD.codexEnabled, middle: [FIELD.codexSource] },
-  // [0.11.3] MiMo 改为 API Key 取余额：原生设置页不再提供「记住登录 / 扫码登录」，
-  // Key 来自「设置 → 模型」（XIAOMI_API_KEY 等）或插件配置的 mimoApiKey。
-  { id: 'mimo', titleZh: 'MiMo', titleEn: 'MiMo', enabled: FIELD.mimoEnabled, middle: [FIELD.mimoWarnThreshold], mimoApiKeyHint: true },
+  { id: 'mimo', titleZh: 'MiMo', titleEn: 'MiMo', enabled: FIELD.mimoEnabled, middle: [FIELD.mimoWarnThreshold] },
   { id: 'workbuddy', titleZh: 'WorkBuddy', titleEn: 'WorkBuddy', enabled: FIELD.workbuddyEnabled, middle: [] },
+  { id: 'codex', titleZh: 'Codex', titleEn: 'Codex', enabled: FIELD.codexEnabled, middle: [FIELD.codexSource] },
+  { id: 'opencode-go', titleZh: 'OpenCode Go', titleEn: 'OpenCode Go', enabled: FIELD.opencodeGoEnabled, middle: [] },
 ]
 
 /** 策略控件节点（windows 每个窗口一行两框；balance 一行两框 + 币种；credits 一行两框）。 */
@@ -575,7 +574,8 @@ function policyNodesFor(channelId, locale) {
   const close = defs.find((def) => def.role === 'closing')
   nodes.push({ type: 'grid', columns: 2, children: [settingControl(warn, locale), settingControl(close, locale)] })
   const currency = defs.find((def) => def.role === 'currency')
-  if (currency !== undefined) nodes.push(settingControl(currency, locale))
+  // [0.11.4 用户要求] DeepSeek 余额固定为 CNY，不再提供币种选择。
+  if (currency !== undefined && channelId !== 'deepseek') nodes.push(settingControl(currency, locale))
   return nodes
 }
 
@@ -688,16 +688,6 @@ export function buildSettingsView(options) {
     if (section.id === 'codex') children.push(...codexAdaptNodes(opts.codexAdapt, locale))
     children.push(settingControl(focusToggleDef(section.id), locale))
     if (focus.has(section.id)) children.push(...policyNodesFor(section.id, locale))
-    if (section.mimoApiKeyHint === true) {
-      // [0.11.3] MiMo 不再提供扫码登录入口：余额来自「设置 → 模型」的 API Key。
-      children.push({
-        type: 'text',
-        tone: 'muted',
-        text: en
-          ? 'Balance comes from the MiMo API key in Settings → Models (XIAOMI_API_KEY). Scan login is no longer used.'
-          : '余额来自「设置 → 模型」里的 MiMo API Key（XIAOMI_API_KEY 等），无需扫码登录。',
-      })
-    }
     groups.push({ type: 'stack', children })
   }
 
