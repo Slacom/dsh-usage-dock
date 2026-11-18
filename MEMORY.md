@@ -2,6 +2,26 @@
 
 供本项目后续会话、接手主代理及子代理恢复协作规则；以用户最新明确指令和[项目规范](AGENTS.md)为准。这里不保存凭据、金额、认证URL或临时许可。
 
+## 2026-11-18：MiMo 已支持 API Key 直接查余额（0.11.2 计划项，等 DSH Go 适配按钮）
+
+1. **接口已确认**（文档 + 实测）：`GET https://api.xiaomimimo.com/v1/platform/balance`，
+   鉴权 `api-key: sk-…` 或 `Authorization: Bearer sk-…`（**普通 API Key**，非控制台 Cookie）；
+   响应 `{object:"balance", is_available, balance_infos:[{currency, cash_balance, gift_balance,
+   frozen_balance, credit_limit, credit_available, total_available}]}`；
+   无 key/假 key → `401 {"code":"invalid_api_key"}`（端点存在）。旧 `/v1/balance` 已 404。
+   文档：`https://mimo.mi.com/docs/zh-CN/api/asset/balance-get`（新文档站；旧站 platform.xiaomimimo.com
+   没有此接口，这是此前没查到的原因）。同组：credits-get / consumption-get / daily-bill-get。
+2. **CC Switch 已验证可用**（用户 2026-11-18 确认能显示余额）。坑：① CC Switch 用 QuickJS
+   `eval` 执行提取器，**整段必须是表达式**（裸 `{…}` 报「解析配置失败」，要 `(...)` 或 IIFE）；
+   ② 占位符源码只替换 `{{apiKey}}`/`{{baseUrl}}`，界面模板却是 `{{apikey}}` → 脚本里做兼容回落。
+   可用脚本存于 `docs/mimo-api-key-balance.md`。
+3. **计划**：0.11.2 把 MiMo 从「扫码 Cookie + 重启重放」改为 API Key 取余额（`mimoApiKey`，
+   身份加 `key=` 指纹，胶囊/详情/usage_status/策略/strip 同源，新增 `test-mimo-api-key.mjs`）。
+4. **节奏（用户 2026-11-18 明确）**：**与 DSH Go 的「Codex Subscription 适配按钮」一起做，合并为 0.11.2 发布**；
+   在那之前不动这一项、也不发版。
+5. 待定：余额取 `total_available`（含可用授信）还是 `cash_balance + gift_balance`；
+   扫码通道保留为回退还是退役。
+
 ## 2026-11-18：0.11.1 —— WorkBuddy 手机端 provider 识别 + 面板时间行 + 路由名归一化
 
 1. 来源：手机端 DSH Go 交付包 `D:\MiShare\dsh-usage-dock-dshgo-20261117c.zip`（基于 v0.10.5，附

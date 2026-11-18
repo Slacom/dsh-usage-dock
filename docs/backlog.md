@@ -103,3 +103,20 @@
 - **仍红的测试**（非产品缺陷，属离线 harness 能力缺口，勿当回归）：
   `test-mimo-display-e2e`、`test-mimo-remembered-client-e2e`、
   `test-workbuddy-contract`（需第三方包参数）、`test-recheck-round3` 的 W2a。
+
+## 4. [0.11.2] MiMo 改用 API Key 直接查余额（接口已确认，等 DSH Go 适配按钮完成后一起发）
+
+- **接口（2026-11-18 已核对文档并实测）**：`GET https://api.xiaomimimo.com/v1/platform/balance`，
+  鉴权 `api-key: sk-…` 或 `Authorization: Bearer sk-…`；响应 `{object:"balance", is_available,
+  balance_infos:[{currency, cash_balance, gift_balance, frozen_balance, credit_limit,
+  credit_available, total_available}]}`。无 key / 假 key 返回 `401 invalid_api_key`（端点存在）。
+  文档：<https://mimo.mi.com/docs/zh-CN/api/asset/balance-get>；同组还有 credits / consumption /
+  daily-bill 三个财务接口。详见 `docs/mimo-api-key-balance.md`。
+- **为什么做**：现在 MiMo 依赖控制台 Cookie（扫码 → 4 个 cookie → 重启重放），是最脆弱的一环；
+  改成 API Key 后与 DeepSeek / WorkBuddy 同构（填 Key 就出余额，401 即失效）。
+- **怎么改**：`plans/mimo.js` 加 `mimoApiKey`（secret）与 API Key 通道；观察身份加 `key=` 指纹；
+  胶囊/详情/`usage_status`/额度策略/`composer.strip` 同源；Web 设置页 MiMo 分组加 Key 输入；
+  新增 `tools/test-mimo-api-key.mjs`（200/401/403/5xx/结构异常/无 Key/身份隔离）。
+- **待用户决定**：余额口径用 `total_available` 还是 `cash_balance + gift_balance`；
+  扫码（Cookie）通道保留为回退还是直接退役。
+- **发布节奏**：与 **DSH Go 那边的 Codex Subscription 适配按钮**一起，作为 0.11.2 发布。
