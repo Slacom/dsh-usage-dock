@@ -69,4 +69,5 @@
 
 ---
 
-版本状态：`0.11.2`。
+版本状态：**已发布** —— tag `v0.11.2`（commit `b727cba`）、GitHub Release id **450041396**（`make_latest: true`）、npm `dsh-usage-dock@0.11.2`（49 文件，`dist.shasum` 前缀 `1c2859fa…`）。
+
