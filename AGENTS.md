@@ -30,7 +30,9 @@ DeepSeek Harness（DSH）的**侧栏用量/余额插件**：在 Web/桌面端左
 用量与余额，点击可展开详情面板。fork 自 `chendefine/dsh-plugins-plan-usage`，改名 `dsh-usage-dock`
 以避免与上游混淆，并做了一系列定制（见第 6 节）。
 
-**当前版本**：0.11.2（MiMo 支持 **API Key 直接查余额**（`mimoApiKey`，API Key 优先、旧 Cookie 回退）+
+**当前版本**：0.11.3（MiMo 接通「设置 → 模型」的 **XIAOMI_API_KEY**（`API_KEY_REFS` 首位）+
+provider 名含 mimo/xiaomi 时自动取该来源 Key（`providerKeyOf`）；原生设置页移除扫码/记住登录入口；
+承接 0.11.2 的 MiMo API Key 通道
 DSH Go 原生设置页 **Codex 一键适配**（`codexAdaptStatusForNative` / `applyCodexPatchOnce`，与 POST 路由同一实现）+
 Codex 不再显示月额度 + 新增 `3.2.23` 补丁清单；承接 0.11.1 的 WorkBuddy 手机端 provider 识别修复（`workbuddyProvider` 显式指定或
 按 id/displayName/后缀自动识别）+ 模型路由名归一化（`custom-workbuddy` → `workbuddy`）+
@@ -687,6 +689,11 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
 > 反例：0.6.3 是在用户测试前就推送并发了 Release，用户随后纠正了这一点。
 > 如果用户需要**在平板等其它设备上试装**（那些设备只能从 npm / GitHub 取包），
 > 先问用户希望怎么给包，不要自行推送。
+>
+> ⛔ **2026-11-18 追加（现行、优先级最高）**：**当前仍处于测试阶段。除用户明确说「发布 / 推送 / 发版」
+> 之外，一律不得 push、打 tag、发 GitHub Release、`npm publish` 或改 dist-tag。**
+> 包括「版本号已经改好、测试全绿、文档写完」也不算授权；只有**用户本人测过并明确要求**才可以发布。
+> 需要给用户试装时，只做本地部署（profile）或本地打包，不改远端状态。
 
 用户确认测试通过之后的发布次序：
 

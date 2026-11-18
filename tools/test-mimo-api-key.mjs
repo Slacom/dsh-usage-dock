@@ -11,7 +11,7 @@
  * 用法：node tools/test-mimo-api-key.mjs
  */
 import assert from 'node:assert/strict'
-import { fetchApiKeyBalance, fetchPlan, API_KEY_ENDPOINT } from '../plans/mimo.js'
+import { fetchApiKeyBalance, fetchPlan, hasMimoApiKey, API_KEY_ENDPOINT } from '../plans/mimo.js'
 
 let passCount = 0
 let failCount = 0
@@ -107,6 +107,33 @@ stubFetch(() => ({ status: 200, body: BODY_OK }))
   check('fetchPlan：no-key 时零请求', calls.length === 0, calls)
 }
 
+// 7) 凭据库固定候选名：XIAOMI_API_KEY（桌面端「设置 → 模型」实际使用的名字）
+stubFetch(() => ({ status: 200, body: BODY_OK }))
+{
+  const ctx = {
+    get: (name) => (name === 'credentials'
+      ? { resolve: async (ref) => (ref === 'XIAOMI_API_KEY' ? { value: 'sk-from-credentials' } : undefined) }
+      : undefined),
+  }
+  const wire = await fetchPlan(ctx, null, {}, {})
+  check('fetchPlan：无插件 Key 时从凭据库 XIAOMI_API_KEY 取到 Key', wire.via === 'api-key' && wire.balance === 120.5, wire)
+  const headers = calls[0].init.headers || {}
+  check('fetchPlan：请求头使用凭据库里的 Key', headers['api-key'] === 'sk-from-credentials', headers)
+}
+
+// 8) hasMimoApiKey：有/无凭据分别返回 true / false
+{
+  const withKey = {
+    get: (name) => (name === 'credentials'
+      ? { resolve: async (ref) => (ref === 'XIAOMI_API_KEY' ? { value: 'sk-x' } : undefined) }
+      : undefined),
+  }
+  const withoutKey = { get: (name) => (name === 'credentials' ? { resolve: async () => undefined } : undefined) }
+  check('hasMimoApiKey：凭据库有 XIAOMI_API_KEY → true', (await hasMimoApiKey(withKey, {})) === true)
+  check('hasMimoApiKey：什么都没有 → false', (await hasMimoApiKey(withoutKey, {})) === false)
+}
+
 globalThis.fetch = origin
 console.log('\n' + (passCount + failCount) + ' 项：' + passCount + ' 通过, ' + failCount + ' 失败')
 process.exit(failCount === 0 ? 0 : 1)
+

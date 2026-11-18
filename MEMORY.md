@@ -2,6 +2,29 @@
 
 供本项目后续会话、接手主代理及子代理恢复协作规则；以用户最新明确指令和[项目规范](AGENTS.md)为准。这里不保存凭据、金额、认证URL或临时许可。
 
+## 2026-11-18（重要）：**测试阶段，未经用户明确要求不得发布**
+
+> 用户原话：「现在还在测试阶段，没有我测试过的并且明确要求的话，不要进行发布」。
+
+- 禁止：`git push`、打 tag、GitHub Release、`npm publish`、改 dist-tag —— 除非用户**本人测过**
+  并**明确说「发布/推送/发版」**。
+- 允许（不改变远端状态）：本地改代码、本地测试、部署到本机 profile、写文档、本地 commit（可选）。
+- 「版本号改好了」「测试全绿」「文档写完」都不算授权。
+- 当前远端状态：latest（GitHub Release + npm）= **0.11.1**；0.11.2 = prerelease；
+  0.11.3 的 MiMo 修复只在本机工作区 + desktop profile，**未提交、未推送、未发布**。
+
+## 2026-11-18：0.11.3 —— MiMo 认 XIAOMI_API_KEY + 原生设置页下线扫码
+
+1. 用户实测：桌面端「设置 → 模型」里已有 `XIAOMI_API_KEY`，但插件只认 `MIMO_API_KEY` 等三个名字 →
+   MiMo 显示「未登录」。修复：`API_KEY_REFS` 首位加 `XIAOMI_API_KEY`；并新增 `providerKeyOf(ctx)`，
+   用 `listProviderTargets` 找 provider 名含 mimo/xiaomi 的条目、按它的 `apiKeyEnv` 取 Key；
+   导出 `hasMimoApiKey()` 供 `mimoWireReady` 判断（命中即直接走 provider，不吃扫码快照）。
+2. `plans/dsh-go-native.js`：MiMo 分组去掉「记住登录」与扫码按钮，改为一行说明（无需扫码登录）。
+3. 测试：`test-mimo-api-key` **17 项**；`test-dsh-go-native` 46 项（MiMo 分组断言改写）。
+4. 发布：0.11.3 = **pre-release**（0.11.1 仍是 latest）；发布事实见下表补记。
+5. 未做：`plans/mimo-auth/**`、`mimo-legacy-store.js`、`mimo-login` 面板代码仍在（界面无入口、有 Key
+   时不读取），彻底删除留作单独清理。
+
 ## 2026-11-18：0.11.2 —— MiMo API Key 余额 + DSH Go Codex 一键适配
 
 1. 来源：手机端包 `dsh-usage-dock-dshgo-0.11.2-20261118.zip` + `codex-adapt-0.11.2.patch`。

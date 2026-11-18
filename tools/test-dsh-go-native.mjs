@@ -675,9 +675,12 @@ check('设置视图：按渠道分组；策略输入默认隐藏（关注开关�
   for (const control of controls) {
     assert.equal(/^data\.form\.[A-Za-z][A-Za-z0-9]*$/.test(control.bind), true, control.bind)
   }
-  // MiMo 分组里有扫码登录按钮。
+  // [0.11.3] MiMo 分组不再有扫码登录按钮，改为提示「余额来自 设置 → 模型 的 API Key」。
   const mimo = groupOf(view, '**MiMo**')
-  assert.equal(mimo.children.some((node) => node.type === 'actions'), true)
+  assert.equal(mimo.children.some((node) => node.type === 'actions'), false)
+  assert.equal(JSON.stringify(mimo).includes('XIAOMI_API_KEY'), true)
+  assert.equal(JSON.stringify(mimo).includes('mimoLogin'), false)
+  assert.equal(JSON.stringify(mimo).includes('无需扫码登录'), true)
   const text = JSON.stringify(view)
   for (const forbidden of ['apiKey', 'ApiKey', 'mimoCookie', 'secret', 'customBalances', 'customKeys']) {
     assert.equal(text.includes(forbidden), false, forbidden)

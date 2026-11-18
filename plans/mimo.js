@@ -36,8 +36,58 @@ const source = { endpoint: 'https://platform.xiaomimimo.com/api/v1/balance' }
  * gift_balance, frozen_balance, credit_limit, credit_available, total_available }] }`
  */
 export const API_KEY_ENDPOINT = 'https://api.xiaomimimo.com/v1/platform/balance'
-/** 「设置 → 模型」凭据库里可能出现的 MiMo Key 名（插件配置优先）。 */
-const API_KEY_REFS = ['MIMO_API_KEY', 'MIMO_APIKEY', 'XIAOMI_MIMO_API_KEY']
+/** 「设置 → 模型」凭据库里可能出现的 MiMo Key 名（插件配置优先）。
+ *  [0.11.3] 补上桌面端实际使用的 `XIAOMI_API_KEY`（此前只列了 MIMO_* 三个名字，
+ *  导致「设置 → 模型」里明明配了 Key，插件却仍显示未登录）。 */
+const API_KEY_REFS = ['XIAOMI_API_KEY', 'MIMO_API_KEY', 'MIMO_APIKEY', 'XIAOMI_MIMO_API_KEY']
+
+/**
+ * [0.11.3] 从「设置 → 模型」的 provider 目录里按 id / displayName **包含 mimo 或 xiaomi** 的条目
+ * 自动找到 Key（只读：不解析地址、不联网，只按该 provider 的 `apiKeyEnv` 去凭据库取值）。
+ *
+ * 为什么需要：不同设备给 MiMo 起的 provider id 不一样（桌面 `xiaomi`、手机可能是别的名字），
+ * 光靠固定候选名（XIAOMI_API_KEY …）覆盖不全；这一层让「设置 → 模型里配过 MiMo Key」的设备
+ * **零配置**就能走 API Key 通道。
+ */
+async function providerKeyOf(ctx) {
+  let targets = []
+  try {
+    const mod = await import('./custom-balance.js')
+    if (mod !== null && mod !== undefined && typeof mod.listProviderTargets === 'function') {
+      targets = mod.listProviderTargets(ctx)
+    }
+  } catch (err) {
+    return undefined
+  }
+  if (!Array.isArray(targets)) return undefined
+  let creds = undefined
+  try { creds = ctx.get('credentials') } catch (err) { creds = undefined }
+  if (creds === undefined || creds === null || typeof creds.resolve !== 'function') return undefined
+  for (const target of targets) {
+    if (target === null || typeof target !== 'object') continue
+    const label = String(target.provider || '') + ' ' + String(target.displayName || '')
+    if (!/mimo|xiaomi/i.test(label)) continue
+    const env = typeof target.apiKeyEnv === 'string' ? target.apiKeyEnv.trim() : ''
+    if (env.length === 0) continue
+    try {
+      const hit = await creds.resolve(env)
+      if (hit !== undefined && hit !== null && typeof hit.value === 'string' && hit.value.length > 0) return hit.value
+    } catch (err) { /* 试下一个 */ }
+  }
+  return undefined
+}
+
+/**
+ * 是否有可用的 MiMo API Key：**插件配置字段 > 固定候选名 > provider 自动匹配**。
+ * `frozenCredential` 存在时（模型工具的身份冻结）只认冻结状态，不做 provider 猜名。
+ */
+export async function hasMimoApiKey(ctx, cfg, options) {
+  const frozen = options !== null && options !== undefined ? options.frozenCredential : null
+  const key = await resolveApiKey(ctx, cfg != null ? cfg : {}, fields.apiKey, API_KEY_REFS, options)
+  if (key !== undefined) return true
+  if (frozen !== null && frozen !== undefined) return false
+  return (await providerKeyOf(ctx)) !== undefined
+}
 
 /** 余额警告阈值的默认值（元）：配置留空或为 0 时使用。 */
 const DEFAULT_WARN_THRESHOLD = 10
@@ -188,7 +238,11 @@ export async function fetchApiKeyBalance(shell, apiKey, cfg, options) {
 export async function fetchPlan(ctx, shell, cfg, options) {
   // [0.11.2] API Key 通道优先（与 DeepSeek 同构）：配了 key 就不再依赖控制台 Cookie。
   // 身份/缓存隔离由调用方按 `key=` 指纹处理（fields.apiKey 已登记）。
-  const apiKey = await resolveApiKey(ctx, cfg != null ? cfg : {}, fields.apiKey, API_KEY_REFS, options)
+  let apiKey = await resolveApiKey(ctx, cfg != null ? cfg : {}, fields.apiKey, API_KEY_REFS, options)
+  if (apiKey === undefined) {
+    const frozen = options !== null && options !== undefined ? options.frozenCredential : null
+    if (frozen === null || frozen === undefined) apiKey = await providerKeyOf(ctx)
+  }
   if (apiKey !== undefined) return fetchApiKeyBalance(shell, apiKey, cfg, options)
   // [F2] 有冻结描述时必须**严格遵守**其状态（与身份同源）：
   //   explicit → 只读它自己的冻结字段（缺失/无效也不回退实时 cfg）

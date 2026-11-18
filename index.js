@@ -26,7 +26,7 @@
 import { randomUUID, createHash } from 'node:crypto'
 import z from '@deepseek-ai/schemastery'
 import { PLANS, planSchemaFields, percentSemanticsOf } from './plans/index.js'
-import { parseMimoBalance } from './plans/mimo.js'
+import { parseMimoBalance, hasMimoApiKey } from './plans/mimo.js'
 import {
   MIMO_LEGACY_RECORD_KEY,
   buildLegacyRecord,
@@ -888,9 +888,11 @@ export function apply(ctx, config) {
      */
     let keyConfigured = false
     try {
-      const cfgNow = unpackConfig(await liveConfig())
-      const key = cfgNow !== null && cfgNow !== undefined ? cfgNow.mimoApiKey : undefined
-      keyConfigured = typeof key === 'string' && key.trim().length > 0 && !isSentinelApiKey(key)
+      /**
+       * [0.11.3] 判断口径与取数一致：配置字段 > 固定候选名（含 `XIAOMI_API_KEY`）>
+       * 「设置 → 模型」里 provider 名含 mimo/xiaomi 的自动匹配。
+       */
+      keyConfigured = await hasMimoApiKey(ctx, unpackConfig(await liveConfig()))
     } catch (err) { keyConfigured = false }
     if (keyConfigured) return providerCall()
     let snapshot = null
