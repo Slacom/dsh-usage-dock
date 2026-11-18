@@ -205,13 +205,14 @@ const isoOfSeconds = (seconds) => new Date(seconds * 1000).toISOString()
     wire.rollingUsage !== null && wire.rollingUsage.percent === 0, wire.rollingUsage)
   check('G2c 附加桶 99% 不冒充主桶 0%',
     wire.rollingUsage.percent === 0, wire.rollingUsage)
-  check('G2d 周窗 80 / 月窗 40（各自 seconds 匹配）',
-    wire.weeklyUsage.percent === 80 && wire.monthlyUsage.percent === 40,
-    { weekly: wire.weeklyUsage, monthly: wire.monthlyUsage })
+  check('G2d 周窗 80 正常解析',
+    wire.weeklyUsage !== null && wire.weeklyUsage.percent === 80, wire.weeklyUsage)
+  check('G2d2 [0.11.4] 月窗（43200 分钟）不再进 wire：monthlyUsage 恒 null',
+    wire.monthlyUsage === null, wire.monthlyUsage)
   check('G2e resetsAt 按 Unix 秒转 ISO（不 ×1000 两次）',
     wire.rollingUsage.resetsAt === isoOfSeconds(1762000000), wire.rollingUsage.resetsAt)
-  check('G2f 无 resetsAt 的窗口 resetsAt=null（不造日期）',
-    wire.monthlyUsage.resetsAt === null, wire.monthlyUsage)
+  check('G2f 月窗被丢弃后不再有月额度的 resetsAt',
+    wire.monthlyUsage === null)
   check('G2g credits.unlimited=true 且不编造余额',
     wire.creditsUnlimited === true && wire.creditsBalance === null, wire)
   check('G2h individualLimit 无 remaining ⇒ null，但保留 remainingPercent',

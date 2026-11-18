@@ -186,7 +186,10 @@ passCount++
   check('P2a unsupported 显示已装第三方版本 3.2.17', text.includes('第三方插件 3.2.17 暂无适配清单'), text)
   check('P2b unsupported 显示本插件已收录清单（3.2.6 / 3.2.13）',
     text.includes('本插件已收录：3.2.6 / 3.2.13'), text)
-  check('P2c unsupported 指引升级本插件', text.includes('请升级 dsh-usage-dock'), text)
+  // [0.11.2] unsupported（无匹配清单）现在会列出「已收录」版本，不再只说「请升级本插件」。
+  check('P2c unsupported 列出已收录清单（而不是误导性的「请升级本插件」）',
+    text.includes('暂无适配清单') && text.includes('已收录') && text.includes('3.2.'),
+    text)
   check('P2d unsupported 不渲染「应用本地适配」按钮', buttonsByText(tree, '应用本地适配').length === 0, text)
   check('P2e unsupported 只读一次 patch-state（不重试/不轮询）', state.probeCalls.length === 1, state.probeCalls)
   check('P2f 文案不含固定码/异常细节', !/E_CS_|Error|stack/iu.test(text), text)
@@ -356,15 +359,15 @@ passCount++
 // ---------------------------------------------------------------------------
 {
   const cases = [
-    { label: '缺 version', data: { state: 'unsupported', covered: ['3.2.17'], manifestVersion: '3.2.17' } },
-    { label: '缺 covered', data: { state: 'unsupported', version: '3.2.17', manifestVersion: '3.2.17' } },
-    { label: '空 covered', data: { state: 'unsupported', version: '3.2.17', covered: [], manifestVersion: '3.2.17' } },
-    { label: 'version 非法', data: { state: 'unsupported', version: 3.2, covered: ['3.2.17'], manifestVersion: '3.2.17' } },
-    // [0.10.6 终审] manifestVersion 是区分两种 unsupported 的关键字段：缺失/非法一律不许猜。
-    { label: '缺 manifestVersion', data: { state: 'unsupported', version: '3.2.17', covered: ['3.2.6', '3.2.13', '3.2.17'] } },
-    { label: 'manifestVersion 非法字符', data: { state: 'unsupported', version: '3.2.17', covered: ['3.2.17'], manifestVersion: '3.2.17; rm -rf /' } },
-    { label: 'manifestVersion 非字符串', data: { state: 'unsupported', version: '3.2.17', covered: ['3.2.17'], manifestVersion: 17 } },
-    { label: 'manifestVersion 空串', data: { state: 'unsupported', version: '3.2.17', covered: ['3.2.17'], manifestVersion: '   ' } },
+    { label: '缺 version', data: { state: 'unsupported', covered: ['3.2.17'], manifestVersion: '3.2.17' }, expect: 'fallback' },
+    { label: '缺 covered', data: { state: 'unsupported', version: '3.2.17', manifestVersion: '3.2.17' }, expect: 'baseline' },
+    { label: '空 covered', data: { state: 'unsupported', version: '3.2.17', covered: [], manifestVersion: '3.2.17' }, expect: 'baseline' },
+    { label: 'version 非法', data: { state: 'unsupported', version: 3.2, covered: ['3.2.17'], manifestVersion: '3.2.17' }, expect: 'fallback' },
+    // [0.11.2] manifestVersion 为 null 才表示「本包没有该版本清单」；缺失/非法按此处理，不再吞掉版本号。
+    { label: '缺 manifestVersion', data: { state: 'unsupported', version: '3.2.17', covered: ['3.2.6', '3.2.13', '3.2.17'] }, expect: 'noManifest' },
+    { label: 'manifestVersion 非法字符', data: { state: 'unsupported', version: '3.2.17', covered: ['3.2.17'], manifestVersion: '3.2.17; rm -rf /' }, expect: 'noManifest' },
+    { label: 'manifestVersion 非字符串', data: { state: 'unsupported', version: '3.2.17', covered: ['3.2.17'], manifestVersion: 17 }, expect: 'noManifest' },
+    { label: 'manifestVersion 空串', data: { state: 'unsupported', version: '3.2.17', covered: ['3.2.17'], manifestVersion: '   ' }, expect: 'noManifest' },
   ]
   let allDegraded = true
   const seen = []
@@ -374,15 +377,22 @@ passCount++
     runtime.mount(PatchBlock, props)
     const tree = await runtime.settle(props)
     const text = textOf(tree)
-    const degraded = text.includes('当前第三方插件版本暂不支持一键适配，请升级本插件。')
-      && !text.includes('3.2.17')
-      && !text.includes('暂无适配清单')
-      && !text.includes('基线不一致')
-      && buttonsByText(tree, '应用本地适配').length === 0
-    if (!degraded) allDegraded = false
-    seen.push({ label: item.label, text: text.slice(0, 120) })
+    const noButton = buttonsByText(tree, '应用本地适配').length === 0
+    let ok = noButton
+    if (ok && item.expect === 'fallback') {
+      ok = text.includes('当前第三方插件版本暂不支持一键适配，请升级本插件。')
+        && !text.includes('暂无适配清单') && !text.includes('基线不一致')
+    }
+    if (ok && item.expect === 'baseline') {
+      ok = text.includes('基线不一致') && !text.includes('暂无适配清单')
+    }
+    if (ok && item.expect === 'noManifest') {
+      ok = text.includes('暂无适配清单') && text.includes('3.2.17') && !text.includes('基线不一致')
+    }
+    if (!ok) allDegraded = false
+    seen.push({ label: item.label, expect: item.expect, text: text.slice(0, 120) })
   }
-  check('P8 version/covered/manifestVersion 缺失或非法 ⇒ 原句（不带版本号、不误判分支）且无按钮',
+  check('P8 缺失/非法字段按真实语义分流（fallback / 基线不一致 / 无匹配清单），且都不给按钮',
     allDegraded, seen)
 }
 

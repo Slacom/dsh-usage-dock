@@ -383,6 +383,70 @@ export function apply(ctx, config) {
   //   - 面板视图是静态骨架 + 数据绑定，数据在面板打开时由下面的 collect 拉取；
   //   - 其它主机（含 dsh-go 插件检查器的隔离宿主）上 Web 半行为完全不变。
   const nativeCollectRef = { fn: null }
+
+  /**
+   * [0.11.2] Codex Subscription「本地适配」的原生入口（dsh-go 设置页）。
+   *
+   * 为什么放在 Host 半：补丁写入只能走 `plans/codex-subscription-patch.js`（目标包目录由模块
+   * 按自身位置推导，**不接受**任何客户端传入的路径/版本），App 只负责画按钮与回显固定文案。
+   *
+   * 状态口径（与网页设置页同一套语义，五态）：
+   *   - `hidden`      → 不渲染：未安装 / 未启用 / 已适配且服务可用 / 状态不可证明（fail-closed）；
+   *   - `appliable`   → 渲染「一键适配」按钮（已装版本有匹配清单，且本机文件与 baseSha 一致）；
+   *   - `pending`     → 文件已打好、但当前进程还没重启 ⇒ 只提示重启，**不给**按钮；
+   *   - `unsupported` → 版本无匹配清单（或文件与基线不符）⇒ 只给说明，**不给**按钮（Host 同样拒绝写入）。
+   *
+   * 纯只读：不读凭据、不联网、不写任何文件。
+   */
+  const codexAdaptStatusForNative = async () => {
+    let cfgNow = null
+    try { cfgNow = unpackConfig(await liveConfig()) } catch (err) { cfgNow = null }
+    const cfgSnapshot = cfgNow !== null && typeof cfgNow === 'object' ? cfgNow : {}
+    let state = null
+    try { state = getCodexSourceState(ctx, { cfg: cfgSnapshot }) } catch (err) { return { state: 'hidden' } }
+    if (state === null || state === undefined || state.unknown === true) return { state: 'hidden' }
+    const sources = Array.isArray(state.sources) ? state.sources : []
+    const subs = sources.find((item) => item !== null && item !== undefined && item.id === 'subscription')
+    // 未安装 / 未开启：界面统一显示「未启用」，不提供适配入口。
+    if (subs === undefined || subs.enabled !== true) return { state: 'hidden' }
+    // 服务已在且合同齐备（= 已适配、能读余额）：不显示按钮。
+    if (subs.compatible === true) return { state: 'hidden' }
+    try {
+      const mod = await import('./plans/codex-subscription-patch.js')
+      const patchState = mod.readPatchState(mod.resolvePackageDir())
+      const covered = typeof mod.coveredVersions === 'function' ? mod.coveredVersions() : []
+      const version = typeof patchState.version === 'string' ? patchState.version : null
+      const manifestVersion = typeof patchState.manifestVersion === 'string' ? patchState.manifestVersion : null
+      const base = { version, covered, manifestVersion }
+      if (patchState.state === 'appliable') return Object.assign({ state: 'appliable' }, base)
+      if (patchState.state === 'patched') return Object.assign({ state: 'pending' }, base)
+      if (patchState.state === 'unsupported') return Object.assign({ state: 'unsupported' }, base)
+      return { state: 'hidden' }
+    } catch (err) {
+      // 读不到清单/读数失败：不猜，也不显示一个按了必然失败的按钮。
+      return { state: 'hidden' }
+    }
+  }
+
+  /**
+   * [0.11.2] 应用本地适配（与 POST 路由、CLI **同一实现**）：`wx` 备份 → 同目录临时文件 →
+   * 读回校验 → rename → 校验新哈希，失败不留半改文件。返回 `{ ok, applied, newSha, requiresRestart, code }`。
+   */
+  const applyCodexPatchOnce = async () => {
+    const mod = await import('./plans/codex-subscription-patch.js')
+    const baseDir = process.env.TEMP || process.env.TMPDIR || '.'
+    const sep = baseDir.indexOf('\\') >= 0 ? '\\' : '/'
+    const backupRoot = baseDir + (baseDir.endsWith(sep) ? '' : sep) + 'dsh-cs-patch-backup'
+    const out = mod.applyPatch(mod.resolvePackageDir(), { backupRoot })
+    return {
+      ok: true,
+      applied: out.applied === true,
+      backup: out.backup,
+      newSha: out.newSha,
+      requiresRestart: out.requiresRestart === true,
+    }
+  }
+
   /** [dsh-go] 原生桥接是否可用：只有这种主机才需要「策略快照后台刷新」。 */
   let dshGoBridgeSeen = false
   /** [终审 D] 插件作用域是否已卸载：后台刷新 tick 在异步前后都要检查它。 */
@@ -409,6 +473,9 @@ export function apply(ctx, config) {
     },
     strip: (scope, emit, caps) => subscribeStrip(scope, emit, caps),
     mimoSessionBalance: () => legacyMimoBalance(),
+    // [0.11.2] 原生设置页的「一键适配」：状态探测（只读）+ 应用（与网页版路由同一实现）。
+    codexAdapt: () => codexAdaptStatusForNative(),
+    codexAdaptApply: () => applyCodexPatchOnce(),
     sessionChannelLabel: (sessionId, localeNow) => {
       if (typeof sessionId !== 'string' || sessionId.length === 0) return ''
       try {
@@ -802,6 +869,46 @@ export function apply(ctx, config) {
     }
   }
   const mimoDisplaySource = { peek: mimoDisplayPeek }
+
+  /**
+   * [2026-11-18 真机] **首次打开面板就显示 MiMo 余额**。
+   *
+   * 现象：面板第一次打开时 MiMo 显示「本次没有该渠道的数据」，再点一次刷新才有值。
+   * 原因：重启引擎后登录态只存在于凭据记录里，要先重放一次余额接口才拿得到快照（异步）；
+   * 面板首屏常常赶在这次重放之前求值 `peek()` → 无快照 → 判为缺失。
+   *
+   * 这里在取 MiMo 之前**等一下恢复**（`restoreLegacyMimo` 内部 single-flight + 5 分钟缓存），
+   * 最多等 3 秒；超时/失败按缺失处理，不拖住其它渠道。
+   */
+  const mimoWireReady = async (providerCall) => {
+    /**
+     * [0.11.2] 配了 **MiMo API Key** 时直接走 API Key 通道取数：
+     * 显示快照来自旧的扫码/Cookie 链路，与 Key 不是同一身份，不能拿它顶替；
+     * 401 也要如实暴露（提示重新填 Key），而不是被旧快照掩盖。
+     */
+    let keyConfigured = false
+    try {
+      const cfgNow = unpackConfig(await liveConfig())
+      const key = cfgNow !== null && cfgNow !== undefined ? cfgNow.mimoApiKey : undefined
+      keyConfigured = typeof key === 'string' && key.trim().length > 0 && !isSentinelApiKey(key)
+    } catch (err) { keyConfigured = false }
+    if (keyConfigured) return providerCall()
+    let snapshot = null
+    try { snapshot = mimoDisplayPeek() } catch (err) { snapshot = null }
+    if (snapshot === null) {
+      let timer = null
+      try {
+        await Promise.race([
+          Promise.resolve().then(() => restoreLegacyMimo()),
+          new Promise((resolve) => { timer = setTimeout(resolve, 3000) }),
+        ])
+      } catch (err) { /* 忽略：按缺失处理 */ } finally {
+        if (timer !== null) clearTimeout(timer)
+      }
+    }
+    return mimoWireWithDisplay(mimoDisplaySource, providerCall)
+  }
+
   /** [终审 E] MiMo 显示快照的来源身份（非密；采样前后各取一次，用于发现会话/代次漂移）。 */
   const mimoDisplayIdentity = () => {
     try {
@@ -864,7 +971,7 @@ export function apply(ctx, config) {
     try { shell = ctx.get('shell') } catch (err) { shell = undefined }
     const builtIn = await Promise.all(enabledPlans.map((plan) => Promise.resolve()
       .then(() => (plan.id === 'mimo'
-        ? mimoWireWithDisplay(mimoDisplaySource, () => plan.fetch(ctx, shell, cfgSnapshot))
+        ? mimoWireReady(() => plan.fetch(ctx, shell, cfgSnapshot))
         : plan.fetch(ctx, shell, cfgSnapshot)))
       .catch(() => withConfiguredCodexSource(execError(plan), cfgSnapshot))))
     let custom = []
@@ -1630,7 +1737,7 @@ export function apply(ctx, config) {
           ownTicket(plan.id, ticket, opSeq)
           pendingTickets.set(plan.id, ticket)
           const wire = await (plan.id === 'mimo'
-            ? mimoWireWithDisplay(mimoDisplaySource, () => plan.fetch(ctx, shell, cfgNow))
+            ? mimoWireReady(() => plan.fetch(ctx, shell, cfgNow))
             : plan.fetch(ctx, shell, cfgNow))
           // provider 返回后再复检：卸载 / 桥退出 / 配置停用的迟到结果不得再发布。
           if (applyDisposed || policyRefreshStopped || dshGoBridgeSeen !== true) return
@@ -1918,7 +2025,7 @@ export function apply(ctx, config) {
             stripTicket = ticket
             try {
               wire = await (id === 'mimo'
-                ? mimoWireWithDisplay(mimoDisplaySource, () => plan.fetch(ctx, shell, cfgNow))
+                ? mimoWireReady(() => plan.fetch(ctx, shell, cfgNow))
                 : plan.fetch(ctx, shell, cfgNow))
             } catch (err) {
               wire = withConfiguredCodexSource(execError(plan), cfgNow)
@@ -2339,7 +2446,7 @@ export function apply(ctx, config) {
            * 不适用时回落 provider。复用同一个 helper，不复制分支、不加新请求。
            */
           .then(() => (plan.id === 'mimo'
-            ? mimoWireWithDisplay(mimoDisplaySource, () => plan.fetch(ctx, shell, cfgNow))
+            ? mimoWireReady(() => plan.fetch(ctx, shell, cfgNow))
             : plan.fetch(ctx, shell, cfgNow)))
           .then((wire) => ({ wire, ticket }))
           .catch(() => ({ wire: withConfiguredCodexSource(execError(plan), cfgNow), ticket }))
@@ -2553,14 +2660,11 @@ export function apply(ctx, config) {
         return
       }
       try {
-        const mod = await import('./plans/codex-subscription-patch.js')
-        const baseDir = process.env.TEMP || process.env.TMPDIR || '.'
-        const sep = baseDir.indexOf('\\') >= 0 ? '\\' : '/'
-        const backupRoot = baseDir + (baseDir.endsWith(sep) ? '' : sep) + 'dsh-cs-patch-backup'
-        const out = mod.applyPatch(mod.resolvePackageDir(), { backupRoot: backupRoot })
+        // [0.11.2] 与原生设置页的「一键适配」共用同一实现，避免两条路径写出不同结果。
+        const out = await applyCodexPatchOnce()
         json(res, 200, {
           ok: true,
-          data: { applied: out.applied === true, backup: out.backup, newSha: out.newSha, requiresRestart: out.requiresRestart === true },
+          data: { applied: out.applied, backup: out.backup, newSha: out.newSha, requiresRestart: out.requiresRestart },
         })
       } catch (err) {
         const code = err && typeof err.code === 'string' && err.code.startsWith('E_CS_PATCH_') ? err.code : 'E_CS_PATCH_IO'
@@ -3221,7 +3325,7 @@ export function apply(ctx, config) {
                  * （未选中 / 读不到）才走原来的 `plans/mimo.js` 路径，行为完全不变。
                  */
                 .then(() => (plan.id === 'mimo'
-                  ? mimoWireWithDisplay(mimoDisplaySource, fetchOnce)
+                  ? mimoWireReady(fetchOnce)
                   : fetchOnce()))
                 .catch(() => withConfiguredCodexSource(execError(plan), cfgNow)),
               deadline,

@@ -104,7 +104,10 @@
   `test-mimo-display-e2e`、`test-mimo-remembered-client-e2e`、
   `test-workbuddy-contract`（需第三方包参数）、`test-recheck-round3` 的 W2a。
 
-## 4. [0.11.2] MiMo 改用 API Key 直接查余额（接口已确认，等 DSH Go 适配按钮完成后一起发）
+## 4. ✅ [0.11.2 已完成] MiMo 改用 API Key 直接查余额（API Key 优先，旧 Cookie 保留为回退）
+
+> 状态：**0.11.2 已实现**（`plans/mimo.js` + `tools/test-mimo-api-key.mjs`）。
+> 仍未做：套餐余量 / 日用量进详情卡片；旧扫码通道退役仍待用户决定。
 
 - **接口（2026-11-18 已核对文档并实测）**：`GET https://api.xiaomimimo.com/v1/platform/balance`，
   鉴权 `api-key: sk-…` 或 `Authorization: Bearer sk-…`；响应 `{object:"balance", is_available,

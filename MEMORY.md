@@ -2,6 +2,25 @@
 
 供本项目后续会话、接手主代理及子代理恢复协作规则；以用户最新明确指令和[项目规范](AGENTS.md)为准。这里不保存凭据、金额、认证URL或临时许可。
 
+## 2026-11-18：0.11.2 —— MiMo API Key 余额 + DSH Go Codex 一键适配
+
+1. 来源：手机端包 `dsh-usage-dock-dshgo-0.11.2-20261118.zip` + `codex-adapt-0.11.2.patch`。
+   合并口径：**以「上一手机包(20261117c) → 本包」的 delta 为准**（他们的 patch 以 v0.10.5 为基线，
+   与我们的 0.11.x 大量重叠，不能直接 apply）。可整文件替换的：`plans/codex.js`、
+   `plans/patches/codex-subscription-3.2.23.json`、`tools/test-codex-sources.mjs`、
+   `tools/test-mimo-usage-lane.mjs`、新增 `tools/test-codex-adapt-ui.mjs` / `test-codex-patch-2323.mjs`；
+   按 delta 移植的：`index.js`（codexAdaptStatusForNative / applyCodexPatchOnce / mimoWireReady）、
+   `plans/dsh-go-native.js`（slotsFor / codexAdaptNodes / settingsActions.codexAdapt / MiMo pending）、
+   `client.js`（codexPatchUnsupportedText 分支顺序）。
+2. **MiMo 改 API Key**（本次用户主诉求）：`mimoApiKey`（secret）+ `fields.apiKey` ⇒ 身份带 `key=`；
+   `fetchApiKeyBalance()` 调 `GET https://api.xiaomimimo.com/v1/platform/balance`（`api-key` 头），
+   `balance = cash + gift`（不含授信），旧 Cookie 通道保留回退；`mimoWireReady` 配了 Key 直接走 provider。
+3. Codex：3.2.23 清单（不继承、4 条 hunk）、`covered` 含 3.2.23、原生设置页一键适配、
+   Codex 不再显示月额度（`monthlyUsage` 恒 null、原生 `scopes` 两项）。
+4. 测试（主代理实跑全绿）：mimo-api-key 13、dsh-go-native 46、codex-adapt-ui 24、codex-patch-2323 5、
+   其余 22 组不变（codex-patch-ui 35、patch-subscription 49、source-ui 91、sources 89 …）。
+5. 发布：本轮按用户指示构建 0.11.2（发布事实见下方补记）。
+
 ## 2026-11-18：MiMo 已支持 API Key 直接查余额（0.11.2 计划项，等 DSH Go 适配按钮）
 
 1. **接口已确认**（文档 + 实测）：`GET https://api.xiaomimimo.com/v1/platform/balance`，

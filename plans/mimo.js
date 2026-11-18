@@ -20,11 +20,24 @@
  * （number | null，详情面板明细）、via: 'console'。
  */
 import z from '@deepseek-ai/schemastery'
-import { curlJson, toNum, planBase, execError } from './util.js'
+import { curlJson, toNum, planBase, execError, resolveApiKey } from './util.js'
 
-const fields = { enabled: 'mimoEnabled', cookie: 'mimoCookie' }
+const fields = { enabled: 'mimoEnabled', cookie: 'mimoCookie', apiKey: 'mimoApiKey' }
 
 const source = { endpoint: 'https://platform.xiaomimimo.com/api/v1/balance' }
+
+/**
+ * [0.11.2] **API Key 余额接口**（与 DeepSeek 同构，逐步取代控制台 Cookie）：
+ *   `GET https://api.xiaomimimo.com/v1/platform/balance`
+ *   鉴权：`api-key: sk-…`（或 `Authorization: Bearer sk-…`），必须用**普通 API Key**。
+ *   文档：<https://mimo.mi.com/docs/zh-CN/api/asset/balance-get>
+ *
+ * 响应：`{ object:'balance', is_available, balance_infos:[{ currency, cash_balance,
+ * gift_balance, frozen_balance, credit_limit, credit_available, total_available }] }`
+ */
+export const API_KEY_ENDPOINT = 'https://api.xiaomimimo.com/v1/platform/balance'
+/** 「设置 → 模型」凭据库里可能出现的 MiMo Key 名（插件配置优先）。 */
+const API_KEY_REFS = ['MIMO_API_KEY', 'MIMO_APIKEY', 'XIAOMI_MIMO_API_KEY']
 
 /** 余额警告阈值的默认值（元）：配置留空或为 0 时使用。 */
 const DEFAULT_WARN_THRESHOLD = 10
@@ -41,6 +54,11 @@ const plan = {
   fields,
   schema: {
     mimoEnabled: z.boolean().default(true),
+    /**
+     * [0.11.2] 普通 API Key（`sk-…`）：填了就**优先**走 API Key 余额接口，
+     * 不再依赖控制台 Cookie。留空则回退到旧的 Cookie 通道（兼容存量配置）。
+     */
+    mimoApiKey: z.string().role('secret'),
     mimoCookie: z.string().role('secret'),
     // 余额低于该值时状态灯转为警告色；默认 10 元。0 表示不警告。
     mimoWarnThreshold: z.number().min(0).default(10),
@@ -99,8 +117,79 @@ export function currencySymbol(currency) {
   return cur.length > 0 ? cur + ' ' : '¥'
 }
 
-/** 拉取小米 MiMo 余额：控制台 Cookie 鉴权，单端点。 */
+/**
+ * [0.11.2] API Key 通道：一次 GET，解析 `balance_infos[0]`。
+ *
+ * 字段口径：
+ *   - `balance` = **现金 + 赠金**（不含授信额度，避免把「可借」当成「自己的钱」）；
+ *   - `cashBalance` / `giftBalance` / `creditAvailable` 供详情面板分行；
+ *   - `isAvailable` 直接取上游 `is_available`（`total_available - frozen_balance > 0`）。
+ * 401/403（含 `invalid_api_key`）→ 鉴权失效（永久，立即提示）；5xx/网络 → 原样透传（暂时失败）。
+ */
+export async function fetchApiKeyBalance(shell, apiKey, cfg, options) {
+  try {
+    const { data, err } = await curlJson(shell, API_KEY_ENDPOINT, {
+      headers: { 'api-key': apiKey, 'user-agent': 'dsh-usage-dock/0.11' },
+      signal: options === undefined ? undefined : options.signal,
+      timeoutMs: options === undefined || typeof options.remaining !== 'function' ? undefined : options.remaining(),
+    })
+    if (err !== undefined) {
+      const raw = typeof err.message === 'string' ? err.message : ''
+      /**
+       * 上游对无效 Key 回 `401 {"code":"invalid_api_key"}`，`curlJson` 把它归成语义错误
+       * （`error:'api'`），因此这里必须把 `error === 'api'` 也当成「鉴权被拒」，
+       * 否则会退化成不带指引的通用失败文案。
+       */
+      const rejected = err.error === 'api'
+        || /HTTP (401|403)/.test(raw)
+        || /invalid[ _-]?api[ _-]?key|unauthor|forbidden/i.test(raw)
+      return Object.assign(planBase(plan), err, {
+        message: rejected
+          ? 'MiMo 拒绝了这个 API Key（可能无效或已失效），请到「设置 → Usage Dock」重新填写（' + raw + '）'
+          : (raw || '小米 MiMo 余额获取失败（API Key 方式）'),
+      })
+    }
+    const infoList = Array.isArray(data !== null && data !== undefined ? data.balance_infos : null) ? data.balance_infos : []
+    const info = infoList.find((item) => item !== null && typeof item === 'object') || null
+    if (info === null || (data !== null && data !== undefined && data.object !== undefined && data.object !== 'balance')) {
+      return Object.assign(planBase(plan), { error: 'parse', message: '余额响应结构无法解析（接口可能已变更）' })
+    }
+    const cash = toNum(info.cash_balance)
+    const gift = toNum(info.gift_balance)
+    const total = toNum(info.total_available)
+    const hasCash = cash !== null && cash >= 0
+    const hasGift = gift !== null && gift >= 0
+    const sum = hasCash || hasGift ? (hasCash ? cash : 0) + (hasGift ? gift : 0) : null
+    const balance = sum !== null ? sum : (total !== null && total >= 0 ? total : null)
+    if (balance === null) {
+      return Object.assign(planBase(plan), { error: 'parse', message: '余额响应缺少可用金额' })
+    }
+    const currency = typeof info.currency === 'string' && info.currency.trim().length > 0
+      ? info.currency.trim().toUpperCase()
+      : 'CNY'
+    const credit = toNum(info.credit_available)
+    return Object.assign(planBase(plan), {
+      balance,
+      cashBalance: hasCash ? cash : null,
+      giftBalance: hasGift ? gift : null,
+      creditAvailable: credit !== null && credit > 0 ? credit : null,
+      currency,
+      isAvailable: data.is_available === true,
+      via: 'api-key',
+      warnThreshold: warnThresholdOf(cfg),
+      fetchedAt: Date.now(),
+    })
+  } catch (err) {
+    return Object.assign(execError(plan), { message: '上游请求异常（API Key 方式）' })
+  }
+}
+
+/** 拉取小米 MiMo 余额：API Key 优先；没有 Key 时回退控制台 Cookie（存量配置）。 */
 export async function fetchPlan(ctx, shell, cfg, options) {
+  // [0.11.2] API Key 通道优先（与 DeepSeek 同构）：配了 key 就不再依赖控制台 Cookie。
+  // 身份/缓存隔离由调用方按 `key=` 指纹处理（fields.apiKey 已登记）。
+  const apiKey = await resolveApiKey(ctx, cfg != null ? cfg : {}, fields.apiKey, API_KEY_REFS, options)
+  if (apiKey !== undefined) return fetchApiKeyBalance(shell, apiKey, cfg, options)
   // [F2] 有冻结描述时必须**严格遵守**其状态（与身份同源）：
   //   explicit → 只读它自己的冻结字段（缺失/无效也不回退实时 cfg）
   //   none     → 直接缺凭据（零请求）

@@ -132,7 +132,9 @@ var PLANS = [
   // [local patch 0.8.0] 小米 MiMo：控制台 Cookie 鉴权（非 API Key），只显示 API 余额。
   // cookieHint 触发设置页的 Cookie 输入框（role secret，与 kimi-auth 同款先例）；
   // balanceThreshold 标记「余额类渠道」，阈值取 host 返回的 warnThreshold（mimoWarnThreshold）。
-  { id: 'mimo', name: 'Xiaomi MiMo', credentialHint: 'MIMO', balanceThreshold: 10, thresholdField: 'mimoWarnThreshold', fields: { enabled: 'mimoEnabled', cookie: 'mimoCookie' } },
+  // [0.11.2] MiMo 新增 API Key 通道（与 DeepSeek 同构，优先于控制台 Cookie）：
+  // 填了 Key 就调 `GET https://api.xiaomimimo.com/v1/platform/balance`；留空回退旧 Cookie 通道。
+  { id: 'mimo', name: 'Xiaomi MiMo', credentialHint: 'MIMO', balanceThreshold: 10, thresholdField: 'mimoWarnThreshold', fields: { enabled: 'mimoEnabled', apiKey: 'mimoApiKey', cookie: 'mimoCookie' } },
   // [local patch 0.8.1] WorkBuddy 剩余积分：借用 dsh-workbuddy-connect 的登录态
   //（与 Codex 渠道同款模式），本插件零凭据；未安装/未登录由 host 返回语义提示。
   // [0.8.3] 拆成两个独立渠道：国内版与国际版积分不通用，各自开关/排序
@@ -349,14 +351,21 @@ function codexPatchUnsupportedText(info) {
   var version = info !== null && info !== undefined ? info.version : null
   var manifestVersion = info !== null && info !== undefined ? info.manifestVersion : null
   var covered = info !== null && info !== undefined && Array.isArray(info.covered) ? info.covered : []
-  if (version === null || manifestVersion === null || covered.length === 0) {
-    return '当前第三方插件版本暂不支持一键适配，请升级本插件。'
-  }
-  if (manifestVersion === version) {
+  /**
+   * [0.11.2] 修正 0.10.6 的分支顺序：Host 的 `manifestVersion === null` **正是**「本包没有
+   * 已装版本的清单」这一种情况（有清单但基线不符时它是等于已装版本的）。旧写法把 null 一起
+   * 并进兜底，于是最有用的那条信息（装的是哪个版本、本包收录了哪些）被吞掉，只留一句
+   * 「请升级本插件」——看起来像插件太旧，实际是版本没被收录。
+   */
+  if (version !== null && manifestVersion !== null && manifestVersion === version) {
     return '第三方插件 ' + version + ' 已收录，但本机第三方文件与已知基线不一致，无法一键适配；'
       + '建议重装或升级该第三方插件，或用命令行工具检查。'
   }
-  return '第三方插件 ' + version + ' 暂无适配清单（本插件已收录：' + covered.join(' / ') + '），请升级 dsh-usage-dock。'
+  if (version !== null && covered.length > 0) {
+    return '第三方插件 ' + version + ' 暂无适配清单（本插件已收录：' + covered.join(' / ') + '）。'
+  }
+  if (version !== null) return '第三方插件 ' + version + ' 暂无适配清单。'
+  return '当前第三方插件版本暂不支持一键适配，请升级本插件。'
 }
 
 /**

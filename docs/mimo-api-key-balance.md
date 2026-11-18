@@ -1,7 +1,7 @@
 # 小米 MiMo：API Key 直接查余额（2026-11-18 确认）
 
-> 状态：**接口已确认可用**，CC Switch 侧已验证能显示余额。插件侧改造排入 **0.11.2**，
-> 与 DSH Go 的「Codex Subscription 适配按钮」一起发布。
+> 状态：**已在 0.11.2 实现**（`plans/mimo.js` 的 API Key 通道优先，旧 Cookie 通道保留为回退）。
+> 接口在 2026-11-18 确认可用，CC Switch 侧也验证过同一字段口径。
 
 ## 官方接口（已核对文档 + 实测）
 
@@ -99,13 +99,18 @@ CC Switch 把「提取器代码」交给 **QuickJS `eval`** 执行（`src-tauri/
 5. 测试：新增 `tools/test-mimo-api-key.mjs`（200 / 401 / 403 / 5xx / 结构异常 / 无 Key / 身份隔离），
    扩展 `test-mimo-parse` 与 `test-dsh-go-*` 的相关断言。
 
+## 实现落点（0.11.2）
+
+- `plans/mimo.js`：`fields.apiKey = 'mimoApiKey'`；schema 增加 `mimoApiKey`（`role('secret')`）；
+  `fetchApiKeyBalance()` 调 `GET https://api.xiaomimimo.com/v1/platform/balance`，请求头 `api-key`；
+  `fetchPlan()` 有 Key 走 API Key、否则回退旧 Cookie 通道。
+- 口径：`balance = cash_balance + gift_balance`（**不含**授信额度）；`creditAvailable` 单独给出。
+- 错误：401/403（`invalid_api_key`，`curlJson` 归为 `error:'api'`）→ 提示重新填写 Key。
+- `index.js#mimoWireReady()`：配了 Key 直接走 provider，不吃扫码/Cookie 的显示快照。
+- 测试：`tools/test-mimo-api-key.mjs`（13 项）。
+
 ## 待用户决定
 
-- 余额显示口径：`total_available`（含可用授信）还是 `cash_balance + gift_balance`？
-- 扫码登录（Cookie）通道：保留为回退，还是 0.11.2 直接退役？
-- 套餐余量（`credits-get`）与日用量是否进详情卡片（本次可不做）。
-
-## 节奏
-
-0.11.2 = **本项（MiMo API Key 余额）** + **DSH Go 的 Codex Subscription 适配按钮**，
-两者齐了再一起构建、测试、发布。
+- 余额显示口径是否改用 `total_available`（含可用授信）。
+- 旧的扫码登录（Cookie）通道是否退役。
+- 套餐余量（`credits-get`）与日用量（`consumption-get`）是否进详情卡片。

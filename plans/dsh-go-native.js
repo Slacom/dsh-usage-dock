@@ -44,7 +44,8 @@ export const REFRESH_INTERVAL_MS = 30_000
  */
 const CHANNEL_PRESENTATION = {
   'opencode-go': { key: 'opencodeGo', kind: 'quota', name: 'OpenCode Go' },
-  codex: { key: 'codex', kind: 'quota', name: 'Codex' },
+  // [0.11.4 用户要求] Codex 只有 5 小时 + 周两个窗口，不再渲染「月」行（上游 wire 也不再给）。
+  codex: { key: 'codex', kind: 'quota', name: 'Codex', scopes: ['rolling-5h', 'weekly'] },
   deepseek: { key: 'deepseek', kind: 'balance', name: 'DeepSeek' },
   mimo: { key: 'mimo', kind: 'balance', name: 'MiMo' },
   workbuddy: { key: 'workbuddy', kind: 'credits', name: 'WorkBuddy' },
@@ -399,6 +400,15 @@ function orderedIds(ids, planOrder) {
   return decorated.map((item) => item.id)
 }
 
+/** 渠道要渲染哪些窗口：默认三个；`presentation.scopes` 显式声明时按它过滤。 */
+function slotsFor(presentation) {
+  const scopes = presentation !== null && presentation !== undefined && Array.isArray(presentation.scopes)
+    ? presentation.scopes
+    : null
+  if (scopes === null) return WINDOW_SLOTS
+  return WINDOW_SLOTS.filter((slot) => scopes.indexOf(slot.scope) !== -1)
+}
+
 function channelBlock(id, locale) {
   const presentation = CHANNEL_PRESENTATION[id]
   if (presentation === undefined) return null
@@ -409,7 +419,7 @@ function channelBlock(id, locale) {
     children: [{ type: 'text', text: '**' + presentation.name + '**' }],
   }
   if (presentation.kind === 'quota') {
-    for (const slot of WINDOW_SLOTS) {
+    for (const slot of slotsFor(presentation)) {
       block.children.push({
         type: 'progress',
         label: en ? slot.en : slot.zh,
@@ -568,10 +578,70 @@ function policyNodesFor(channelId, locale) {
 }
 
 /**
+ * [0.11.2] Codex 分组的「本地适配」节点（纯展示；按钮动作走 settingsActions.codexAdapt）。
+ *
+ * 由 Host 的 `codexAdaptStatusForNative()` 给出五态，这里只决定画什么：
+ *   - `appliable`   → 说明 + 「一键适配」按钮 + 「需重启引擎」提示；
+ *   - `pending`     → 只说「已适配，重启引擎后生效」，**不给**按钮（避免重复点按）；
+ *   - `unsupported` → 说明已收录哪些版本，**不给**按钮（Host 同样会拒绝写入）；
+ *   - 其它（hidden / 未知）→ 一个节点都不渲染。
+ *
+ * 已适配且能读到余额时 Host 返回 hidden —— 也就是「不显示一键适配按钮」。
+ */
+function codexAdaptNodes(adapt, locale) {
+  const en = isEn(locale)
+  if (adapt === null || adapt === undefined || typeof adapt !== 'object') return []
+  const state = typeof adapt.state === 'string' ? adapt.state : ''
+  const version = typeof adapt.version === 'string' && adapt.version.length > 0 ? adapt.version : null
+  const manifestVersion = typeof adapt.manifestVersion === 'string' && adapt.manifestVersion.length > 0 ? adapt.manifestVersion : null
+  const covered = Array.isArray(adapt.covered) ? adapt.covered.filter((item) => typeof item === 'string' && item.length > 0) : []
+  if (state === 'appliable') {
+    const text = version !== null
+      ? (en
+        ? 'dsh-codex-subscription ' + version + ' installed — one local adapt is needed to read its quota.'
+        : '已装 dsh-codex-subscription ' + version + '，需要一次本地适配才能读订阅额度。')
+      : (en
+        ? 'Codex subscription quota needs a one-time local adapt on this device.'
+        : 'Codex 订阅额度需要在本机做一次本地适配。')
+    return [
+      { type: 'text', text, tone: 'muted' },
+      { type: 'actions', items: [{ label: en ? 'Adapt' : '一键适配', action: 'codexAdapt', icon: 'wrench' }] },
+      { type: 'text', text: en ? 'Takes effect after restarting the engine.' : '适配后需重启引擎生效。', tone: 'muted' },
+    ]
+  }
+  if (state === 'pending') {
+    return [{
+      type: 'text',
+      tone: 'muted',
+      text: en ? 'Already adapted — restart the engine to take effect.' : '已适配，重启引擎后生效。',
+    }]
+  }
+  if (state === 'unsupported') {
+    let text
+    if (version !== null && manifestVersion !== null && manifestVersion === version) {
+      text = en
+        ? version + ' is covered, but the installed file differs from the known baseline — one-click adapt is unavailable.'
+        : version + ' 有清单，但本机文件与基线不一致，无法一键适配。'
+    } else if (version !== null && covered.length > 0) {
+      text = en
+        ? 'No adapt manifest for ' + version + ' (covered: ' + covered.join(' / ') + ').'
+        : version + ' 暂无适配清单（已收录：' + covered.join(' / ') + '）。'
+    } else {
+      text = en ? 'No adapt manifest for the installed version.' : '当前第三方插件版本暂无适配清单。'
+    }
+    return [{ type: 'text', text, tone: 'muted' }]
+  }
+  return []
+}
+
+/**
  * 原生设置面板视图：v2 表单，按渠道分组；策略输入只在「关注额度策略」打开时出现。
  * 老 App 没有 v2 组件时降级成只读说明，不影响额度面板使用。
  *
- * @param {{ caps?: object, locale?: string, cfg?: object }} [options]
+ * @param {{ caps?: object, locale?: string, cfg?: object,
+ *   codexAdapt?: { state: string, version?: string|null, manifestVersion?: string|null, covered?: string[] } }} [options]
+ *   `codexAdapt` 为 Host 的本地适配探测结果（见 index.js 的 `codexAdaptStatusForNative`）；
+ *   缺省/非对象 ⇒ 不渲染适配入口（fail-closed）。
  */
 export function buildSettingsView(options) {
   const opts = options !== null && options !== undefined ? options : {}
@@ -612,6 +682,8 @@ export function buildSettingsView(options) {
   for (const section of CHANNEL_SECTIONS) {
     const children = [{ type: 'text', text: '**' + (en ? section.titleEn : section.titleZh) + '**' }, settingControl(section.enabled, locale)]
     for (const def of section.middle) children.push(settingControl(def, locale))
+    // [0.11.2] Codex 分组：紧跟在「额度来源」下面显示本地适配入口（需适配时才出现）。
+    if (section.id === 'codex') children.push(...codexAdaptNodes(opts.codexAdapt, locale))
     children.push(settingControl(focusToggleDef(section.id), locale))
     if (focus.has(section.id)) children.push(...policyNodesFor(section.id, locale))
     if (section.mimoLogin === true) {
@@ -1161,6 +1233,17 @@ export function buildNativeData(options) {
   // [0.11.0 整改] carry 的身份映射：从原始 wire 取（投影白名单不含 identity）。
   const identityById = identityMapOf(wires)
 
+  /**
+   * 原始 wire 里带着 MiMo 的「缺失原因」枚举（`mimoState`），投影层不保留它。
+   * 首屏/恢复尚未完成时用它区分「正在读取」与「确实没登录」，避免把读取中写成缺数据。
+   */
+  const mimoWireState = (() => {
+    for (const wire of wires) {
+      if (wire !== null && wire !== undefined && wire.id === 'mimo' && typeof wire.mimoState === 'string') return wire.mimoState
+    }
+    return null
+  })()
+
   for (const channel of projected.channels) {
     const identity = typeof channel.identity === 'string' && channel.identity.length > 0
       ? channel.identity
@@ -1168,6 +1251,11 @@ export function buildNativeData(options) {
     const presentation = CHANNEL_PRESENTATION[channel.id]
     if (presentation !== undefined) {
       const built = builtinChannelData(channel, presentation, locale, previous, now, identity)
+      if (channel.id === 'mimo' && mimoWireState === 'pending' && built.data.amount === null) {
+        // 登录态还在恢复（首次打开面板常见）：显示读取中，而不是「没有数据」。
+        built.data.value = isEn(locale) ? 'Reading…' : '正在读取…'
+        built.data.tone = 'info'
+      }
       data.channels[presentation.key] = built.data
       snapshot.channels.push(built.line)
       const key = carryKeyOf(channel.id, identity)
@@ -1299,6 +1387,9 @@ function createSurface(deps) {
   const mimoAuth = deps.mimoAuth !== null && deps.mimoAuth !== undefined && typeof deps.mimoAuth === 'object'
     ? deps.mimoAuth
     : null
+  /** [0.11.2] Codex Subscription 本地适配：状态探测（异步、只读）与一次性应用。 */
+  const codexAdapt = typeof deps.codexAdapt === 'function' ? deps.codexAdapt : null
+  const codexAdaptApply = typeof deps.codexAdaptApply === 'function' ? deps.codexAdaptApply : null
 
   let locale = 'zh-CN'
   let lastSnapshot = null
@@ -1396,8 +1487,17 @@ function createSurface(deps) {
     locale = localeOf(caps)
     let cfgNow = null
     try { cfgNow = await loadConfig() } catch (err) { cfgNow = null }
+    /**
+     * [0.11.2] 每次重建视图都重新探测一次本地适配状态：点过「一键适配」后 App 会
+     * `refresh` 重建视图，于是按钮变成「已适配，重启引擎后生效」；引擎重启后服务出现，
+     * 状态变 hidden，按钮自然消失。
+     */
+    let adapt = null
+    if (codexAdapt !== null) {
+      try { adapt = await codexAdapt() } catch (err) { adapt = null }
+    }
     // 策略开关是即时保存后再 refresh 视图的，所以这里必须按当前配置重建分组。
-    return buildSettingsView({ caps, locale, cfg: cfgNow })
+    return buildSettingsView({ caps, locale, cfg: cfgNow, codexAdapt: adapt })
   }
 
   const settingsData = (scope, emit) => {
@@ -1459,6 +1559,35 @@ function createSurface(deps) {
   }
 
   settingsActions.mimoLogin = () => ({ open: 'panel:' + MIMO_PANEL_ID })
+
+  /**
+   * [0.11.2] 「一键适配」：调用 Host 的 `applyCodexPatchOnce()`（与网页版 POST 路由、CLI
+   * 同一实现：wx 备份 → 临时文件 → 读回校验 → rename → 校验新哈希）。
+   *
+   * 写完立刻 `refresh` 重建设置视图，让按钮变成「已适配，重启引擎后生效」；
+   * 失败只回固定文案，不回显错误码/路径/上游正文。
+   */
+  settingsActions.codexAdapt = async (scope, event) => {
+    const loc = localeOfEvent(event, locale)
+    if (codexAdaptApply === null) {
+      return { toast: isEn(loc) ? 'This host cannot apply it' : '当前主机无法执行适配' }
+    }
+    let out = null
+    try { out = await codexAdaptApply() } catch (err) { out = null }
+    if (out === null || out === undefined) return { toast: isEn(loc) ? 'Adapt failed, try again later' : '适配失败，请稍后重试' }
+    if (out.ok !== true) {
+      const code = typeof out.code === 'string' ? out.code : ''
+      return {
+        toast: code === 'E_CS_PATCH_UNSUPPORTED'
+          ? (isEn(loc) ? 'This version cannot be adapted' : '该版本暂不支持一键适配')
+          : (isEn(loc) ? 'Adapt failed, try again later' : '适配失败，请稍后重试'),
+      }
+    }
+    return {
+      refresh: true,
+      toast: isEn(loc) ? 'Adapted — restart the engine to take effect' : '已适配，重启引擎后生效',
+    }
+  }
 
   /**
    * 额度策略开关的 onChange：即时写入配置并请求 App 重建视图，

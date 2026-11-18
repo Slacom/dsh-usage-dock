@@ -304,6 +304,19 @@ export function loadClient(runtime, options) {
      * 默认返回空 `channels`：没有样本就是"未知"，设置页只显示已保存的窗口配置。
      * 需要特定样本的测试用 `opts.quotaWindows` 注入，`opts.quotaWindowsError` 可模拟失败。
      */
+    /**
+     * [0.11.2 Codex 本地适配] 只读补丁状态 / 一次性应用。
+     * 都是 opt-in：不注入时（`patchState === undefined`）返回 `opts.payload`，
+     * 客户端解析失败后走原兜底（显示按钮），既有用例行为不变。
+     */
+    if (String(url).includes('codex-subscription/patch-state')) {
+      if (opts.patchStateError === true) throw new Error('patch-state unreachable')
+      return { status: 200, json: async () => (opts.patchState !== undefined ? opts.patchState : opts.payload) }
+    }
+    if (String(url).includes('codex-subscription/apply-patch')) {
+      if (opts.patchApplyError === true) throw new Error('apply-patch unreachable')
+      return { status: 200, json: async () => (opts.patchApply !== undefined ? opts.patchApply : { ok: true }) }
+    }
     if (String(url).includes('quota-windows')) {
       if (opts.quotaWindowsError === true) throw new Error('quota-windows unreachable')
       return {
@@ -335,6 +348,10 @@ export function loadClient(runtime, options) {
   const disposedSlots = []
   /** `ctx.effect` 返回的 disposer：测试可调用 `disposeEffects()` 模拟插件卸载。 */
   const effectDisposers = []
+  /** [0.11.2] 设置主页分区的注册规格（`settings.section`），供测试断言 id/order/label。 */
+  let sectionSpec = null
+  /** [0.11.2] 所有 `slots.register` 的槽位名（按顺序），便于断言「只注册了哪些槽位」。 */
+  const slotNames = []
   exportedModule.apply({
     configForms: { get: () => opts.form || null, whileServed: (_names, fn) => opts.form ? fn() : () => {} },
     slots: {
@@ -346,12 +363,13 @@ export function loadClient(runtime, options) {
       },
       register: (spec, Comp) => {
         slotSpecs.push(spec)
+        slotNames.push(spec.name)
         if (spec.name === 'sidebar.footer.action') { registration = spec; Badge = Comp }
         // [0.11.0] 设置入口已从 `settings.plugins.tab` 搬到设置主页顶层分区：
         // 新实现只注册 `settings.section` + `settings.section.icon`；旧名字保留捕获仅为
         // 兼容「混合部署/旧字节」测试，不再代表当前实现。
         if (spec.name === 'settings.plugins.tab') SettingsPage = Comp
-        if (spec.name === 'settings.section') SettingsPage = Comp
+        if (spec.name === 'settings.section') { SettingsPage = Comp; sectionSpec = spec }
         if (spec.name === 'settings.section.icon') SectionIcon = Comp
         return () => { disposedSlots.push(spec.name) }
       },
@@ -378,6 +396,10 @@ export function loadClient(runtime, options) {
     Badge,
     SettingsPage,
     SectionIcon,
+    // [0.11.2] 小写别名：外部/上游测试用例习惯用 `sectionIcon`。
+    sectionIcon: SectionIcon,
+    sectionSpec,
+    slotNames,
     registration,
     slotSpecs,
     injectedSlots,

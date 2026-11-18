@@ -140,19 +140,28 @@ export function normalizeCodexUsage(usage, spec) {
   const windows = primary !== null && primary !== undefined && Array.isArray(primary.windows) ? primary.windows : []
   const rollingUsage = findWindow(windows, FIVE_HOURS_SECONDS, resetKey)
   const weeklyUsage = findWindow(windows, WEEK_SECONDS, resetKey)
-  const monthlyUsage = findWindow(windows, MONTH_SECONDS, resetKey)
+  /**
+   * [0.11.4 用户要求] Codex **不再展示「月额度」**：Codex 订阅实际只有 5 小时 + 周两个窗口，
+   * 上游投影里偶尔带回来的 43200 分钟窗口在界面上只是一行「—」。
+   *
+   * 这里仍然解析一次用于「是否全空」的判断（只剩月窗口也算有数据，不该冒充 quota-unavailable），
+   * 但**不放进 wire**：`monthlyUsage` 恒为 `null`，胶囊 / 详情面板 / 原生面板 / usage_status 工具
+   * 都按字段是否为 null 自动跳过，不会出现空的月额度行。
+   */
+  const monthlyOnly = findWindow(windows, MONTH_SECONDS, resetKey)
   const credits = usage !== null && usage !== undefined
     && usage.credits !== null && typeof usage.credits === 'object' ? usage.credits : null
   const individual = usage !== null && usage !== undefined
     && usage.individualLimit !== null && typeof usage.individualLimit === 'object'
     ? usage.individualLimit
     : null
-  if (rollingUsage === null && weeklyUsage === null && monthlyUsage === null
+  if (rollingUsage === null && weeklyUsage === null && monthlyOnly === null
     && credits === null && individual === null) return null
   return {
     rollingUsage,
     weeklyUsage,
-    monthlyUsage,
+    // 恒 null：见上面的说明（界面按 null 跳过）。
+    monthlyUsage: null,
     creditsUnlimited: credits !== null && credits.unlimited === true,
     creditsBalance: credits !== null ? safeAmount(credits.balance) : null,
     individualLimit: individual !== null ? {

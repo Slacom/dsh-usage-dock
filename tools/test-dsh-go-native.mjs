@@ -270,7 +270,8 @@ check('中文视图：5 个内置渠道分块 + 刷新/设置按钮', () => {
   assert.equal(view.title, '额度')
   const nodes = nodesOf(view)
   assert.equal(nodes.filter((node) => node.type === 'stack').length, 6) // 根 + 5 渠道
-  assert.equal(nodes.filter((node) => node.type === 'progress').length, 6) // opencode 3 + codex 3
+  // [0.11.4] Codex 只渲染 5 小时 + 周两个窗口：opencode 3 + codex 2 = 5 条进度条。
+  assert.equal(nodes.filter((node) => node.type === 'progress').length, 5)
   assert.equal(nodes.filter((node) => node.type === 'keyValue').length, 3)
   const actions = nodes.find((node) => node.type === 'actions')
   assert.deepEqual(actions.items.map((item) => item.action), ['refresh', 'settings'])
@@ -1086,6 +1087,60 @@ check('面板 id 符合协议规则且互不重复', () => {
   const ids = [PANEL_ID, SETTINGS_PANEL_ID, MIMO_PANEL_ID]
   assert.equal(new Set(ids).size, ids.length)
   for (const id of ids) assert.equal(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,39}$/.test(id), true)
+})
+
+// ── 0.11.2：Codex 本地适配入口 + Codex 只保留两个窗口 ──────────────────────
+
+check('Codex 只渲染 5 小时 + 周两个窗口（不再有月行）', () => {
+  const view = buildNativeView({ cfg: {}, plans, locale: 'zh-CN', hasCustomChannels: false })
+  const texts = []
+  walkNodes(view, (node) => { if (node && typeof node.label === 'string') texts.push(node.label) })
+  assert.equal(texts.filter((label) => label === '月').length, 1) // 只剩 OpenCode Go 的月窗口
+  assert.equal(texts.includes('5 小时'), true)
+  assert.equal(texts.includes('周'), true)
+})
+
+check('原生设置页：codexAdapt=appliable ⇒ 出现「一键适配」动作与已装版本号', () => {
+  const view = buildSettingsView({
+    caps: V2_CAPS,
+    locale: 'zh-CN',
+    cfg: {},
+    codexAdapt: { state: 'appliable', version: '3.2.23', manifestVersion: '3.2.23', covered: ['3.2.23'] },
+  })
+  const items = []
+  const texts = []
+  walkNodes(view, (node) => {
+    if (node === null || typeof node !== 'object') return
+    if (node.type === 'actions' && Array.isArray(node.items)) items.push(...node.items)
+    if (typeof node.text === 'string') texts.push(node.text)
+  })
+  assert.equal(items.some((item) => item.action === 'codexAdapt'), true)
+  assert.equal(texts.join(' ').includes('3.2.23'), true)
+  assert.equal(texts.join(' ').includes('重启引擎'), true)
+})
+
+check('原生设置页：pending ⇒ 只提示重启，不给按钮；unsupported ⇒ 列出已收录版本；hidden ⇒ 不渲染', () => {
+  const collect = (adapt) => {
+    const view = buildSettingsView({ caps: V2_CAPS, locale: 'zh-CN', cfg: {}, codexAdapt: adapt })
+    const items = []
+    const texts = []
+    walkNodes(view, (node) => {
+      if (node === null || typeof node !== 'object') return
+      if (node.type === 'actions' && Array.isArray(node.items)) items.push(...node.items)
+      if (typeof node.text === 'string') texts.push(node.text)
+    })
+    return { hasAdapt: items.some((item) => item.action === 'codexAdapt'), text: texts.join(' ') }
+  }
+  const pending = collect({ state: 'pending', version: '3.2.23' })
+  assert.equal(pending.hasAdapt, false)
+  assert.equal(pending.text.includes('重启引擎'), true)
+  const unsupported = collect({ state: 'unsupported', version: '3.2.23', manifestVersion: null, covered: ['3.2.6', '3.2.17'] })
+  assert.equal(unsupported.hasAdapt, false)
+  assert.equal(unsupported.text.includes('暂无适配清单'), true)
+  assert.equal(unsupported.text.includes('3.2.6'), true)
+  const hidden = collect({ state: 'hidden' })
+  assert.equal(hidden.hasAdapt, false)
+  assert.equal(hidden.text.includes('适配'), false)
 })
 
 console.log('\n全部 ' + passed + ' 项通过（Host 半契约，非 App 真机渲染）')

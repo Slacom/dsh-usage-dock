@@ -30,7 +30,9 @@ DeepSeek Harness（DSH）的**侧栏用量/余额插件**：在 Web/桌面端左
 用量与余额，点击可展开详情面板。fork 自 `chendefine/dsh-plugins-plan-usage`，改名 `dsh-usage-dock`
 以避免与上游混淆，并做了一系列定制（见第 6 节）。
 
-**当前版本**：0.11.1（手机端 WorkBuddy 网关 provider 识别修复（`workbuddyProvider` 显式指定或
+**当前版本**：0.11.2（MiMo 支持 **API Key 直接查余额**（`mimoApiKey`，API Key 优先、旧 Cookie 回退）+
+DSH Go 原生设置页 **Codex 一键适配**（`codexAdaptStatusForNative` / `applyCodexPatchOnce`，与 POST 路由同一实现）+
+Codex 不再显示月额度 + 新增 `3.2.23` 补丁清单；承接 0.11.1 的 WorkBuddy 手机端 provider 识别修复（`workbuddyProvider` 显式指定或
 按 id/displayName/后缀自动识别）+ 模型路由名归一化（`custom-workbuddy` → `workbuddy`）+
 原生额度面板去掉逐渠道「更新时间」；承接 0.11.0 的 DSH Go 原生半：原生额度面板 + 原生设置页 +
 输入框上方 `composer.strip` 额度条 +
@@ -41,8 +43,8 @@ unsupported 文案；再承接 0.10.5 的 MiMo 登录收敛为「扫码 → 确�
 Codex `Subscription` 补丁支持 3.2.13 与 pnpm 布局 + 额度策略注入修复（`opencode-go` 路由映射缺失、
 `ctx.inject` 注册）+ 详情卡片重置时间两段精度与列对齐；0.10.0 的双来源手选 / WorkBuddy 只读 cn /
 MiMo 与 `usage_status` 同源不变）。
-**已发布**：tag `v0.11.1`（annotated）/ commit `7db237b`（已 push `origin/main`）/
-npm `dsh-usage-dock@0.11.1`（shasum `6a770ef8…`）；GitHub Release id **449662483**（`make_latest: true`）。
+**发布**：0.11.2 构建中（发布后补 commit / tag / Release id / npm shasum）。
+上一公开版 **0.11.1**：tag `v0.11.1` / commit `7db237b` / npm `dsh-usage-dock@0.11.1`。
 上一个公开版 **0.11.0**：tag `v0.11.0` / commit `c54e0ea` / npm `0.11.0` / Release id **448193666**。
 **0.10.3 / 0.10.4 是本地构建、从未发布**，不要把它们当作已发布版本；**0.10.6 也未单独发布**，
 其内容（Codex Subscription 3.2.17 + `inheritFrom` 清单 + `patch-state` 两字段）随 0.11.0 一起发布。　|　
@@ -328,6 +330,11 @@ tools/test-mimo-legacy-store.mjs     [0.11.0] MiMo legacy 持久化（12 项：c
                   重放/失败枚举/稳定采样时间）
 tools/test-route-normalize.mjs       [0.11.1] 模型路由名归一化（7 项：精确 id / 词元连续包含+最长匹配 /
                   大小写与前后空白不命中（A12）/ 等长多命中返回 null）
+tools/test-mimo-api-key.mjs          [0.11.2] MiMo API Key 余额通道（13 项：请求形态 / 现金+赠金口径 /
+                  授信不入总额 / 401 文案 / 结构异常 / fetchPlan 优先级与零请求）
+tools/test-codex-adapt-ui.mjs        [0.11.2] 网页设置页「需适配」块三态探测（24 项：appliable / patched /
+                  unsupported 两种文案 / 探测失败兜底 / 只发一次 POST / 分区与图标槽位）
+tools/test-codex-patch-2323.mjs      [0.11.2] 3.2.23 清单静态校验（5 项：版本/baseSha/4 条 hunk 唯一）
 ```
 
 **已接入渠道**（0.10.0 起）：OpenCode Go、DeepSeek（账号余额优先/API Key 回退）、
@@ -478,6 +485,24 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
 > 📌 **用户已确认要做、但尚未实施的事项统一记在 [docs/backlog.md](docs/backlog.md)**（含
 > MiMo「平台票据缺失」的 3 次有限自动重试、安卓移动端适配、DSH Go 原生面板后续项、策略表口径等）。
 > 动手前先看那份清单，不要凭记忆重推需求。
+
+- **MiMo 支持 API Key 查余额**（0.11.2）：新增 `mimoApiKey`（`role('secret')`）与 `fields.apiKey`
+  ⇒ `identityOfChannel('mimo')` 自动带 `key=` 指纹（换 Key 即作废旧值/在途请求）。
+  `plans/mimo.js#fetchPlan()` 先 `resolveApiKey`，有 Key 走
+  `GET https://api.xiaomimimo.com/v1/platform/balance`（请求头 `api-key`），否则回退旧的
+  控制台 Cookie 通道（**未退役**）。口径：`balance = cash_balance + gift_balance`（**不含**授信），
+  `creditAvailable` 单独给出；401/403（`invalid_api_key` 被 `curlJson` 归为 `error:'api'`）→
+  「MiMo 拒绝了这个 API Key…请重新填写」。`index.js#mimoWireReady()` 在配了 Key 时**直接走 provider**，
+  不吃扫码/Cookie 的显示快照。测试 `test-mimo-api-key` **13 项**。
+- **DSH Go 原生设置页「Codex 一键适配」**（0.11.2）：Host 新增 `codexAdaptStatusForNative()`（只读五态，
+  fail-closed）与 `applyCodexPatchOnce()`（`wx` 备份 → 临时文件 → 读回校验 → rename → 校验哈希）；
+  `POST …/apply-patch` 与原生按钮**共用**后者。原生设置页 `codexAdaptNodes()`：只有 `appliable` 才给
+  按钮，`pending` 只提示重启、`unsupported` 列已收录版本；成功后 `settingsActions.codexAdapt` 触发
+  `refresh` 重建设置视图。`test-dsh-go-native` 增至 **46 项**。
+- **Codex 不再显示月额度**（0.11.2）：`normalizeCodexUsage` 的 `monthlyUsage` 恒为 `null`（仍解析一次
+  用于「是否全空」），原生面板按 `scopes: ['rolling-5h','weekly']` 只渲染两条窗口。
+- **补丁清单**（0.11.2）：新增 `plans/patches/codex-subscription-3.2.23.json`（**不继承**的完整 4 条
+  hunk），`covered` = `3.2.6 / 3.2.13 / 3.2.17 / 3.2.23`；`3.2.23` 未在本机真打（本机装 3.2.17）。
 
 - **WorkBuddy 手机端 provider 识别**（0.11.1）：网关 provider id 与设备相关（桌面 `workbuddy`、
   手机自定义来源 `custom-workbuddy`）。`plans/workbuddy.js#pickGatewayProvider()` 判定顺序：

@@ -248,8 +248,13 @@ function verifiedSnapshot(over) {
    * 因此这里只守「这段接线没被人删掉」，真正的 verified 端到端只能在本机实测。
    */
   const hostSource = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
-  check('L5e 接线守卫：collectPlans 里 mimo 分支调用 mimoWireWithDisplay（源码断言）',
-    hostSource.includes("plan.id === 'mimo'") && hostSource.includes('mimoWireWithDisplay(mimoDisplaySource, fetchOnce)'))
+  /**
+   * [2026-11-18] 接线改为经 `mimoWireReady()`（内部先等登录态恢复，再调
+   * `mimoWireWithDisplay(mimoDisplaySource, …)`），因此这里守「分支存在 + 走 mimoWireReady」。
+   */
+  check('L5e 接线守卫：collectPlans 里 mimo 分支经 mimoWireReady 分流（源码断言）',
+    hostSource.includes("plan.id === 'mimo'") && hostSource.includes('mimoWireReady(fetchOnce)')
+    && hostSource.includes('mimoWireWithDisplay(mimoDisplaySource, providerCall)'))
   check('L5f 接线守卫：ACCOUNT_BOUND_PLAN_IDS 含 mimo（不进工具缓存）',
     /const ACCOUNT_BOUND_PLAN_IDS = new Set\(\[[^\]]*'mimo'[^\]]*\]\)/.test(hostSource))
 }
@@ -427,14 +432,20 @@ function verifiedSnapshot(over) {
 
   // G3：接线守卫 —— GUI 路由与 collectPlans 用**同一个** helper（不是复制粘贴另一套）
   const hostSrcG = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
-  const guiHook = /plan\.id === 'mimo'[\s\S]{0,120}?mimoWireWithDisplay\(mimoDisplaySource, \(\) => plan\.fetch\(ctx, shell, cfgNow\)\)/
+  const guiHook = /plan\.id === 'mimo'[\s\S]{0,120}?mimoWireReady\(\(\) => plan\.fetch\(ctx, shell, cfgNow\)\)/
   check('G3a 接线守卫：GUI 路由的逐渠道取数经 mimoWireWithDisplay 分流（源码断言）', guiHook.test(hostSrcG))
-  const uses = (hostSrcG.match(/mimoWireWithDisplay\(/g) || []).length
+  /**
+   * [2026-11-18] 直接调用只剩 helper 内部一处；五处入口改为调 `mimoWireReady()`（先等恢复）。
+   * 计数口径随之调整，但「只有一个实现、没有第六套」的守卫意图不变。
+   */
+  const uses = (hostSrcG.match(/mimoWireReady\(/g) || []).length
+  const directUses = (hostSrcG.match(/mimoWireWithDisplay\(/g) || []).length
   // [dsh-go 原生适配] 第三处是原生面板的取数入口；第四处是额度策略快照的后台刷新；
   // 第五处是 composer.strip 的单渠道取数。五处都复用同一 helper，不允许出现第六套实现。
-  const nativeHook = /plan\.id === 'mimo'[\s\S]{0,160}?mimoWireWithDisplay\(mimoDisplaySource, \(\) => plan\.fetch\(ctx, shell, cfgSnapshot\)\)/
+  const nativeHook = /plan\.id === 'mimo'[\s\S]{0,160}?mimoWireReady\(\(\) => plan\.fetch\(ctx, shell, cfgSnapshot\)\)/
   check('G3c 接线守卫：dsh-go 原生面板也经 mimoWireWithDisplay 分流（源码断言）', nativeHook.test(hostSrcG))
-  check('G3b 接线守卫：恰好五处调用（usage_status + GUI + 原生面板 + 策略刷新 + strip），没有第六套实现', uses === 5, uses)
+  check('G3b 接线守卫：恰好五处 mimoWireReady 入口 + helper 内一处直接调用，没有第六套实现',
+    uses === 5 && directUses === 1, { uses, directUses })
 }
 
 
@@ -452,8 +463,9 @@ function verifiedSnapshot(over) {
   for (const bad of ['复制新的 Cookie', '控制台登录态已过期', '手工 Cookie 路径', 'API error code 401', '实验性：临时扫码登录', '合成边界；生产未启用']) {
     check('M3 用户可见源码不含「' + bad + '」', !clientSrc2.includes(bad))
   }
-  check('M4 GUI、usage_status、原生面板、策略刷新与 strip 都经同一个 helper（index.js 恰好五处调用）',
-    (hostSrc.match(/mimoWireWithDisplay\(/g) || []).length === 5)
+  check('M4 GUI、usage_status、原生面板、策略刷新与 strip 都经同一个 helper（五处 mimoWireReady + 一处直接调用）',
+    (hostSrc.match(/mimoWireReady\(/g) || []).length === 5
+    && (hostSrc.match(/mimoWireWithDisplay\(/g) || []).length === 1)
 }
 
 console.log('')

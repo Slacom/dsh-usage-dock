@@ -193,8 +193,8 @@ const out = (r) => String(r.stdout || '') + String(r.stderr || '')
   const target13 = (dir) => join(dir, 'lib', 'index.js')
 
   const all = mod.listManifests()
-  check('V1 清单目录同时提供 3.2.6 / 3.2.13 / 3.2.17（3.2.17 经 inheritFrom 继承解析）',
-    all.map((e) => e.manifest.version).sort().join(',') === '3.2.13,3.2.17,3.2.6', all.map((e) => e.manifest.version))
+  check('V1 清单目录同时提供 3.2.6 / 3.2.13 / 3.2.17 / 3.2.23（3.2.17 经 inheritFrom 继承解析）',
+    all.map((e) => e.manifest.version).sort().join(',') === '3.2.13,3.2.17,3.2.23,3.2.6', all.map((e) => e.manifest.version))
   check('V2 3.2.13 清单 baseSha == 3.2.13 基线哈希', M13.baseSha.toLowerCase() === sha256(base13).toLowerCase(), { want: M13.baseSha, got: sha256(base13) })
   check('V3 loadManifest("3.2.13") 版本精确命中', mod.loadManifest('3.2.13').version === '3.2.13')
   check('V4 loadManifest("3.2.6") 仍可用（两版并存）', mod.loadManifest('3.2.6').version === MANIFEST.version)
@@ -290,8 +290,8 @@ const out = (r) => String(r.stdout || '') + String(r.stderr || '')
   const hits17 = mod.hunkHits(base17.toString('utf8'), resolved17)
   check('W3 3.2.17 基线 4 条 hunk 各命中 1 次', hits17.length === 4 && hits17.every((r) => r.hits === 1), hits17)
   const covered = mod.coveredVersions()
-  check('W4 coveredVersions() = 3.2.6/3.2.13/3.2.17（纯版本号、升序、不含路径）',
-    covered.join(',') === '3.2.6,3.2.13,3.2.17', covered)
+  check('W4 coveredVersions() = 3.2.6/3.2.13/3.2.17/3.2.23（纯版本号、升序、不含路径）',
+    covered.join(',') === '3.2.6,3.2.13,3.2.17,3.2.23', covered)
 
   const dir17 = mk4('v3217', '3.2.17', Buffer.from(base17))
   const s17 = mod.readPatchState(dir17)
