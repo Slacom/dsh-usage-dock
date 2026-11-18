@@ -68,4 +68,5 @@
 
 ---
 
-版本状态：`0.11.1`（本文件为发布说明；发布后由发布记录补 commit / tag / Release id / npm shasum）。
+版本状态：**已发布** —— tag `v0.11.1`（commit `7db237b`）、GitHub Release id **449662483**（`make_latest: true`）、npm `dsh-usage-dock@0.11.1`（48 文件，`dist.shasum` 前缀 `6a770ef8…`）。
+

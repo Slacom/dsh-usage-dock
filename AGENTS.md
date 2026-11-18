@@ -41,12 +41,12 @@ unsupported 文案；再承接 0.10.5 的 MiMo 登录收敛为「扫码 → 确�
 Codex `Subscription` 补丁支持 3.2.13 与 pnpm 布局 + 额度策略注入修复（`opencode-go` 路由映射缺失、
 `ctx.inject` 注册）+ 详情卡片重置时间两段精度与列对齐；0.10.0 的双来源手选 / WorkBuddy 只读 cn /
 MiMo 与 `usage_status` 同源不变）。
-**发布**：0.11.1 正在发布（完成后补 commit / tag / Release id / npm shasum）。
-上一个公开版 **0.11.0**：tag `v0.11.0` / commit `c54e0ea` / npm `dsh-usage-dock@0.11.0` /
-GitHub Release id **448193666**。
+**已发布**：tag `v0.11.1`（annotated）/ commit `7db237b`（已 push `origin/main`）/
+npm `dsh-usage-dock@0.11.1`（shasum `6a770ef8…`）；GitHub Release id **449662483**（`make_latest: true`）。
+上一个公开版 **0.11.0**：tag `v0.11.0` / commit `c54e0ea` / npm `0.11.0` / Release id **448193666**。
 **0.10.3 / 0.10.4 是本地构建、从未发布**，不要把它们当作已发布版本；**0.10.6 也未单独发布**，
 其内容（Codex Subscription 3.2.17 + `inheritFrom` 清单 + `patch-state` 两字段）随 0.11.0 一起发布。　|　
-**上一公开版**：0.11.0（GitHub Release + npm；0.10.3 / 0.10.4 / 0.10.6 从未单独发布）
+**上一公开版**：0.11.1（GitHub Release + npm；0.10.3 / 0.10.4 / 0.10.6 从未单独发布）
 
 > **审核入口（先读这条）**：当前**权威**记录是
 > [0.9.0 发布状态](docs/release-status-v0.9.0-20261024.md)（程序已部署、用户已确认本地验收；

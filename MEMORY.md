@@ -23,7 +23,10 @@
    `test-android-compat` 14/14、`test-line-endings` 71/71。
 6. 已知未做（用户确认暂不处理）：自定义余额条目的 provider 仍精确匹配；原生面板未搬 Web 卡片细节；
    手机真机未复验（依赖手机侧 2026-11-17 结果：WorkBuddy 1097 积分）。
-7. 发布：见顶部 2026-11-17 0.11.0 记录之后的新条目（本次发布后补）。
+7. **发布（2026-11-18）**：commit `7db237b`、tag `v0.11.1`、GitHub Release id **449662483**（latest）、
+   npm `dsh-usage-dock@0.11.1`（48 文件、shasum `6a770ef82a479410ca2110fa8780626448e8436f`）；
+   已部署到 desktop profile（待重启验证）。注：本机 git 原配代理端口 10909 已失效，push 需
+   `git -c http.proxy= -c https.proxy= -c http.version=HTTP/1.1 push`（GitHub API 可用 `-NoProxy`）。
 
 ## 2026-11-17：**0.11.0 已发布**（GitHub Release + npm）
 
