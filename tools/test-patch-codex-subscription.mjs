@@ -166,8 +166,8 @@ const out = (r) => String(r.stdout || '') + String(r.stderr || '')
   check('H8 源码守卫：MiMo 默认态已无「实验性：临时扫码登录」字样',
     !clientSrc.includes('实验性：临时扫码登录'))
   check('H9 源码守卫：已无「合成边界；生产未启用」字样', !clientSrc.includes('合成边界；生产未启用'))
-  check('H10 源码守卫：默认态含「未登录（点击登录）」状态行与单行提示',
-    clientSrc.includes('未登录（点击登录）') && clientSrc.includes('登录后可自动读取余额'))
+  check('H10 [0.11.4] 源码守卫：MiMo 扫码登录文案已下线（不再出现「未登录（点击登录）」）',
+    clientSrc.includes('未登录（点击登录）') === false)
 }
 
 // ===========================================================================

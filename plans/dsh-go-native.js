@@ -1318,7 +1318,6 @@ export function registerDshGoSurface(ctx, deps) {
           }
           register(PANEL_ID, surfaces.quota)
           register(SETTINGS_PANEL_ID, surfaces.settings)
-          register(MIMO_PANEL_ID, surfaces.mimo)
           // composer.strip：输入框上方一行「当前会话渠道」摘要。
           //
           // 注意：检查器/宿主可能在 `apply()` 还没跑完时就来订阅 strip；此时 index.js 里

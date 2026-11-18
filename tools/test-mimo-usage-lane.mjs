@@ -234,10 +234,10 @@ function verifiedSnapshot(over) {
   const mimoChannel = out === null ? undefined : (out.channels || []).find((c) => c.id === 'mimo')
   check('L5b 工具仍能为 mimo 返回条目', execError === null && mimoChannel !== undefined,
     execError && execError.message)
-  check('L5c 默认状态（display 未选中）下 mimo 固定为 missing（不再回落旧 provider lane）',
-    mimoChannel !== undefined && mimoChannel.errorCode === 'missing', mimoChannel)
-  check('L5d 旧 Cookie lane 不再被调用：缺凭据不再是 mimo 的结果（应为 missing）',
-    mimoChannel !== undefined && mimoChannel.errorCode === 'missing', mimoChannel)
+  check('L5c [0.11.4] 扫码通道下线：无 Key 时 mimo 返回 no-credential（不再走 display/legacy）',
+    mimoChannel !== undefined && mimoChannel.errorCode === 'no-credential', mimoChannel)
+  check('L5d [0.11.4] 旧 Cookie lane 不再被调用：缺凭据即 no-credential',
+    mimoChannel !== undefined && mimoChannel.errorCode === 'no-credential', mimoChannel)
 
   for (const fn of effects.reverse()) { if (typeof fn === 'function') fn() }
 
@@ -252,9 +252,10 @@ function verifiedSnapshot(over) {
    * [2026-11-18] 接线改为经 `mimoWireReady()`（内部先等登录态恢复，再调
    * `mimoWireWithDisplay(mimoDisplaySource, …)`），因此这里守「分支存在 + 走 mimoWireReady」。
    */
-  check('L5e 接线守卫：collectPlans 里 mimo 分支经 mimoWireReady 分流（源码断言）',
-    hostSource.includes("plan.id === 'mimo'") && hostSource.includes('mimoWireReady(fetchOnce)')
-    && hostSource.includes('mimoWireWithDisplay(mimoDisplaySource, providerCall)'))
+  check('L5e [0.11.4] 接线守卫：mimo 分支经 mimoWireReady，且不再回落到显示快照',
+    hostSource.includes("plan.id === 'mimo'") && hostSource.includes('mimoWireReady(')
+    && hostSource.includes('const mimoWireReady = async (providerCall) => providerCall()')
+    && hostSource.includes('mimoWireWithDisplay(mimoDisplaySource, providerCall)') === false)
   check('L5f 接线守卫：ACCOUNT_BOUND_PLAN_IDS 含 mimo（不进工具缓存）',
     /const ACCOUNT_BOUND_PLAN_IDS = new Set\(\[[^\]]*'mimo'[^\]]*\]\)/.test(hostSource))
 }
@@ -417,8 +418,8 @@ function verifiedSnapshot(over) {
     : undefined
   check('G1b GUI 路由能返回 mimo 行（走新接的同一 helper，快照不可用时回落 provider）',
     callErr === null && mimoRow !== undefined, callErr && callErr.message)
-  check('G1c 快照不可用时 mimo 固定 missing（GUI 路由同样不再碰旧 lane）',
-    mimoRow !== undefined && mimoRow.error === 'missing', mimoRow)
+  check('G1c [0.11.4] 快照不可用时 mimo 直接按缺凭据返回（不再有 display/legacy 分支）',
+    mimoRow !== undefined && mimoRow.error === 'no-key', mimoRow)
 
   for (const fn of effectsG.reverse()) { if (typeof fn === 'function') fn() }
 
@@ -444,8 +445,8 @@ function verifiedSnapshot(over) {
   // 第五处是 composer.strip 的单渠道取数。五处都复用同一 helper，不允许出现第六套实现。
   const nativeHook = /plan\.id === 'mimo'[\s\S]{0,160}?mimoWireReady\(\(\) => plan\.fetch\(ctx, shell, cfgSnapshot\)\)/
   check('G3c 接线守卫：dsh-go 原生面板也经 mimoWireWithDisplay 分流（源码断言）', nativeHook.test(hostSrcG))
-  check('G3b 接线守卫：恰好五处 mimoWireReady 入口 + helper 内一处直接调用，没有第六套实现',
-    uses === 5 && directUses === 1, { uses, directUses })
+  check('G3b [0.11.4] 恰好五处 mimoWireReady 入口，helper 内无直接调用',
+    uses === 5 && directUses === 0, { uses, directUses })
 }
 
 
@@ -463,9 +464,9 @@ function verifiedSnapshot(over) {
   for (const bad of ['复制新的 Cookie', '控制台登录态已过期', '手工 Cookie 路径', 'API error code 401', '实验性：临时扫码登录', '合成边界；生产未启用']) {
     check('M3 用户可见源码不含「' + bad + '」', !clientSrc2.includes(bad))
   }
-  check('M4 GUI、usage_status、原生面板、策略刷新与 strip 都经同一个 helper（五处 mimoWireReady + 一处直接调用）',
+  check('M4 [0.11.4] 五处 mimoWireReady 入口仍在，helper 内不再直接调 mimoWireWithDisplay',
     (hostSrc.match(/mimoWireReady\(/g) || []).length === 5
-    && (hostSrc.match(/mimoWireWithDisplay\(/g) || []).length === 1)
+    && (hostSrc.match(/mimoWireWithDisplay\(/g) || []).length === 0)
 }
 
 console.log('')

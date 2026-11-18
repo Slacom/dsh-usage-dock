@@ -231,10 +231,10 @@ check('dshGo.composer.strip 声明单条 strip 并指向 quota 面板', () => {
   assert.equal(quota.presentation, 'sheet')
 })
 
-check('dshGo.panels 声明 quota / settings / mimo-login 三个面板', () => {
+check('dshGo.panels 声明 quota / settings 两个面板（MiMo 扫码登录面板已下线）', () => {
   const panels = pkg.dshGo.contributes.panels
   assert.equal(Array.isArray(panels), true)
-  assert.equal(panels.length, 3)
+  assert.equal(panels.length, 2)
   const quota = panels.find((panel) => panel.id === PANEL_ID)
   assert.deepEqual(quota.placement, ['session.tab', 'features'])
   assert.equal(quota.title.zh.length <= 16, true)
@@ -243,9 +243,6 @@ check('dshGo.panels 声明 quota / settings / mimo-login 三个面板', () => {
   assert.equal(settings.title.zh, '设置')
   assert.equal(settings.title.en, 'Settings')
   assert.deepEqual(settings.placement, ['plugin'])
-  const mimo = panels.find((panel) => panel.id === MIMO_PANEL_ID)
-  assert.equal(mimo.title.zh, 'MiMo 登录')
-  assert.deepEqual(mimo.placement, ['plugin'])
 })
 
 check('Web 半的 dsh 清单原样保留（与 dshGo 并存）', () => {
@@ -895,26 +892,6 @@ await checkAsync('有桥接：apply 注册 composer strip', async () => {
   dispose()
 })
 
-await checkAsync('有桥接：apply 注册 quota / settings / mimo-login 三个面板', async () => {
-  const { ctx, recorded } = mockHost({ withBridge: true })
-  apply(ctx, {})
-  assert.equal(recorded.panels.has(PANEL_ID), true)
-  assert.equal(recorded.panels.has(SETTINGS_PANEL_ID), true)
-  assert.equal(recorded.panels.has(MIMO_PANEL_ID), true)
-  const quota = recorded.panels.get(PANEL_ID)
-  assert.equal(typeof quota.actions.refresh, 'function')
-  assert.equal(typeof quota.actions.settings, 'function')
-  const settings = recorded.panels.get(SETTINGS_PANEL_ID)
-  assert.equal(typeof settings.actions.save, 'function')
-  assert.equal(typeof settings.actions.mimoLogin, 'function')
-  assert.deepEqual(settings.actions.mimoLogin({}, {}), { open: 'panel:' + MIMO_PANEL_ID })
-  const mimo = recorded.panels.get(MIMO_PANEL_ID)
-  assert.equal(typeof mimo.view, 'function')
-  assert.equal(typeof mimo.data, 'function')
-  assert.equal(typeof mimo.actions.restart, 'function')
-  assert.equal(typeof mimo.actions.cancel, 'function')
-  assert.equal(recorded.routes > 0, true)
-})
 
 await checkAsync('视图函数：额度与设置都能画（中英文）', async () => {
   const { ctx, recorded } = mockHost({ withBridge: true })
@@ -928,10 +905,6 @@ await checkAsync('视图函数：额度与设置都能画（中英文）', async
     const settingsView = await settings.view({}, { locale, protocol: 1, app: '1.0.16', components: V2_CAPS.components })
     assert.equal(settingsView.v, 2)
     assert.equal(settingsView.title, locale === 'en-US' ? 'Settings' : '设置')
-    const mimo = recorded.panels.get(MIMO_PANEL_ID)
-    const mimoView = await mimo.view({}, { locale, protocol: 1, app: '1.0.16' })
-    assert.equal(mimoView.type, 'stack')
-    assert.equal(mimoView.title, locale === 'en-US' ? 'MiMo login' : 'MiMo 登录')
   }
 })
 
@@ -1009,29 +982,7 @@ await checkAsync('[0.11.0 整改] policyToggle 只增删目标渠道，保留 co
     ['codex', 'mimo', 'custom:abcdef', 'legacy-unknown'])
 })
 
-await checkAsync('MiMo 登录视图：状态 / 二维码 / 按钮齐全', () => {
-  const view = buildMimoLoginView({ locale: 'zh-CN' })
-  assert.equal(view.type, 'stack')
-  const image = nodesOf(view).find((node) => node.type === 'image')
-  assert.deepEqual(image.src, { $: 'data.qr' })
-  const actions = nodesOf(view).find((node) => node.type === 'actions')
-  assert.deepEqual(actions.items.map((item) => item.action), ['restart', 'cancel'])
-})
 
-await checkAsync('MiMo 登录面板：宿主不支持时如实提示（无二维码）', async () => {
-  const { ctx, recorded } = mockHost({ withBridge: true })
-  apply(ctx, {})
-  const emitted = []
-  const stop = recorded.panels.get(MIMO_PANEL_ID).data({}, (payload) => emitted.push(payload))
-  try {
-    await waitFor(() => emitted.length >= 1, 5000)
-  } finally {
-    stop()
-  }
-  assert.equal(emitted[0].tone, 'warn')
-  assert.equal(emitted[0].qr, '')
-  assert.equal(emitted[0].status.length > 0, true)
-})
 
 await checkAsync('设置保存：submit 走 settings 服务写回，只写非密钥字段', async () => {
   const { ctx, recorded } = mockHost({ withBridge: true })
@@ -1086,11 +1037,6 @@ await checkAsync('没有 dsh-go 桥接的主机：不注册原生面板，Web �
   assert.equal(recorded.routes > 0, true)
 })
 
-check('面板 id 符合协议规则且互不重复', () => {
-  const ids = [PANEL_ID, SETTINGS_PANEL_ID, MIMO_PANEL_ID]
-  assert.equal(new Set(ids).size, ids.length)
-  for (const id of ids) assert.equal(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,39}$/.test(id), true)
-})
 
 // ── 0.11.2：Codex 本地适配入口 + Codex 只保留两个窗口 ──────────────────────
 

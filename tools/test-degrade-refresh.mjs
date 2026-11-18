@@ -306,8 +306,8 @@ mimoApi.setPoll(0)
   const absent = mimoApi.pick(MIMO_ABSENT_DISPLAY).display
   const masked = mimoApi.overlay([wirePlan], null, { allowMimo: true, resolving: true })
   const m1 = masked.filter((p) => p.id === 'mimo')[0]
-  check('T9 N4：显示会话未就绪时 MiMo 行被遮蔽（不展示 wire 余额）',
-    m1 !== undefined && m1.balance === undefined && mimoApi.shortText(null, true).indexOf('读取中') === 0, m1)
+  check('T9 N4 [0.11.4] MiMo 扫码通道下线：显示会话未就绪也不再遮蔽 wire 余额',
+    m1 !== undefined && m1.balance === 16.48, m1)
 
   const trusted = mimoApi.overlay([wirePlan], absent, { allowMimo: true, resolving: false })
   const m2 = trusted.filter((p) => p.id === 'mimo')[0]

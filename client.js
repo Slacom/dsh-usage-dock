@@ -2533,14 +2533,8 @@ function PlanUsageBadge(props) {
         .map(function (w) { return shownOf(plan[w.key]) + '%' })
       capsuleRows.push({ dot: quotaToneColorRemaining(meta, worstShown, false), label: meta.name, values: values, stale: plan.stale === true })
     } else if (plan.error === 'no-key') {
-      // [local patch 0.8.1] MiMo 的凭据是控制台 Cookie，提示语区分开（no-key 泛指缺凭据）。
-      capsuleRows.push({ dot: null, label: meta.name, values: [meta.id === 'mimo' ? '未登录' : '请设置 Key'], stale: false })
-    } else if (meta.id === 'mimo' && plan.mimoState === 'signed-out') {
-      // [0.10.5] 没登录 ≠ 故障：胶囊按用户要求写「未登录」，不要冒充「获取失败」。
-      capsuleRows.push({ dot: null, label: meta.name, values: ['未登录'], stale: false })
-    } else if (meta.id === 'mimo' && plan.mimoState === 'pending') {
-      // 真正在等 Host 状态时才说「读取中…」，且不冒充故障。
-      capsuleRows.push({ dot: 'var(--dsw-alias-label-tertiary)', label: meta.name, values: ['读取中…'], stale: false })
+      // [0.11.4] MiMo 的扫码登录已下线，缺 Key 时直接提示配置（不再说「未登录」）。
+      capsuleRows.push({ dot: null, label: meta.name, values: [meta.id === 'mimo' ? '未配置 Key' : '请设置 Key'], stale: false })
     } else {
       capsuleRows.push({ dot: null, label: meta.name, values: ['获取失败'], stale: false })
     }
@@ -5639,7 +5633,7 @@ function MimoRememberedPanel(props) {
   if (st === 'unreadable') children.push(h('div', { key: 'bad' }, '本地登录记录读不到，请重新扫码。'))
   if (st === 'empty') {
     // [0.10.3] 登录前**只有这 4 行**：状态行 / 一行说明 / 扫码登录 / 记住登录勾选。
-    children.push(h('div', { key: 'e0', 'data-mimo-auth-status': 'signed-out', style: mimoPrimaryTextStyle }, '未登录账号'))
+    children.push(h('div', { key: 'e0', 'data-mimo-auth-status': 'signed-out', style: mimoPrimaryTextStyle }, '未配置 Key'))
     children.push(h('div', { key: 'e0b', style: mimoCenterTextStyle }, '扫码登录后自动读取该账号余额。'))
     children.push(mimoWideButton('e1', '扫码登录', busy || disabled, function () {
       // [0.10.3] Host 只认 authConsent/consentVersion（routes.js 精确允许键），不得新增字段
@@ -6563,7 +6557,7 @@ function MimoAuthPanel(props) {
   if (open !== true) {
     return h('div', { 'data-mimo-auth-panel': 'closed', style: { display: 'flex', flexDirection: 'column', gap: 6 } },
       // [0.10.2] 默认态只保留：状态一行 + 主按钮 + 一行操作提示（开发者说明不在默认态渲染）。
-      h('p', { key: 'status', style: settingsHintStyle, 'data-mimo-auth-status': 'signed-out' }, '未登录（点击登录）'),
+      h('p', { key: 'status', style: settingsHintStyle, 'data-mimo-auth-status': 'signed-out' }, '未配置 Key'),
       h('button', {
         type: 'button', 'data-mimo-auth': 'entry', disabled: disabled === true,
         style: Object.assign({}, settingsButtonStyle, disabled === true ? settingsButtonDisabledStyle : {}),
@@ -7483,7 +7477,7 @@ function mimoDisplayStateText(snapshot) {
     // 「登录状态不可用」（具体原因只进详情）。legacy 非 managed 仍沿用原「合成边界」文案。
     if (snapshot.managed === true) {
       // [0.10.3] 未登录账号 / 获取余额失败（1..4 次 stale 仍保旧值，第 5 次才 failed——阈值未改）
-      return mimoDisplayFailureCodeOf(snapshot) === '' ? '未登录账号' : '获取余额失败'
+      return mimoDisplayFailureCodeOf(snapshot) === '' ? '未配置 Key' : '获取余额失败'
     }
     return '本机未启用'
   }
@@ -7511,7 +7505,7 @@ function mimoDisplayShortText(snapshot, resolving) {  if (snapshot === null || s
     // 与 stateText 同一套 managed 语义：未登录/已退出 ≠ 本机未启用。
     if (snapshot.managed === true) {
       // [0.10.3] 胶囊：未登录 / 获取失败（与其它渠道同一套用词）
-      return mimoDisplayFailureCodeOf(snapshot) === '' ? '未登录' : '获取失败'
+      return mimoDisplayFailureCodeOf(snapshot) === '' ? '未配置 Key' : '获取失败'
     }
     return '未启用'
   }
@@ -7595,6 +7589,17 @@ function withPendingPlaceholders(plans, config) {
  *   - Host 明确 `selected:true` ⇒ 完全由 DTO 驱动；已选中但无值 ⇒ 显示状态文本，不回填手工值。
  */
 function mimoDisplayOverlay(plans, snapshot, options) {
+  /**
+   * [0.11.4] **MiMo 扫码登录通道下线**：不再用「本机显示会话」快照覆盖 Host 返回的 MiMo 条目。
+   *
+   * 旧行为：只要显示会话 selected，就把 Host 的 wire（可能已经是 `via:'api-key'` 的真实余额）
+   * 替换成 display 快照的合成行；未登录时合成行显示「未登录」，于是**明明拿到了余额也显示未登录**。
+   * 现在 MiMo 只认 API Key 通道，直接返回原 plans。
+   */
+  return plans
+}
+
+function mimoDisplayOverlayLegacy(plans, snapshot, options) {
   var opts = options === null || options === undefined ? {} : options
   var allowMimo = opts.allowMimo !== false
   if (!allowMimo) return plans
@@ -7995,7 +8000,6 @@ function MimoDisplayPanel(props) {
   }
 
   if (snapshot !== null && snapshot.displaySupported === true && snapshot.selected === true) {
-    body.push(mimoDisplaySessionRowsOf(snapshot))
   }
   // [B6] 无 grant 阶段（核对中 / 已核对未读取 / 等待比对）**明确关闭**才取消；
   // 被动卸载/收起一律不取消（页面刷新要能恢复）。
@@ -9671,9 +9675,10 @@ function PlanUsageSettingsPage(props) {
       'data-plan-credentials-flat': '1',
     }, credentialChildren))
   }
-  // MiMo 唯一入口：登录/状态面板直接渲染在卡片下（不再包「连接与凭据」折叠区）
+  // [0.11.4] MiMo 扫码登录已下线：设置页只提示余额来自「设置 → 模型」的 API Key。
   if (enabled && meta.id === 'mimo') {
-    children.push(h(MimoAuthMount, { key: "mimo-auth-panel", disabled: !writable || saving }))
+    children.push(h("p", { key: "mimo-api-key-hint", style: settingsHintStyle, "data-mimo-api-key-hint": "1" },
+      "余额来自「设置 → 模型」里的 MiMo API Key（XIAOMI_API_KEY 等），无需扫码登录。"))
   }
   // 余额类渠道的**侧栏显示**告警阈值（留空/0 表示不警告；host 侧默认 10 元）。
   // [2026-10-24] 措辞明确这是"侧栏状态灯"的告警，与模型「额度策略」是两套不同阈值。

@@ -596,8 +596,8 @@ async function legacyRecordDisplayTest() {
     const stop = surface.data({ sessionId: 's1' }, (payload) => emitted.push(payload))
     await flush(18)
     const text = JSON.stringify(emitted)
-    check('F9 记录缓存的新余额 19 CNY 显示出来（不被缺失挡住）',
-      text.includes('19.00') || text.includes('19'), text.slice(0, 400))
+    check('F9 [0.11.4] 扫码通道下线：不再重放记录余额（mimo 显示未配置凭据）',
+      !text.includes('19.00') && text.includes('未配置凭据'), text.slice(0, 400))
     stop()
   }
   boom.disposeAll()

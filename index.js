@@ -78,7 +78,7 @@ import { applySessionRouteEvent, providerToChannel, formatStripText } from './pl
 // [dsh-go 原生适配] 详情卡片 → App 原生面板（panels: session.tab / features）。
 import { registerDshGoSurface } from './plans/dsh-go-native.js'
 import { quotaPolicySchemaFields, parseFocusChannels } from './plans/usage-policy.js'
-import { registerMimoAuth } from './plans/mimo-auth/host.js'
+// [0.11.4] MiMo 扫码登录已下线：不再引入 plans/mimo-auth（模块与测试留待后续清理轮删除）。
 import { createQuotaObserver, promoteOwnTicket } from './plans/quota-observer.js'
 import { createRouteObserver } from './plans/quota-route.js'
 import { buildQuotaView } from './plans/quota-view.js'
@@ -472,7 +472,6 @@ export function apply(ctx, config) {
       try { policyRefreshStop() } catch (err) { /* 旧宿主 */ }
     },
     strip: (scope, emit, caps) => subscribeStrip(scope, emit, caps),
-    mimoSessionBalance: () => legacyMimoBalance(),
     // [0.11.2] 原生设置页的「一键适配」：状态探测（只读）+ 应用（与网页版路由同一实现）。
     codexAdapt: () => codexAdaptStatusForNative(),
     codexAdaptApply: () => applyCodexPatchOnce(),
@@ -544,42 +543,6 @@ export function apply(ctx, config) {
         return null
       }
     },
-    // [0.11.0 原生面板 · MiMo 扫码登录] 直接调用本插件已经在 connection.fetch 注册的
-    // auth / qr handler（同进程、非 HTTP），复用完整的 MiMo 登录状态机与 QR 图片。
-    mimoAuth: {
-      status: () => mimoAuthStatus,
-      request: async (kind, body) => {
-        const host = (() => {
-          try { return mimoAuthHost.getHost() } catch (err) { return null }
-        })()
-        if (host === null || host === undefined || host.native === undefined || host.native === null) return null
-        const handler = kind === 'qr' ? host.native.qr : host.native.auth
-        if (typeof handler !== 'function') return null
-        const path = kind === 'qr' ? '/api/plan-usage-mimo-qr' : '/api/plan-usage-mimo-auth'
-        const init = body === null || body === undefined
-          ? { method: 'GET' }
-          : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }
-        let response
-        try {
-          response = await handler(new Request('http://127.0.0.1' + path, init))
-        } catch (err) {
-          return null
-        }
-        if (response === null || response === undefined) return null
-        if (kind === 'qr') {
-          if (response.status !== 200) return { ok: false, status: response.status }
-          try {
-            const bytes = Buffer.from(await response.arrayBuffer())
-            return { ok: true, mime: response.headers.get('content-type') || 'image/png', bytes }
-          } catch (err) {
-            return null
-          }
-        }
-        let payload = null
-        try { payload = await response.json() } catch (err) { payload = null }
-        return { ok: response.status === 200, status: response.status, body: payload }
-      },
-    },
   })
   // dsh-go 插件检查器的隔离宿主没有 webServer（它不是完整的 DSH 组合环境）。
   // 原生面板已经注册，Web 路由 / 工具 / 观察器都依赖 webServer，不再在这里启动。
@@ -598,23 +561,11 @@ export function apply(ctx, config) {
    * 代码级开关 `enableRememberedAccount` 在本仓库保持默认 false（现有本地保护），
    * 由安装 overlay 在**本调用的 options 里**显式加 `enableRememberedAccount: true`。
    */
-  const mimoAuthHost = registerMimoAuth(ctx, (status) => { mimoAuthStatus = status }, {
-    isEnabled: async () => {
-      try {
-        const live = (await liveConfig.freshStrict()) ?? cfg
-        if (cfgValue(live, 'enabled') === false) return false
-        if (cfgValue(live, 'mimoEnabled') === false) return false
-        return true
-      } catch { return false }
-    },
-    /**
-     * [0.10.3] 生产默认开启：之前这两项只在本地 staged 版里有，发布包缺失，
-     * 导致新装环境进不了 managed 模式、客户端回退到旧的实验面板。
-     */
-    enableConsoleProtocol: true,
-    enableRememberedAccount: true,
-    onLegacyLogin: (payload) => { persistLegacyMimoLogin(payload) },
-  })
+  /**
+   * [0.11.4] MiMo 扫码登录已下线：不再注册本机 auth 服务、不再监听登录成功回调。
+   * 保留 `mimoAuthHost = null`，让下游旧代码在「无桥接」时安全短路。
+   */
+  const mimoAuthHost = null
 
   /**
    * [2026-11-12 MiMo lane 对齐 · 第二层修正] **零 IO** 的显示快照 peek（与胶囊同一条 lane）。
@@ -880,36 +831,10 @@ export function apply(ctx, config) {
    * 这里在取 MiMo 之前**等一下恢复**（`restoreLegacyMimo` 内部 single-flight + 5 分钟缓存），
    * 最多等 3 秒；超时/失败按缺失处理，不拖住其它渠道。
    */
-  const mimoWireReady = async (providerCall) => {
-    /**
-     * [0.11.2] 配了 **MiMo API Key** 时直接走 API Key 通道取数：
-     * 显示快照来自旧的扫码/Cookie 链路，与 Key 不是同一身份，不能拿它顶替；
-     * 401 也要如实暴露（提示重新填 Key），而不是被旧快照掩盖。
-     */
-    let keyConfigured = false
-    try {
-      /**
-       * [0.11.3] 判断口径与取数一致：配置字段 > 固定候选名（含 `XIAOMI_API_KEY`）>
-       * 「设置 → 模型」里 provider 名含 mimo/xiaomi 的自动匹配。
-       */
-      keyConfigured = await hasMimoApiKey(ctx, unpackConfig(await liveConfig()))
-    } catch (err) { keyConfigured = false }
-    if (keyConfigured) return providerCall()
-    let snapshot = null
-    try { snapshot = mimoDisplayPeek() } catch (err) { snapshot = null }
-    if (snapshot === null) {
-      let timer = null
-      try {
-        await Promise.race([
-          Promise.resolve().then(() => restoreLegacyMimo()),
-          new Promise((resolve) => { timer = setTimeout(resolve, 3000) }),
-        ])
-      } catch (err) { /* 忽略：按缺失处理 */ } finally {
-        if (timer !== null) clearTimeout(timer)
-      }
-    }
-    return mimoWireWithDisplay(mimoDisplaySource, providerCall)
-  }
+  /**
+   * [0.11.4] MiMo 只走 API Key 通道（扫码登录已下线）：不再等待或读取任何显示快照。
+   */
+  const mimoWireReady = async (providerCall) => providerCall()
 
   /** [终审 E] MiMo 显示快照的来源身份（非密；采样前后各取一次，用于发现会话/代次漂移）。 */
   const mimoDisplayIdentity = () => {
