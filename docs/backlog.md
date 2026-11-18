@@ -67,6 +67,14 @@
   OpenCode Go 三个窗口各一行两框；重置时间改为网页同款两段式倒计时。
 - 2026-11-14 MiMo 联调：按官方接口变化与真实网络做最小兼容（官方子域 URL、quoted/账号域
   cookie、非法 Set-Cookie 行按浏览器语义忽略），流程仍复用 0.10.5 Host 实现，网页版同样受益。
+- 2026-11-17 ✅ **已做**：`provider → 渠道` 映射归一化（`plans/quota-prompt.js#resolveRoute`）。
+  精确 id 优先；其次按「词元连续包含 + 最长匹配」（`custom-workbuddy` → `workbuddy`、
+  `custom-workbuddy-ai` → `workbuddy-ai`）；等长多命中视为歧义返回 null；**不**做大小写/空白归一化（A12）。
+  胶囊 `providerToChannel` 走同一个 `resolveRoute`，因此两处一起修好。测试 `tools/test-route-normalize.mjs`。
+- 2026-11-17 WorkBuddy「渠道配置有误」真机修复：网关 provider id 与设备相关
+  （桌面端 `workbuddy`、手机端自定义来源 `custom-workbuddy`，只有 displayName 是 workbuddy），
+  旧代码写死 id 导致手机端目录查不到 → `config`。现按「显式配置 → id → displayName → id 后缀」
+  自动识别，歧义要求显式指定；新增 `workbuddyProvider` 配置（留空=自动）。测试 G13–G19。
 - 2026-11-15/16 MiMo 登录持久化：凭据记录保存平台 cookie，重启引擎后重放余额接口免扫码
   （真机验证通过）；设置页可关闭并清除；纯逻辑+可注入 fetch 测试 11 项。
   待观察：serviceToken 实际有效期、设备/IP 绑定是否会失效。

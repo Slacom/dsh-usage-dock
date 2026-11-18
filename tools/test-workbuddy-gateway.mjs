@@ -18,6 +18,8 @@
 import {
   isLoopbackHost,
   fetchFromGateway,
+  pickGatewayProvider,
+  gatewayProviderIdOf,
 } from '../plans/workbuddy.js'
 
 let passCount = 0
@@ -148,10 +150,12 @@ async function runCase(opts) {
     },
     override: {}, inherited: {},
   }]
+  // 可用凭据引用：默认只有 WB_KEY；需要别的引用名时用 opts.keyEnvs 传入。
+  const usableRefs = new Set(['WB_KEY', ...(Array.isArray(opts.keyEnvs) ? opts.keyEnvs : [])])
   const credentials = opts.noKey === true
     ? { resolve: async () => ({ value: '' }) }
-    : { resolve: async (ref) => ({ value: ref === 'WB_KEY' ? 'sk-gateway' : '' }) }
-  const ctx = makeCtx(CATALOG, rows, credentials)
+    : { resolve: async (ref) => ({ value: usableRefs.has(ref) ? 'sk-gateway' : '' }) }
+  const ctx = makeCtx(opts.catalog || CATALOG, rows, credentials)
   const calls = []
   const originalFetch = globalThis.fetch
   globalThis.fetch = async (url, init) => {
@@ -168,7 +172,7 @@ async function runCase(opts) {
   }
   let out
   try {
-    out = await fetchFromGateway(ctx, { id: 'workbuddy', name: 'WorkBuddy' }, {})
+    out = await fetchFromGateway(ctx, { id: 'workbuddy', name: 'WorkBuddy' }, opts.cfg || {})
   } finally {
     globalThis.fetch = originalFetch
   }
@@ -362,6 +366,131 @@ async function runCase(opts) {
   check('G12a 正文只被消费一次（不再二次读取）',
     out.error === undefined && out.creditsTotal === 5799, { err: out.error, msg: out.message })
 }
+/**
+ * [0.11.1 真机] 网关 provider id 与设备相关：桌面端 id 是 `workbuddy`，
+ * 手机端是自定义来源 `custom-workbuddy`（`displayName` 才是 `workbuddy`）。
+ * 旧代码写死 `workbuddy` → 目录查不到 → `config` → 界面显示「渠道配置有误」。
+ */
+const PHONE_CATALOG = [{
+  provider: 'opencode-go', displayName: 'opencode-go', settingsNs: 'llm-pi-ai',
+  settingsPath: ['providers', 'opencode-go'], defaultBaseURL: '',
+}, {
+  provider: 'custom-workbuddy', displayName: 'workbuddy', settingsNs: 'llm-pi-ai',
+  settingsPath: ['providers', 'custom-workbuddy'], defaultBaseURL: '',
+}]
+const PHONE_CONFIG = {
+  providers: {
+    'opencode-go': { baseURL: 'https://opencode.example/v1', apiKeyEnv: 'OC_KEY' },
+    'custom-workbuddy': { baseURL: 'https://hk.example.dpdns.org/v1', apiKeyEnv: 'CUSTOM_WORKBUDDY_API_KEY' },
+  },
+}
+
+{
+  const { out, calls } = await runCase({ catalog: PHONE_CATALOG, config: PHONE_CONFIG, keyEnvs: ['CUSTOM_WORKBUDDY_API_KEY'] })
+  check('G13a 手机端：displayName=workbuddy 的自定义来源也能取到积分（不再报渠道配置有误）',
+    out.error === undefined && out.creditsTotal === 5799, { err: out.error, msg: out.message })
+  check('G13b 手机端：请求打到该来源 origin 根下的 /v1/credits',
+    calls.length === 1 && calls[0].url === 'https://hk.example.dpdns.org/v1/credits', calls)
+}
+
+{
+  const { out } = await runCase({
+    catalog: PHONE_CATALOG,
+    config: PHONE_CONFIG,
+    cfg: { workbuddyProvider: 'custom-workbuddy' },
+    keyEnvs: ['CUSTOM_WORKBUDDY_API_KEY'],
+  })
+  check('G14 显式指定 workbuddyProvider 时按该 id 取数', out.error === undefined && out.creditsTotal === 5799,
+    { err: out.error, msg: out.message })
+}
+
+{
+  const { out, calls } = await runCase({
+    catalog: PHONE_CATALOG,
+    config: PHONE_CONFIG,
+    cfg: { workbuddyProvider: 'nope' },
+  })
+  check('G15 显式指定的 id 不存在 ⇒ 如实报配置错误、零请求、不回退别的来源',
+    out.error === 'config' && calls.length === 0 && String(out.message).includes('nope'),
+    { err: out.error, msg: out.message, calls: calls.length })
+}
+
+{
+  const { out, calls } = await runCase({
+    catalog: [{
+      provider: 'opencode-go', displayName: 'opencode-go', settingsNs: 'llm-pi-ai',
+      settingsPath: ['providers', 'opencode-go'], defaultBaseURL: '',
+    }],
+    config: { providers: { 'opencode-go': { baseURL: 'https://a.example/v1', apiKeyEnv: 'OC_KEY' } } },
+  })
+  check('G16 目录里没有 WorkBuddy ⇒ config 错误并列出已登记渠道、零请求',
+    out.error === 'config' && calls.length === 0 && String(out.message).includes('opencode-go'),
+    { err: out.error, msg: out.message })
+}
+
+{
+  const ambiguous = [{
+    provider: 'wb-a', displayName: 'workbuddy', settingsNs: 'llm-pi-ai',
+    settingsPath: ['providers', 'wb-a'], defaultBaseURL: '',
+  }, {
+    provider: 'wb-b', displayName: 'WorkBuddy', settingsNs: 'llm-pi-ai',
+    settingsPath: ['providers', 'wb-b'], defaultBaseURL: '',
+  }]
+  const { out, calls } = await runCase({
+    catalog: ambiguous,
+    config: { providers: { 'wb-a': { baseURL: 'https://a.example/v1', apiKeyEnv: 'K1' }, 'wb-b': { baseURL: 'https://b.example/v1', apiKeyEnv: 'K2' } } },
+  })
+  check('G17 多条都叫 workbuddy ⇒ 报歧义、要求显式指定、零请求',
+    out.error === 'config' && calls.length === 0 && String(out.message).includes('wb-a'),
+    { err: out.error, msg: out.message })
+}
+
+{
+  const { out } = await runCase({
+    catalog: [{
+      provider: 'custom-workbuddy', displayName: '自定义加速', settingsNs: 'llm-pi-ai',
+      settingsPath: ['providers', 'custom-workbuddy'], defaultBaseURL: '',
+    }],
+    config: { providers: { 'custom-workbuddy': { baseURL: 'https://c.example/v1', apiKeyEnv: 'K3' } } },
+    keyEnvs: ['K3'],
+  })
+  check('G18 displayName 不叫 workbuddy 时按 id 后缀识别（custom-workbuddy）',
+    out.error === undefined && out.creditsTotal === 5799, { err: out.error, msg: out.message })
+}
+
+// ---- 纯函数：provider id 挑选（不涉网络） ----
+{
+  const list = [
+    { provider: 'workbuddy', displayName: 'WorkBuddy' },
+    { provider: 'custom-workbuddy', displayName: 'workbuddy' },
+  ]
+  check('G19a 精确 id 优先于 displayName 匹配',
+    pickGatewayProvider(list, 'workbuddy', '').provider === 'workbuddy', pickGatewayProvider(list, 'workbuddy', ''))
+  check('G19b 只有自定义来源时按 displayName 命中',
+    pickGatewayProvider([{ provider: 'custom-workbuddy', displayName: 'workbuddy' }], 'workbuddy', '').provider === 'custom-workbuddy',
+    pickGatewayProvider([{ provider: 'custom-workbuddy', displayName: 'workbuddy' }], 'workbuddy', ''))
+  check('G19c 空目录 ⇒ config 错误且提到 workbuddy',
+    pickGatewayProvider([], 'workbuddy', '').error === 'config'
+      && String(pickGatewayProvider([], 'workbuddy', '').message).includes('workbuddy'))
+  check('G19d 显式 id 命中时不看 displayName',
+    pickGatewayProvider([{ provider: 'x-wb', displayName: 'workbuddy' }, { provider: 'y', displayName: 'Y' }], 'workbuddy', 'y').via === 'explicit')
+  check('G19e 归一化匹配（大小写/分隔符不敏感）',
+    pickGatewayProvider([{ provider: 'Work_Buddy', displayName: 'x' }], 'workbuddy', '').provider === 'Work_Buddy')
+}
+
+// ---- gatewayProviderIdOf：只读目录，供观察身份指纹使用 ----
+{
+  const ctxOf = (catalog) => ({ get: (name) => name === 'llm' ? { listConfigurableProviders: () => catalog } : undefined })
+  check('G20a 手机端目录 ⇒ 解析到 custom-workbuddy',
+    gatewayProviderIdOf(ctxOf(PHONE_CATALOG), '').provider === 'custom-workbuddy',
+    gatewayProviderIdOf(ctxOf(PHONE_CATALOG), ''))
+  check('G20b 桌面端目录 ⇒ 解析到 workbuddy',
+    gatewayProviderIdOf(ctxOf(CATALOG), '').provider === 'workbuddy')
+  check('G20c 缺 llm 服务 ⇒ unavailable（不是 config）',
+    gatewayProviderIdOf({ get: () => undefined }, '').error === 'unavailable')
+  check('G20d 显式值优先', gatewayProviderIdOf(ctxOf(PHONE_CATALOG), 'opencode-go').provider === 'opencode-go')
+}
+
 console.log('\n' + (passCount + failCount) + ' 项：' + passCount + ' 通过, ' + failCount + ' 失败')
 process.exit(failCount === 0 ? 0 : 1)
 }

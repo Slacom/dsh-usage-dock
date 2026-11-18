@@ -30,7 +30,10 @@ DeepSeek Harness（DSH）的**侧栏用量/余额插件**：在 Web/桌面端左
 用量与余额，点击可展开详情面板。fork 自 `chendefine/dsh-plugins-plan-usage`，改名 `dsh-usage-dock`
 以避免与上游混淆，并做了一系列定制（见第 6 节）。
 
-**当前版本**：0.11.0（DSH Go 原生半：原生额度面板 + 原生设置页 + 输入框上方 `composer.strip` 额度条 +
+**当前版本**：0.11.1（手机端 WorkBuddy 网关 provider 识别修复（`workbuddyProvider` 显式指定或
+按 id/displayName/后缀自动识别）+ 模型路由名归一化（`custom-workbuddy` → `workbuddy`）+
+原生额度面板去掉逐渠道「更新时间」；承接 0.11.0 的 DSH Go 原生半：原生额度面板 + 原生设置页 +
+输入框上方 `composer.strip` 额度条 +
 MiMo 扫码登录持久化；承接 0.10.6 的 Codex `Subscription` 支持第三方 3.2.17 与清单 `inheritFrom` 继承、
 `patch-state` 增加 `covered` / `manifestVersion`、设置页「需适配」块区分三态并区分两种
 unsupported 文案；再承接 0.10.5 的 MiMo 登录收敛为「扫码 → 确认账号 → 读余额」+
@@ -38,8 +41,9 @@ unsupported 文案；再承接 0.10.5 的 MiMo 登录收敛为「扫码 → 确�
 Codex `Subscription` 补丁支持 3.2.13 与 pnpm 布局 + 额度策略注入修复（`opencode-go` 路由映射缺失、
 `ctx.inject` 注册）+ 详情卡片重置时间两段精度与列对齐；0.10.0 的双来源手选 / WorkBuddy 只读 cn /
 MiMo 与 `usage_status` 同源不变）。
-**已发布**：tag `v0.11.0`（annotated）/ commit `c54e0ea`（已 push `origin/main`）/
-npm `dsh-usage-dock@0.11.0`；GitHub Release id **448193666**（标题 `v0.11.0`，`make_latest: true`）。
+**发布**：0.11.1 正在发布（完成后补 commit / tag / Release id / npm shasum）。
+上一个公开版 **0.11.0**：tag `v0.11.0` / commit `c54e0ea` / npm `dsh-usage-dock@0.11.0` /
+GitHub Release id **448193666**。
 **0.10.3 / 0.10.4 是本地构建、从未发布**，不要把它们当作已发布版本；**0.10.6 也未单独发布**，
 其内容（Codex Subscription 3.2.17 + `inheritFrom` 清单 + `patch-state` 两字段）随 0.11.0 一起发布。　|　
 **上一公开版**：0.11.0（GitHub Release + npm；0.10.3 / 0.10.4 / 0.10.6 从未单独发布）
@@ -322,6 +326,8 @@ tools/test-dsh-go-boundaries.mjs     [0.11.0 终审整改] DSH Go 边界（47 �
 tools/test-dsh-go-strip.mjs          [0.11.0] strip 纯函数（17 项：路由事件/映射/文本/截断/隐藏）
 tools/test-mimo-legacy-store.mjs     [0.11.0] MiMo legacy 持久化（12 项：cookie 白名单/记录年龄/
                   重放/失败枚举/稳定采样时间）
+tools/test-route-normalize.mjs       [0.11.1] 模型路由名归一化（7 项：精确 id / 词元连续包含+最长匹配 /
+                  大小写与前后空白不命中（A12）/ 等长多命中返回 null）
 ```
 
 **已接入渠道**（0.10.0 起）：OpenCode Go、DeepSeek（账号余额优先/API Key 回退）、
@@ -472,6 +478,20 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
 > 📌 **用户已确认要做、但尚未实施的事项统一记在 [docs/backlog.md](docs/backlog.md)**（含
 > MiMo「平台票据缺失」的 3 次有限自动重试、安卓移动端适配、DSH Go 原生面板后续项、策略表口径等）。
 > 动手前先看那份清单，不要凭记忆重推需求。
+
+- **WorkBuddy 手机端 provider 识别**（0.11.1）：网关 provider id 与设备相关（桌面 `workbuddy`、
+  手机自定义来源 `custom-workbuddy`）。`plans/workbuddy.js#pickGatewayProvider()` 判定顺序：
+  ① 显式 `workbuddyProvider`（新配置项，留空=自动，填了只认它）；② id 归一化等于 `workbuddy`；
+  ③ `displayName` 归一化等于 `workbuddy`；④ id 归一化以 `workbuddy` 结尾。③/④ 多命中 ⇒ 歧义报错、
+  要求显式指定；`workbuddy-api` / `wb-workbuddy-2` 不会自动命中。`index.js` 的来源指纹改用解析出的 id
+  （新增 `GATEWAY_PROVIDER_FALLBACK`）。回归 `test-workbuddy-gateway` **39 项**（G13–G20）。
+- **路由名归一化**（0.11.1）：`plans/quota-prompt.js#resolveRoute` 增加「词元连续包含 + 最长匹配」，
+  `custom-workbuddy` → `workbuddy`、`custom-workbuddy-ai` → `workbuddy-ai`；**不**转小写/去空白
+  （`WORKBUDDY` / `" workbuddy"` 仍不命中，A12 约定不变）；等长多命中返回 `null`。
+  胶囊 `providerToChannel()` 先调 `resolveRoute()`，一处修好胶囊与额度策略两处。`test-route-normalize` 7 项。
+- **原生面板去掉逐渠道「更新时间」**（0.11.1）：渠道块不再渲染独立 `.note` 行（App 对空 text 仍占一行，
+  不能只置空）；余额/积分改绑 `.value`；配额渠道无窗口时状态文案进第一窗口说明（`c5`）；
+  正常态 `note` 为空串，失败/不可用/未知仍显示说明。`test-dsh-go-native` **43 项**。
 
 - **DSH Go 原生半**（0.11.0）：`package.json` 新增 `dshGo` 清单（v1；`title` 额度 / Usage、
   `"icon":"wallet"`），与既有 `dsh`（Web 半）**并存互不影响**：

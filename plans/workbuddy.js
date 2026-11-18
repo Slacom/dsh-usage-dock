@@ -67,6 +67,15 @@ const cnPlan = {
      * 只为兼容旧配置与回滚。保留字符串类型以避免与 DSH 设置表单的数组投影纠缠。
      */
     workbuddyAccounts: z.string().default('[]'),
+    /**
+     * [0.11.1] 网关对应的**模型提供商 id**（`设置 → 模型` 里 `providers` 下的键）。
+     *
+     * 为什么需要：同一套 WorkBuddy 网关在不同设备上 id 可能不同
+     * （桌面端叫 `workbuddy`，手机上是自定义来源 `custom-workbuddy`，`displayName` 才叫 workbuddy）。
+     * 留空 = 自动识别（先精确 id，再按 displayName，再按 id 后缀）。填了就以填写值为准，
+     * 填错会如实报「渠道配置有误」，不会静默换用别的渠道。
+     */
+    workbuddyProvider: z.string().default(''),
   },
   source: {
     provider: 'dsh-workbuddy-connect',
@@ -415,13 +424,124 @@ function clientCreditsWire(plan, body) {
  *
  * 只走宿主公开目录 + 已组合配置，不扫任意 providers、不做深合并。
  */
-async function resolveGatewaySource(ctx, budgetMs) {
+/** 归一化提供商名字：小写、只留字母数字（`Custom-WorkBuddy` → `customworkbuddy`）。 */
+function normalizeProviderName(value) {
+  return typeof value === 'string' ? value.toLowerCase().replace(/[^a-z0-9]/g, '') : ''
+}
+
+/**
+ * 读取宿主已登记的模型提供商目录（纯读取：不解析凭据、不发请求）。
+ *
+ * [0.11.1 真机] 为什么需要单独读目录：同一个 WorkBuddy 网关在不同设备上的 **provider id**
+ * 可能不一样 —— 桌面端是 `workbuddy`，手机端是自定义来源 `custom-workbuddy`
+ * （只有 `displayName` 叫 `workbuddy`）。旧代码写死 id `workbuddy`，在手机上
+ * 目录里查不到 → `config` → 界面显示「渠道配置有误」。
+ *
+ * @returns {{ok: true, entries: Array}|{ok: false, error: string, message: string}}
+ */
+function readGatewayProviders(ctx) {
+  let llm
+  try {
+    llm = typeof ctx?.get === 'function' ? ctx.get('llm') : undefined
+  } catch (err) {
+    llm = undefined
+  }
+  if (llm === undefined || llm === null || typeof llm.listConfigurableProviders !== 'function') {
+    return { ok: false, error: 'unavailable', message: '当前宿主不提供模型提供商目录，无法确认该渠道的来源；请升级宿主后重试' }
+  }
+  let entries
+  try {
+    entries = llm.listConfigurableProviders()
+  } catch (err) {
+    return { ok: false, error: 'config', message: '读取模型提供商目录失败，请稍后重试' }
+  }
+  if (!Array.isArray(entries)) return { ok: false, error: 'config', message: '模型提供商目录不可用，请稍后重试' }
+  return {
+    ok: true,
+    entries: entries.filter((entry) => entry !== null && typeof entry === 'object' && typeof entry.provider === 'string'),
+  }
+}
+
+/**
+ * 从提供商目录里挑出 WorkBuddy 网关对应的 provider id。
+ *
+ * 判定顺序（越靠前越权威）：
+ *   1. 用户在设置里**显式**填的 id（填了就只认它，不回退，避免"看着生效其实用了别的"）；
+ *   2. provider id 归一化后与期望名一致（`workbuddy`）；
+ *   3. 目录里的 `displayName` 归一化后与期望名一致（手机端 `displayName: workbuddy`）；
+ *   4. provider id 归一化后以期望名结尾（`custom-workbuddy`）。
+ * 3/4 命中多条 ⇒ 视为歧义，要求显式指定，不猜。
+ *
+ * 返回的 message 只含 provider id / displayName，不含地址、Key、上游原文。
+ *
+ * @param {Array} entries `readGatewayProviders()` 的 entries
+ * @param {string} wanted 期望的网关名（`workbuddy`）
+ * @param {string} [explicit] 设置里显式配置的 provider id
+ * @returns {{ok: true, provider: string, via: string}|{ok: false, error: 'config', message: string}}
+ */
+export function pickGatewayProvider(entries, wanted, explicit) {
+  const list = Array.isArray(entries) ? entries : []
+  const want = normalizeProviderName(wanted)
+  if (want.length === 0) return { ok: false, error: 'config', message: '网关名称为空，无法定位模型渠道' }
+  const wantedId = typeof explicit === 'string' ? explicit.trim() : ''
+  if (wantedId.length > 0) {
+    const hit = list.find((entry) => entry.provider === wantedId)
+    if (hit !== undefined) return { ok: true, provider: hit.provider, via: 'explicit' }
+    return {
+      ok: false,
+      error: 'config',
+      message: '设置里指定的模型渠道「' + wantedId + '」不在当前宿主登记列表里，请到「设置 → 模型」核对名称',
+    }
+  }
+  const byId = list.find((entry) => normalizeProviderName(entry.provider) === want)
+  if (byId !== undefined) return { ok: true, provider: byId.provider, via: 'id' }
+  const byDisplay = list.filter((entry) => normalizeProviderName(entry.displayName) === want)
+  if (byDisplay.length === 1) return { ok: true, provider: byDisplay[0].provider, via: 'display-name' }
+  if (byDisplay.length > 1) {
+    return {
+      ok: false,
+      error: 'config',
+      message: '有多个模型渠道都叫「' + wanted + '」（' + byDisplay.map((entry) => entry.provider).join('、') + '），请在设置里指定使用哪一个',
+    }
+  }
+  const bySuffix = list.filter((entry) => normalizeProviderName(entry.provider).endsWith(want))
+  if (bySuffix.length === 1) return { ok: true, provider: bySuffix[0].provider, via: 'suffix' }
+  if (bySuffix.length > 1) {
+    return {
+      ok: false,
+      error: 'config',
+      message: '有多个模型渠道疑似「' + wanted + '」（' + bySuffix.map((entry) => entry.provider).join('、') + '），请在设置里指定使用哪一个',
+    }
+  }
+  const names = list.map((entry) => entry.provider).slice(0, 8).join('、')
+  return {
+    ok: false,
+    error: 'config',
+    message: '「设置 → 模型」里没有找到 ' + wanted + ' 网关' + (names.length > 0 ? '（当前已登记：' + names + '）' : ''),
+  }
+}
+
+async function resolveGatewaySource(ctx, budgetMs, cfg) {
   if (ctx === null || ctx === undefined || typeof ctx.get !== 'function') {
     return { ok: false, error: 'unavailable', message: '缺少宿主上下文，无法读取模型网关配置' }
   }
-  const { providerSourceOf } = await import('./custom-balance.js')
+  const { providerSourceOf, unwrapVolatile } = await import('./custom-balance.js')
+  /**
+   * [0.11.1 真机] **按实际配置的 provider id 解析**，不再写死 `workbuddy`。
+   *
+   * 真机故障：手机端「设置 → 模型」里的网关是自定义来源，id 为 `custom-workbuddy`
+   * （`displayName` 才是 `workbuddy`）。旧代码只认 id `workbuddy` → 目录里查不到
+   * → `config` → 界面显示「渠道配置有误」，但桌面端（id 就是 `workbuddy`）正常。
+   */
+  const rawExplicit = cfg !== null && cfg !== undefined && typeof cfg === 'object' ? unwrapVolatile(cfg.workbuddyProvider) : ''
+  const explicit = typeof rawExplicit === 'string' ? rawExplicit.trim() : ''
+  const providers = readGatewayProviders(ctx)
+  if (providers.ok !== true) return { ok: false, error: providers.error, message: providers.message }
+  const picked = pickGatewayProvider(providers.entries, GATEWAY_PROVIDER, explicit)
+  if (picked.ok !== true) return { ok: false, error: 'config', message: picked.message }
+  const providerId = picked.provider
   // 显式允许本机回环 HTTP（仅此网关）；通用自定义渠道不受影响。
-  const source = await providerSourceOf(ctx, GATEWAY_PROVIDER, { allowLoopbackHttp: true })
+  const source = await providerSourceOf(ctx, providerId, { allowLoopbackHttp: true })
   if (source.ok !== true) {
     // 区分「没配置」与「配置不合法」：后者是用户可修的配置错误。
     /**
@@ -436,7 +556,7 @@ async function resolveGatewaySource(ctx, budgetMs) {
     return {
       ok: false,
       error: code,
-      message: '读取 ' + GATEWAY_PROVIDER + ' 网关配置失败：' + source.message,
+      message: '读取 ' + providerId + ' 网关配置失败：' + source.message,
     }
   }
   let base
@@ -707,6 +827,22 @@ function transportCodeOf(err) {
   return 'transport'
 }
 /** 国内 WorkBuddy：从 WorkBuddy2API 网关读积分。 */
+/**
+ * 同步解析「网关对应的 provider id」（只读目录，不发请求）。
+ *
+ * 供 `index.js` 观察身份里的来源指纹使用：手机端的 provider id 不是 `workbuddy`，
+ * 若指纹固定按 `workbuddy` 算，来源变化永远看不出差别。
+ *
+ * @param {object} ctx Host context
+ * @param {string} [explicit] 设置里的 `workbuddyProvider`
+ * @returns {{ok: true, provider: string, via: string}|{ok: false, error: string, message: string}}
+ */
+export function gatewayProviderIdOf(ctx, explicit) {
+  const providers = readGatewayProviders(ctx)
+  if (providers.ok !== true) return { ok: false, error: providers.error, message: providers.message }
+  return pickGatewayProvider(providers.entries, GATEWAY_PROVIDER, typeof explicit === 'string' ? explicit.trim() : '')
+}
+
 export async function fetchFromGateway(ctx, plan, cfg, options) {
   /**
    * [2026-10-25] **不再读取 `cfg.workbuddyAccounts` 做筛选**：
@@ -761,7 +897,7 @@ export async function fetchFromGateway(ctx, plan, cfg, options) {
     message: plan.name + ' 本次调用预算已用尽，未发起网关请求',
   })
   if (capTimeout(GATEWAY_TIMEOUT_MS) <= 0) return exhaustedResult()
-  const source = await resolveGatewaySource(ctx, capTimeout(GATEWAY_TIMEOUT_MS))
+  const source = await resolveGatewaySource(ctx, capTimeout(GATEWAY_TIMEOUT_MS), cfg)
   if (source.ok !== true) {
     return Object.assign(planBase(plan), { error: source.error, message: source.message })
   }

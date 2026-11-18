@@ -219,3 +219,40 @@ strip id 与面板 id 不重复（面板仍叫 `quota`）。每插件只有 1 �
 - MiMo「登录不可用（需要新版宿主）」与 Codex Subscription 版本/补丁问题仍按
   `docs/backlog.md` §2 单独处理，与本面板无耦合。
 - 版本号未动；按 AGENTS.md 的推送闸门，**用户真机确认前不 push / 不发版**。
+
+## WorkBuddy 在手机端显示「渠道配置有误」（2026-11-17 修复）
+
+**现象**：桌面端 WorkBuddy 积分正常，手机原生面板 WorkBuddy 一行显示「—」+「渠道配置有误」。
+
+**根因**：`plans/workbuddy.js` 取数要按「模型提供商 id」在宿主目录里找网关，旧代码写死
+`workbuddy`。而 provider id 是 `设置 → 模型` 里 `providers` 下的**键**，与设备配置有关：
+桌面端就是 `workbuddy`，手机端是自定义来源 `custom-workbuddy`（只有 `displayName` 叫
+`workbuddy`）。目录里查不到 → `config` → 界面「渠道配置有误」，且**零请求**。
+
+**修复**（`pickGatewayProvider`，纯函数）：
+1. 设置里的 `workbuddyProvider`（新配置项，留空=自动）填了就只认它，填错如实报错；
+2. provider id 归一化后等于 `workbuddy`；
+3. `displayName` 归一化后等于 `workbuddy`（手机端命中这条）；
+4. provider id 归一化后以 `workbuddy` 结尾（`custom-workbuddy`）。
+3/4 命中多条视为歧义，要求显式指定，绝不猜。
+
+**验证**：手机端用凭据库里的 Key 直连网关 `GET /v1/credits` 返回 200，
+`creditsFromClientCredits` 解析出 `total: 1110`（1 个账号）；回归测试 G13–G19。
+
+## provider → 渠道归一化（2026-11-17）
+
+**症状**：手机端用 WorkBuddy（provider id `custom-workbuddy`）聊天时，输入框上方没有胶囊，
+额度策略也不注入 `[当前额度快照]`——但额度面板里 WorkBuddy 数值正常。
+
+**根因**：胶囊与策略共用 `resolveRoute()` 做「当前模型 → 渠道」映射，旧实现只做**精确 id**
+匹配；`custom-workbuddy` 不在表里 → unmapped → 胶囊 `emit(null)` 隐藏、策略静默不投放。
+
+**修复**（`plans/quota-prompt.js`）：
+1. 精确 id（`workbuddy`、`workbuddy-ai`、`opencode-go`、`openai-codex`、`deepseek-account` / `deepseek-official`）；
+2. 词元连续包含 + **最长匹配**：`custom-workbuddy` → `workbuddy`，`custom-workbuddy-ai` → `workbuddy-ai`；
+3. 等长多命中 ⇒ 歧义，返回 null（不猜）；
+4. **不转小写、不去空白**：`WORKBUDDY` / `" workbuddy"` 仍不命中（沿用 A12 的严格约定）。
+
+胶囊侧不需要改：`providerToChannel()` 本来就先调 `resolveRoute()`，所以一处修好两处生效。
+
+

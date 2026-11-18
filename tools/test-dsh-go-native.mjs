@@ -355,7 +355,8 @@ check('opencode-go 窗口按「已用→剩余」换算（与 Web/工具口径�
   const codex = built.data.channels.codex
   assert.equal(codex.w5, 55) // codex 本来就是剩余
   assert.equal(codex.week, 72)
-  assert.equal(codex.note.startsWith('更新 '), true)
+  // [2026-11-17] 正常态不再逐条显示更新时间（只在面板顶部显示一次）。
+  assert.equal(codex.note, '')
 })
 
 check('重置时间：与网页版一致的两段式倒计时（天/时、时/分）', () => {
@@ -410,7 +411,73 @@ check('余额/积分渠道：金额格式与单位', () => {
   assert.equal(built.data.channels.deepseek.amount, '¥18.03')
   assert.equal(built.data.channels.mimo.amount, '¥9.5')
   assert.equal(built.data.channels.workbuddy.amount, '6017')
-  assert.equal(built.data.channels.deepseek.note.startsWith('更新 '), true)
+  assert.equal(built.data.channels.deepseek.note, '')
+})
+
+check('更新时间只出现在顶部：渠道行不再带「更新」，失败态仍逐条说明', () => {
+  const now = 1_700_000_000_000
+  const wires = fakeWires(now)
+  // 让 WorkBuddy 变成「暂时失败」：区分「去掉时间」与「保留错误说明」
+  const failed = wires.map((wire) => (wire.id === 'workbuddy'
+    ? { ...wire, error: 'server' }
+    : wire))
+  const built = buildNativeData({
+    cfg: {},
+    plans,
+    semanticsOf: () => 'used',
+    wires: failed,
+    customEntries: [],
+    locale: 'zh-CN',
+    now,
+  })
+  assert.equal(typeof built.data.updated, 'string')
+  assert.equal(built.data.updated.startsWith('更新 '), true)
+  for (const key of ['opencodeGo', 'deepseek', 'mimo']) {
+    assert.equal(built.data.channels[key].note, '', key + ' 不应再显示更新时间')
+  }
+  assert.equal(built.data.channels.workbuddy.note.length > 0, true)
+})
+
+check('渠道块不再渲染独立的状态/更新时间文本行（避免空行）', () => {
+  const view = buildNativeView({ cfg: {}, plans, locale: 'zh-CN', hasCustomChannels: false })
+  const bindingText = (value) => {
+    if (typeof value === 'string') return value
+    if (value !== null && typeof value === 'object' && typeof value.$ === 'string') return value.$
+    return ''
+  }
+  const noteBindings = []
+  walkNodes(view, (node) => {
+    const text = node !== null && typeof node === 'object' ? bindingText(node.text) : ''
+    if (text.startsWith('data.channels.') && text.endsWith('.note')) noteBindings.push(text)
+  })
+  assert.deepEqual(noteBindings, [])
+  // 余额/积分行改绑 .value（有金额显示金额，没有就显示状态），行数不变
+  const valueBindings = []
+  walkNodes(view, (node) => {
+    if (node === null || typeof node !== 'object' || node.type !== 'keyValue') return
+    for (const item of node.items) valueBindings.push(bindingText(item[1]))
+  })
+  assert.equal(valueBindings.includes('data.channels.deepseek.value'), true)
+  assert.equal(valueBindings.includes('data.channels.workbuddy.value'), true)
+  assert.equal(valueBindings.includes('data.channels.mimo.value'), true)
+})
+
+check('状态文案复用现有行：余额失败显示在值列，配额失败显示在第一窗口说明', () => {
+  const now = 1_700_000_000_000
+  const wires = fakeWires(now).map((wire) => {
+    if (wire.id === 'deepseek') return { ...wire, error: 'auth' }
+    if (wire.id === 'opencode-go') return { ...wire, error: 'server' }
+    return wire
+  })
+  const built = buildNativeData({ cfg: {}, plans, semanticsOf: () => 'used', wires, customEntries: [], locale: 'zh-CN', now })
+  const deepseek = built.data.channels.deepseek
+  assert.equal(typeof deepseek.value, 'string')
+  assert.equal(deepseek.value.length > 0, true)
+  assert.equal(deepseek.note.length > 0, true)
+  const opencode = built.data.channels.opencodeGo
+  assert.equal(opencode.c5.length > 0, true, '配额渠道失败时第一行应有说明')
+  // 正常渠道：值列是金额，第一窗口说明仍为常规倒计时
+  assert.equal(built.data.channels.mimo.value.startsWith('¥'), true)
 })
 
 check('自定义余额渠道 → list 行（名称/余额/币种）', () => {

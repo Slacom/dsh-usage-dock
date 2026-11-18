@@ -84,16 +84,70 @@ const ROUTE_TABLE = Object.freeze({
 const RESERVE_MODEL_PREFIX = 'gpt-reserve'
 
 /**
+ * 路由 id 分词：按非字母数字切分（`custom-workbuddy` → `['custom','workbuddy']`）。
+ *
+ * **不转小写**：provider id 是配置里的精确字符串，大小写变体不该被当成同一个渠道
+ * （沿用既有 A12「不做大小写/空白归一化」的约定）。
+ */
+function routeTokensOf(provider) {
+  return String(provider).split(/[^A-Za-z0-9]+/).filter((token) => token.length > 0)
+}
+
+/** `needle` 是否作为**连续词元**出现在 `haystack` 里（顺序敏感、不允许缺段）。 */
+function containsTokenRun(haystack, needle) {
+  if (needle.length === 0 || needle.length > haystack.length) return false
+  for (let start = 0; start + needle.length <= haystack.length; start += 1) {
+    let hit = true
+    for (let offset = 0; offset < needle.length; offset += 1) {
+      if (haystack[start + offset] !== needle[offset]) { hit = false; break }
+    }
+    if (hit) return true
+  }
+  return false
+}
+
+/** 表里每个 key 的分词结果（模块加载时算一次）。 */
+const ROUTE_KEY_TOKENS = Object.freeze(Object.keys(ROUTE_TABLE).map((key) => ({ key, tokens: routeTokensOf(key) })))
+
+/**
  * 把 route id 解析成渠道候选。
  *
- * @param {string} provider 本次请求实际使用的 provider route id（精确匹配）
+ * [2026-11-17 真机] **不再只做精确匹配**：provider id 由用户在「设置 → 模型」里命名，
+ * 同一套服务在不同设备上会叫 `workbuddy` / `custom-workbuddy` / `my-workbuddy`。
+ * 只认精确 id 时，手机端用 `custom-workbuddy` 聊天 → 路由 unmapped → 额度策略不注入、
+ * 胶囊也不显示该渠道。
+ *
+ * 现在的匹配顺序：
+ *   1. 精确 id（`workbuddy`、`workbuddy-ai`、`opencode-go` …）；
+ *   2. **词元连续包含**：provider 分词后包含某个表 key 的完整词元序列，取**最长**的那个
+ *      （`custom-workbuddy` → `workbuddy`；`custom-workbuddy-ai` → `workbuddy-ai`）；
+ *   3. 等长多命中 ⇒ 视为歧义，返回 null（不猜）。
+ *
+ * @param {string} provider 本次请求实际使用的 provider route id
  * @returns {{ channelId: string, source: string|null }|null}
  */
 export function resolveRoute(provider) {
   if (typeof provider !== 'string' || provider.length === 0) return null
-  // [A12] 精确匹配，不做大小写/空白归一化。
-  if (!Object.prototype.hasOwnProperty.call(ROUTE_TABLE, provider)) return null
-  const hit = ROUTE_TABLE[provider]
+  if (Object.prototype.hasOwnProperty.call(ROUTE_TABLE, provider)) {
+    const exact = ROUTE_TABLE[provider]
+    return { channelId: exact.channelId, source: exact.source === undefined ? null : exact.source }
+  }
+  // 前后空白同样是「不同的 id」：不 trim、不猜（A12）。
+  if (provider !== provider.trim()) return null
+  const tokens = routeTokensOf(provider)
+  let best = null
+  let ambiguous = false
+  for (const entry of ROUTE_KEY_TOKENS) {
+    if (!containsTokenRun(tokens, entry.tokens)) continue
+    if (best === null || entry.tokens.length > best.tokens.length) {
+      best = entry
+      ambiguous = false
+      continue
+    }
+    if (entry.tokens.length === best.tokens.length && entry.key !== best.key) ambiguous = true
+  }
+  if (best === null || ambiguous) return null
+  const hit = ROUTE_TABLE[best.key]
   return { channelId: hit.channelId, source: hit.source === undefined ? null : hit.source }
 }
 

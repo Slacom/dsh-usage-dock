@@ -39,7 +39,7 @@ import { peakPhaseAt, peakSegments } from './plans/peak-phase.js'
  * 旧的 `selectedAccountsFingerprint` 已不参与观察身份（无稳定账号 ID，筛选不再生效），
  * 但仍留在 plans/workbuddy.js 里供历史测试。
  */
-import { setWebBase, listWorkbuddyAccounts, GATEWAY_CREDITS_PATH } from './plans/workbuddy.js'
+import { setWebBase, listWorkbuddyAccounts, GATEWAY_CREDITS_PATH, gatewayProviderIdOf } from './plans/workbuddy.js'
 import { execError, isSentinelApiKey } from './plans/util.js'
 import {
   customSchemaFields,
@@ -102,6 +102,8 @@ export const name = 'plan-usage'
  * 结果、也不冻结凭据（身份一致性改由 `identityOfChannel()` 的 `cookie=` 指纹 + 票据校验兜住，
  * 与 deepseek 等账号型渠道同一套机制）。
  */
+/** 解析不到实际 provider id 时的兜底（与桌面端默认网关 id 一致）。 */
+const GATEWAY_PROVIDER_FALLBACK = 'workbuddy'
 const ACCOUNT_BOUND_PLAN_IDS = new Set(['deepseek', 'codex', 'workbuddy', 'workbuddy-ai', 'mimo'])
 
 /** [D6-G] systemPrompt 段落的排序位：排在工具说明之后、SDK 之前。 */
@@ -1133,7 +1135,17 @@ export function apply(ctx, config) {
            * 不再拼 `acct=`：新端点没有稳定账号 ID，`workbuddyAccounts` 已不生效，
            * 若继续把它放进身份，等于向观察链暗示"仍在按账号筛选"。
            */
-          const src = providerSourceFingerprint(ctx, 'workbuddy', GATEWAY_CREDITS_PATH)
+          // [0.11.1] 指纹按**实际解析出的** provider id 算：手机端网关 id 是自定义来源
+          // （如 `custom-workbuddy`），写死 'workbuddy' 会让来源变化在身份里看不出来。
+          const resolvedGateway = (() => {
+            try {
+              const hit = gatewayProviderIdOf(ctx, cfgValue(cfgNow, 'workbuddyProvider'))
+              return hit !== null && hit !== undefined && hit.ok === true ? hit.provider : GATEWAY_PROVIDER_FALLBACK
+            } catch (err) {
+              return GATEWAY_PROVIDER_FALLBACK
+            }
+          })()
+          const src = providerSourceFingerprint(ctx, resolvedGateway, GATEWAY_CREDITS_PATH)
           parts.push('src=' + src)
           parts.push('scope=' + 'cn')
         }

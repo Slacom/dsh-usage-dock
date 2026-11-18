@@ -420,9 +420,13 @@ function channelBlock(id, locale) {
     }
   } else {
     const label = presentation.kind === 'credits' ? (en ? 'Credits' : '积分') : (en ? 'Balance' : '余额')
-    block.children.push({ type: 'keyValue', items: [[label, binding(base + '.amount')]] })
+    block.children.push({ type: 'keyValue', items: [[label, binding(base + '.value')]] })
   }
-  block.children.push({ type: 'text', text: binding(base + '.note'), tone: 'muted' })
+  /**
+   * [2026-11-17 用户要求] 不再单独渲染每个渠道的「更新 HH:MM」行——顶部已有一行。
+   * 注意：不能只是把文本置空，App 对空 text 仍会占一整行；因此状态文案改为
+   * 复用已有行（余额/积分行的值、或第一个窗口的说明），见 builtinChannelData。
+   */
   return block
 }
 
@@ -995,7 +999,12 @@ function builtinChannelData(channel, presentation, locale, previous, now, identi
     if (channel.unlimited === true) amount = en ? 'Unlimited' : '不限量'
     else amount = amountText(channel.balance, channel.currency, channel.unit, locale)
     windows = windowsOf(channel, locale, now)
-    note = (en ? 'Updated ' : '更新 ') + clock
+    /**
+     * [2026-11-17 用户要求] 正常态**不再逐条显示更新时间**：面板顶部已经有
+     * 一行「更新 HH:MM」，每个渠道下方再来一行纯属重复。这里留空，
+     * 只有失败/不可用/未知这类**需要逐条说明**的状态才写文字。
+     */
+    note = ''
     tone = 'good'
   }
 
@@ -1006,8 +1015,12 @@ function builtinChannelData(channel, presentation, locale, previous, now, identi
       data[slot.field] = source
       data[slot.caption] = windows !== null && windows[slot.caption] !== undefined ? windows[slot.caption] : ''
     }
+    // 没有窗口数据（失败/不可用/未知）时，把状态文案放到第一行说明里，避免另起一行。
+    if (windows === null && note !== '') data[WINDOW_SLOTS[0].caption] = note
   } else {
     data.amount = amount
+    // 值列：有金额就用金额，没有就显示状态文案（原来那一行的位置不变）。
+    data.value = amount !== null && amount !== undefined ? amount : (note !== '' ? note : null)
   }
 
   const line = presentation.kind === 'quota'
@@ -1033,8 +1046,9 @@ function quotaSummaryLine(name, data, note, locale) {
     const value = data[slot.field]
     if (typeof value === 'number') parts.push((en ? slot.en : slot.zh) + (en ? ' ' : ' ') + value + '%')
   }
-  if (parts.length === 0) return name + '：' + note
-  return name + '：' + parts.join('，') + '（' + note + '）'
+  const detail = typeof note === 'string' ? note : ''
+  if (parts.length === 0) return detail.length > 0 ? name + '：' + detail : name
+  return name + '：' + parts.join('，') + (detail.length > 0 ? '（' + detail + '）' : '')
 }
 
 function balanceSummaryLine(name, amount, note, locale) {

@@ -2,6 +2,29 @@
 
 供本项目后续会话、接手主代理及子代理恢复协作规则；以用户最新明确指令和[项目规范](AGENTS.md)为准。这里不保存凭据、金额、认证URL或临时许可。
 
+## 2026-11-18：0.11.1 —— WorkBuddy 手机端 provider 识别 + 面板时间行 + 路由名归一化
+
+1. 来源：手机端 DSH Go 交付包 `D:\MiShare\dsh-usage-dock-dshgo-20261117c.zip`（基于 v0.10.5，附
+   `MERGE-NOTES.md` 给出逐文件合并方式）；本轮由主代理按 delta 直接合并（用户要求不再使用子代理）。
+2. **WorkBuddy provider 识别**（`plans/workbuddy.js`）：新增 `workbuddyProvider` 配置（留空=自动）；
+   `pickGatewayProvider()` 顺序 = 显式 > id 归一化等于 `workbuddy` > `displayName` 等于 `workbuddy` >
+   id 以 `workbuddy` 结尾；③/④ 多命中报歧义要求显式指定。`index.js` 来源指纹改用解析出的 id，
+   新增 `GATEWAY_PROVIDER_FALLBACK`。根因：手机端网关 provider id 是 `custom-workbuddy`。
+3. **路由名归一化**（`plans/quota-prompt.js#resolveRoute`）：词元连续包含 + 最长匹配，
+   `custom-workbuddy` → `workbuddy`；不转小写/去空白（A12 不变）；等长歧义返回 null。
+   胶囊 `providerToChannel()` 复用同一函数，一处修好两处。
+4. **原生面板**（`plans/dsh-go-native.js`）：去掉逐渠道「更新 HH:MM」独立文本行（App 对空 text 仍占行），
+   余额/积分改绑 `.value`；配额渠道无窗口时状态文案进第一窗口说明；正常态 note 为空串。
+5. 测试（主代理实跑）：`test-workbuddy-gateway` 39/39、`test-workbuddy-client-credits` 50/50、
+   `test-route-normalize` 7/7、`test-dsh-go-native` 43/43、`test-dsh-go-strip` 17/17、
+   `test-dsh-go-boundaries` 47/47、`test-mimo-legacy-store` 12/12、`test-usage-tool` 108/108、
+   `test-usage-tool-register` 70/70、`test-footer-row` 12/12、`test-degrade-refresh` 44/44、
+   `test-codex-patch-ui` 35/35、`test-codex-source-ui` 91/91、`test-settings` 17/17、
+   `test-android-compat` 14/14、`test-line-endings` 71/71。
+6. 已知未做（用户确认暂不处理）：自定义余额条目的 provider 仍精确匹配；原生面板未搬 Web 卡片细节；
+   手机真机未复验（依赖手机侧 2026-11-17 结果：WorkBuddy 1097 积分）。
+7. 发布：见顶部 2026-11-17 0.11.0 记录之后的新条目（本次发布后补）。
+
 ## 2026-11-17：**0.11.0 已发布**（GitHub Release + npm）
 
 1. **仓库**：`main` 提交 **`c54e0ea`**（`0.11.0: DSH Go 原生面板/strip/MiMo 登录持久化；设置页迁到顶层

@@ -340,8 +340,15 @@ async function run(opts) {
   const host = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
   const plans = readFileSync(new URL('../plans/workbuddy.js', import.meta.url), 'utf8')
   const client = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  /**
+   * [2026-11-17] 指纹改为按**实际解析出的** provider id 计算（手机端网关 id 可能是
+   * `custom-workbuddy`），因此不再匹配写死的 'workbuddy' 字面量；断言语义不变：
+   * 身份仍用 /v1/credits 路径，并表达 cn 范围。
+   */
   check('P8a Host 身份用 /v1/credits 且表达 cn 范围',
-    /providerSourceFingerprint\(ctx, 'workbuddy', GATEWAY_CREDITS_PATH\)/.test(host)
+    /providerSourceFingerprint\(ctx, resolvedGateway, GATEWAY_CREDITS_PATH\)/.test(host)
+    && /gatewayProviderIdOf\(ctx, cfgValue\(cfgNow, 'workbuddyProvider'\)\)/.test(host)
+    && /GATEWAY_PROVIDER_FALLBACK = 'workbuddy'/.test(host)
     && /parts\.push\('scope=' \+ 'cn'\)/.test(host))
   check('P8b Host 身份不再拼账号筛选', !/parts\.push\('acct='/.test(host))
   check('P8c 旧账号字段仍保留在 schema（不清除、不迁移）',
