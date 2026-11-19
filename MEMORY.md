@@ -2,6 +2,18 @@
 
 供本项目后续会话、接手主代理及子代理恢复协作规则；以用户最新明确指令和[项目规范](AGENTS.md)为准。这里不保存凭据、金额、认证URL或临时许可。
 
+## 2026-11-19：**0.11.3 正式版已发布**（用户验收后授权）
+
+- **npm**：`dsh-usage-dock@0.11.3`，shasum `b5e3427541da134de53a1790b4e4863b9d73360f`；
+  dist-tags：`latest = 0.11.3`、`prerelease = 0.11.2-alpha.5`（alpha 线不再推进）。
+- **GitHub**：tag `v0.11.3`（commit `cfababe`）+ Release id **451559602**，`prerelease: false`，
+  `/releases/latest` = **v0.11.3**。
+- 内容：MiMo 改 API Key 取余额并下线扫码登录 + DSH Go 原生面板（渠道顺序 / 5 次宽限 / barTone /
+  缓存优先 / Codex 一键适配含锚点自动匹配）+ 网页设置页 grid 对齐 / 预警-收尾改名 / OpenCode 去月窗口。
+- 0.11.2 与其 alpha 线**保持预发布**状态；正式版号从 0.11.3 起（0.11.2 npm 版本号已占用不可复用）。
+- **遗留测试债**：7 组 MiMo 扫码相关旧测试 + 3 组依赖真机状态的旧用例仍需下一轮清理；
+  核心套件（原生 50 / 边界 47 / usage_status 108 / 策略 89 / 布局 30+22 等）全绿。
+- 发布后本机 desktop profile 已是 `0.11.3`，本地包 `dist/dsh-usage-dock-0.11.3.tgz`（不入库）。
 ## 2026-11-19：0.11.2-alpha.8 —— DSH Go 移动端修复并入仓库
 
 1. 来源：用户提供 `D:\MiShare\dsh-usage-dock-0.11.2-alpha.8.tgz`（移动端团队修复）。审阅结论：仅 2 个文件与仓库 alpha.5 不同
