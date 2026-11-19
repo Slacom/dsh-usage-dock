@@ -30,7 +30,7 @@ DeepSeek Harness（DSH）的**侧栏用量/余额插件**：在 Web/桌面端左
 用量与余额，点击可展开详情面板。fork 自 `chendefine/dsh-plugins-plan-usage`，改名 `dsh-usage-dock`
 以避免与上游混淆，并做了一系列定制（见第 6 节）。
 
-**当前版本**：0.11.2-alpha.8（**DSH Go 原生面板修复已并入仓库**：渠道顺序按 planOrder-字符串/固定顺序、瞬时失败 5 次宽限、barTone/valueTone；并入后 `test-dsh-go-native` 50 项；Web/桌面端内容与 0.11.3 行相同；MiMo 接通「设置 → 模型」的 **XIAOMI_API_KEY**（`API_KEY_REFS` 首位）+
+**当前版本**：0.11.3（**正式版**，2026-11-19 发布：MiMo 改 API Key 取余额并下线扫码登录 + DSH Go 原生面板渠道顺序/5 次宽度/barTone 修复 + Codex 锚点自动适配 + 设置页布局对齐；`test-dsh-go-native` 50 项；MiMo 接通「设置 → 模型」的 **XIAOMI_API_KEY**（`API_KEY_REFS` 首位）+
 provider 名含 mimo/xiaomi 时自动取该来源 Key（`providerKeyOf`）；原生设置页移除扫码/记住登录入口；
 承接 0.11.2 的 MiMo API Key 通道
 DSH Go 原生设置页 **Codex 一键适配**（`codexAdaptStatusForNative` / `applyCodexPatchOnce`，与 POST 路由同一实现）+
