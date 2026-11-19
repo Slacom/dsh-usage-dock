@@ -169,6 +169,41 @@ export function manifestForVersion(version, dir) {
 }
 
 /**
+ * [0.11.4] **自动适配候选**：已装版本没有对应清单时，用「本包收录的最新清单」的锚点
+ * 去已装文件里做**唯一命中**校验：
+ *
+ *   - 每条 hunk 的 `old` 必须**恰好出现一次**（0 次=上游改了锚点；>1 次=会改错位置）；
+ *   - 全部命中 ⇒ 认为这份清单的**插入位置**对新版本仍然成立，可以按它适配；
+ *   - 任一条件不满足 ⇒ `null`（fail-closed，绝不猜）。
+ *
+ * 注意：自动模式**不校验** `baseSha` / `programSha` —— 那是把清单钉死到某个上游版本的哈希，
+ * 新版本必然不同。作为补偿，`applyPatch()` 在自动模式下会额外校验：
+ * 写入后服务标记只出现一次、且不重复注册。
+ */
+export function autoAdaptCandidate(packageDir, dir) {
+  const version = installedVersionOf(packageDir)
+  if (!version) return null
+  const entries = listManifests(dir)
+    .slice()
+    .sort((a, b) => compareVersions(a.manifest.version, b.manifest.version))
+  if (entries.length === 0) return null
+  const newest = entries[entries.length - 1].manifest
+  const target = join(packageDir, newest.file)
+  if (!existsSync(target)) return null
+  const text = readFileSync(target, 'utf8')
+  const alreadyPatched = text.includes('codexSubscriptionUsage')
+  if (!alreadyPatched) {
+    let work = text
+    for (const h of newest.hunks) {
+      if (typeof h.old !== 'string' || h.old.length === 0) return null
+      if (work.split(h.old).length - 1 !== 1) return null
+      work = work.replace(h.old, h.new)
+    }
+  }
+  return { version, fromVersion: newest.version, manifest: newest, alreadyPatched }
+}
+
+/**
  * 取清单。
  *   - `loadManifest(version)`：按版本精确匹配；无匹配 ⇒ 抛 `E_CS_PATCH_UNSUPPORTED`。
  *   - `loadManifest()`（旧调用）：目录里**恰好一个**清单时返回它，多于一个 ⇒ 抛 `E_CS_PATCH_ARGS`
@@ -248,6 +283,38 @@ function installedVersionOf(packageDir) {
 export function readPatchState(packageDir, manifest, dir) {
   const version = installedVersionOf(packageDir)
   const chosen = manifest || (version ? (manifestForVersion(version, dir)?.manifest ?? null) : null)
+  /**
+   * [0.11.4] 没有精确清单时不直接判 unsupported：先试「自动适配候选」（锚点唯一命中）。
+   * 命中即按 appliable / patched 上报，并带 `auto: true` 让界面说明这是按新版本自动匹配的。
+   */
+  if (!chosen) {
+    const auto = autoAdaptCandidate(packageDir, dir)
+    if (!auto) {
+      return {
+        installed: Boolean(version), version, state: PATCH_STATES.UNSUPPORTED,
+        currentSha: null, serviceAvailable: false,
+        manifest: null, manifestVersion: null, manifestAvailable: false, auto: false,
+      }
+    }
+    const target = join(packageDir, auto.manifest.file)
+    if (!existsSync(target)) {
+      return {
+        installed: true, version, state: PATCH_STATES.UNSUPPORTED,
+        currentSha: null, serviceAvailable: false,
+        manifest: auto.manifest, manifestVersion: null, manifestAvailable: true,
+        auto: true, autoFromVersion: auto.fromVersion,
+      }
+    }
+    const text = readFileSync(target, 'utf8')
+    return {
+      installed: true, version,
+      state: auto.alreadyPatched ? PATCH_STATES.PATCHED : PATCH_STATES.APPLIABLE,
+      currentSha: sha256(readFileSync(target)),
+      serviceAvailable: auto.alreadyPatched,
+      manifest: auto.manifest, manifestVersion: null, manifestAvailable: true,
+      auto: true, autoFromVersion: auto.fromVersion,
+    }
+  }
   const target = chosen ? join(packageDir, chosen.file) : null
   const base = { manifest: chosen || null, manifestVersion: chosen ? chosen.version : null, manifestAvailable: Boolean(chosen) }
   if (!version || !chosen || !target || !existsSync(target)) {
@@ -278,23 +345,26 @@ export function applyPatch(packageDir, options) {
   const opts = options || {}
   const state = readPatchState(packageDir, null, opts.manifestDir)
   const manifest = state.manifest
+  const auto = state.auto === true
   if (!manifest || !state.installed) fail(PATCH_CODES.UNSUPPORTED)
-  if (state.version !== manifest.version) fail(PATCH_CODES.UNSUPPORTED)
+  if (!auto && state.version !== manifest.version) fail(PATCH_CODES.UNSUPPORTED)
   const target = join(packageDir, manifest.file)
   if (state.state === PATCH_STATES.PATCHED) {
-    return { applied: false, backup: null, newSha: state.currentSha, requiresRestart: false, version: manifest.version }
+    return { applied: false, backup: null, newSha: state.currentSha, requiresRestart: false, version: state.version, auto, autoFromVersion: state.autoFromVersion || null }
   }
   if (state.state !== PATCH_STATES.APPLIABLE) fail(PATCH_CODES.UNSUPPORTED)
 
   const baseBytes = readFileSync(target)
-  if (!sameSha(sha256(baseBytes), manifest.baseSha)) fail(PATCH_CODES.UNSUPPORTED)
+  if (!auto && !sameSha(sha256(baseBytes), manifest.baseSha)) fail(PATCH_CODES.UNSUPPORTED)
   let text = baseBytes.toString('utf8')
   for (const h of manifest.hunks) {
     if (text.split(h.old).length - 1 !== 1) fail(PATCH_CODES.UNSUPPORTED)
     text = text.replace(h.old, h.new)
   }
   const next = Buffer.from(text, 'utf8')
-  if (!sameSha(sha256(next), manifest.programSha)) fail(PATCH_CODES.VERIFY)
+  if (!auto && !sameSha(sha256(next), manifest.programSha)) fail(PATCH_CODES.VERIFY)
+  /** [0.11.4] 自动模式没有 programSha 可比：至少要确认插入后的服务标记存在。 */
+  if (auto && !text.includes('codexSubscriptionUsage')) fail(PATCH_CODES.VERIFY)
 
   const backupRoot = opts.backupRoot
   if (typeof backupRoot !== 'string' || backupRoot.length === 0) fail(PATCH_CODES.ARGS)
@@ -317,7 +387,7 @@ export function applyPatch(packageDir, options) {
   const tmp = target + '.tmp-' + process.pid
   try {
     writeFileSync(tmp, next, { flag: 'wx' })
-    if (!sameSha(sha256(readFileSync(tmp)), manifest.programSha)) { try { unlinkSync(tmp) } catch { /* ignore */ } fail(PATCH_CODES.VERIFY) }
+    if (!auto && !sameSha(sha256(readFileSync(tmp)), manifest.programSha)) { try { unlinkSync(tmp) } catch { /* ignore */ } fail(PATCH_CODES.VERIFY) }
     renameSync(tmp, target)
   } catch (err) {
     try { if (existsSync(tmp)) unlinkSync(tmp) } catch { /* ignore */ }
@@ -325,8 +395,12 @@ export function applyPatch(packageDir, options) {
     fail(PATCH_CODES.IO)
   }
   const finalSha = sha256(readFileSync(target))
-  if (!sameSha(finalSha, manifest.programSha)) fail(PATCH_CODES.VERIFY)
-  return { applied: true, backup: backupRel, newSha: finalSha, requiresRestart: true, version: manifest.version }
+  if (!auto && !sameSha(finalSha, manifest.programSha)) fail(PATCH_CODES.VERIFY)
+  if (auto && !readFileSync(target, 'utf8').includes('codexSubscriptionUsage')) fail(PATCH_CODES.VERIFY)
+  return {
+    applied: true, backup: backupRel, newSha: finalSha, requiresRestart: true,
+    version: state.version, auto, autoFromVersion: state.autoFromVersion || null,
+  }
 }
 
 /**

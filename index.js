@@ -417,7 +417,7 @@ export function apply(ctx, config) {
       const covered = typeof mod.coveredVersions === 'function' ? mod.coveredVersions() : []
       const version = typeof patchState.version === 'string' ? patchState.version : null
       const manifestVersion = typeof patchState.manifestVersion === 'string' ? patchState.manifestVersion : null
-      const base = { version, covered, manifestVersion }
+      const base = { version, covered, manifestVersion, auto: patchState.auto === true, autoFromVersion: typeof patchState.autoFromVersion === 'string' ? patchState.autoFromVersion : null }
       if (patchState.state === 'appliable') return Object.assign({ state: 'appliable' }, base)
       if (patchState.state === 'patched') return Object.assign({ state: 'pending' }, base)
       if (patchState.state === 'unsupported') return Object.assign({ state: 'unsupported' }, base)
@@ -2563,6 +2563,8 @@ export function apply(ctx, config) {
             state: state.state,
             serviceAvailable: state.serviceAvailable,
             manifestVersion: state.manifestVersion === undefined ? null : state.manifestVersion,
+            auto: state.auto === true,
+            autoFromVersion: typeof state.autoFromVersion === 'string' ? state.autoFromVersion : null,
             covered,
           },
         })

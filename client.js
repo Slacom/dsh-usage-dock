@@ -477,7 +477,10 @@ function CodexSubscriptionPatchBlock(props) {
       codexPatchUnsupportedText(info))
   }
   var appliableHint = info.phase === 'ready' && info.state === 'appliable' && info.version !== null
-    ? '第三方插件 ' + info.version + '，可一键适配'
+    ? ('第三方插件 ' + info.version + '，可一键适配'
+      + (info.auto === true && typeof info.autoFromVersion === 'string' && info.autoFromVersion !== ''
+        ? '（按 ' + info.autoFromVersion + ' 的锚点自动匹配，适配前会先备份）'
+        : ''))
     : (info.phase === 'ready' && info.state === 'appliable'
       ? '该第三方插件可一键适配'
       : 'Codex 订阅额度需要在本机做一次适配才能读取。')

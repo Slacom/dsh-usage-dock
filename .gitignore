@@ -13,3 +13,4 @@ reference/
 
 # 补丁工具写出的本地备份（`--apply` 的 wx 备份；仅本机可恢复用）
 tools/patches/
+dist/

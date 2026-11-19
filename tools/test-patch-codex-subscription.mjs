@@ -222,9 +222,9 @@ const out = (r) => String(r.stdout || '') + String(r.stderr || '')
   const s312 = mod.readPatchState(dir312)
   let threw312 = null
   try { mod.applyPatch(dir312, { backupRoot: join(root3, 'bk-none') }) } catch (err) { threw312 = err && err.code }
-  check('V11 版本 3.2.12（两版都无）→ unsupported 且 apply 抛 UNSUPPORTED、零写入',
-    s312.state === 'unsupported' && s312.manifestAvailable === false && threw312 === 'E_CS_PATCH_UNSUPPORTED'
-      && Buffer.compare(readFileSync(target13(dir312)), base13) === 0, { state: s312.state, threw312 })
+  check('[0.11.4] V11 版本 3.2.12（无专属清单）→ 自动适配 appliable，apply 成功且 auto=true',
+    s312.state === 'appliable' && s312.auto === true && threw312 === null
+      && Buffer.compare(readFileSync(target13(dir312)), base13) !== 0, { state: s312.state, auto: s312.auto, threw312 })
 
   // 空清单目录（缺清单）⇒ 拒绝零写入
   const emptyDir = join(root3, 'manifests-empty')

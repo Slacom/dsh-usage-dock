@@ -607,6 +607,11 @@ function codexAdaptNodes(adapt, locale) {
         : 'Codex 订阅额度需要在本机做一次本地适配。')
     return [
       { type: 'text', text, tone: 'muted' },
+      ...(adapt.auto === true && typeof adapt.autoFromVersion === 'string' && adapt.autoFromVersion.length > 0
+        ? [{ type: 'text', tone: 'muted', text: en
+          ? 'Anchors from ' + adapt.autoFromVersion + ' matched automatically; a backup is kept before adapting.'
+          : '已按 ' + adapt.autoFromVersion + ' 的锚点自动匹配当前版本，适配前会先备份。' }]
+        : []),
       { type: 'actions', items: [{ label: en ? 'Adapt' : '一键适配', action: 'codexAdapt', icon: 'wrench' }] },
       { type: 'text', text: en ? 'Takes effect after restarting the engine.' : '适配后需重启引擎生效。', tone: 'muted' },
     ]
