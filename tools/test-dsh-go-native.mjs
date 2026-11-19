@@ -1095,4 +1095,24 @@ check('原生设置页：pending ⇒ 只提示重启，不给按钮；unsupporte
   assert.equal(hidden.text.includes('适配'), false)
 })
 
+check('[0.11.4] 额度面板渠道顺序与设置页一致（DeepSeek → MiMo → WorkBuddy → Codex → OpenCode Go）', () => {
+  const now5 = Date.now()
+  const plans5 = [
+    { id: 'opencode-go', fields: { enabled: 'opencodeGoEnabled' }, name: 'OpenCode Go' },
+    { id: 'deepseek', fields: { enabled: 'deepseekEnabled' }, name: 'DeepSeek' },
+    { id: 'codex', fields: { enabled: 'codexEnabled' }, name: 'Codex' },
+    { id: 'mimo', fields: { enabled: 'mimoEnabled' }, name: 'MiMo' },
+    { id: 'workbuddy', fields: { enabled: 'workbuddyEnabled' }, name: 'WorkBuddy' },
+  ]
+  const wires5 = [
+    { id: 'opencode-go', identity: 'a', fetchedAt: now5 },
+    { id: 'deepseek', identity: 'b', fetchedAt: now5, balance: 9.41, currency: 'CNY', via: 'account' },
+    { id: 'codex', identity: 'c', fetchedAt: now5 },
+    { id: 'mimo', identity: 'd', fetchedAt: now5, balance: 14.56, currency: 'CNY', via: 'api-key' },
+    { id: 'workbuddy', identity: 'e', fetchedAt: now5, creditsTotal: 530 },
+  ]
+  const builtOrder = buildNativeData({ cfg: { enabled: true }, plans: plans5, wires: wires5, customEntries: [], locale: 'zh-CN', previous: null, now: now5 })
+  assert.deepEqual(Object.keys(builtOrder.data.channels), ['deepseek', 'mimo', 'workbuddy', 'codex', 'opencodeGo'])
+})
+
 console.log('\n全部 ' + passed + ' 项通过（Host 半契约，非 App 真机渲染）')

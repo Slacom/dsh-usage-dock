@@ -1245,7 +1245,18 @@ export function buildNativeData(options) {
     if (requested.indexOf(wire.id) !== -1) continue
     requested.push(wire.id)
   }
-  const projected = projectUsage(wires, requested, { enabled: enabledSet, known, semanticsOf })
+  /** [0.11.4 修正] 面板的真实顺序由 projectUsage 的请求顺序决定，必须对 requested 排序。 */
+  const orderedRequested = requested
+    .map((id, at) => ({ id, at }))
+    .sort((x, y) => {
+      const ix = NATIVE_CHANNEL_ORDER.indexOf(x.id)
+      const iy = NATIVE_CHANNEL_ORDER.indexOf(y.id)
+      const ax = ix < 0 ? 99 : ix
+      const ay = iy < 0 ? 99 : iy
+      return ax === ay ? x.at - y.at : ax - ay
+    })
+    .map((item) => item.id)
+  const projected = projectUsage(wires, orderedRequested, { enabled: enabledSet, known, semanticsOf })
   // [0.11.0 整改] carry 的身份映射：从原始 wire 取（投影白名单不含 identity）。
   const identityById = identityMapOf(wires)
 
