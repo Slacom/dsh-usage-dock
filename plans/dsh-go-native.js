@@ -20,6 +20,16 @@
  */
 
 import { projectUsage } from './usage-tool.js'
+/**
+ * [0.11.2-alpha.7] 瞬时失败宽限：复用 Host 的同一套分类与阈值（纯函数、无外部依赖），
+ * 不再各数一套失败次数，也不会因为内置 provider 的失败 wire 不带 `transient` 就立刻丢旧值。
+ */
+import {
+  classifyFailure,
+  TEMPORARY_FAIL_LIMIT,
+  FAIL_PERMANENT,
+  FAIL_EXPIRED,
+} from './quota-observer.js'
 
 /** 面板 id；`package.json` 的 `dshGo.contributes.panels` 必须与之一致。 */
 export const PANEL_ID = 'quota'
@@ -52,6 +62,15 @@ const CHANNEL_PRESENTATION = {
   mimo: { key: 'mimo', kind: 'balance', name: 'MiMo' },
   workbuddy: { key: 'workbuddy', kind: 'credits', name: 'WorkBuddy' },
 }
+
+/**
+ * [0.11.2-alpha.6] 用户要求的原生默认顺序：DeepSeek → MiMo → WorkBuddy → Codex → OpenCode Go。
+ *
+ * 设置页的 `CHANNEL_SECTIONS` 同序；`cfg.planOrder` 非空时以**已保存顺序**为准，
+ * 这里只做兜底——用户从没拖过顺序（`planOrder` 缺省 / `'[]'` / 坏 JSON）时，
+ * 面板按这个顺序出现，不再退回 `plans/index.js` 的注册表顺序。
+ */
+export const NATIVE_CHANNEL_ORDER = ['deepseek', 'mimo', 'workbuddy', 'codex', 'opencode-go']
 
 /** 内置渠道固定的三个额度窗口；scope 与 plans/usage-tool.js 的 WINDOWS 保持一致。 */
 const WINDOW_SLOTS = [
@@ -364,6 +383,42 @@ function errorTextOf(channel, locale) {
   return '取数失败'
 }
 
+/**
+ * [0.11.2-alpha.7] 瞬时失败的 5 次宽限（与 Host `plans/quota-observer.js` 同一口径）。
+ *
+ * 原生面板拿到的是**投影后的 wire**：内置 provider 的失败 wire 基本不带 `transient`
+ * （只有个别来源会标），所以不能再靠 `channel.transient === true` 决定要不要保留旧值——
+ * 那正是「OpenCode Go 一次闪断就显示取数失败」的根因。
+ *
+ * 三态：
+ *   - `cached`：未满 5 次且**有旧值** → 沿用旧数值与旧时间，灰化提示「暂时失败」；
+ *   - `pending`：未满 5 次但**没有旧值**（首次失败 / 换了身份）→ 不编造数值，也不提前报失败；
+ *   - `failed`：满 5 次，或失败类别为 P/A（配置/权限/身份过期）→ 立即显示固定错误，
+ *     且**绝不**复用旧值。
+ *
+ * @param {object} channel 投影后的渠道（`availability === 'error'`）
+ * @param {object|undefined} previousEntry 同一 carry 键下的上一轮记录
+ * @returns {{ mode: 'cached'|'pending'|'failed', failCount: number }}
+ */
+function failureGraceOf(channel, previousEntry) {
+  const entry = previousEntry !== null && previousEntry !== undefined && typeof previousEntry === 'object'
+    ? previousEntry
+    : null
+  const rawCount = entry !== null && typeof entry.failCount === 'number' && Number.isFinite(entry.failCount)
+    ? entry.failCount
+    : 0
+  const prevCount = rawCount > 0 ? Math.floor(rawCount) : 0
+  const kind = classifyFailure(channel.errorCode, { transient: channel.transient === true })
+  if (kind === FAIL_PERMANENT || kind === FAIL_EXPIRED) {
+    // 封存：计数直接拉满，后续失败不会退回 cached。
+    return { mode: 'failed', failCount: TEMPORARY_FAIL_LIMIT }
+  }
+  const count = Math.min(prevCount + 1, TEMPORARY_FAIL_LIMIT + 1000)
+  if (count >= TEMPORARY_FAIL_LIMIT) return { mode: 'failed', failCount: count }
+  if (entry !== null && entry.hasValues === true) return { mode: 'cached', failCount: count }
+  return { mode: 'pending', failCount: count }
+}
+
 /** 渠道当前是否至少有一个可展示数值。 */
 function hasValues(channel) {
   if (channel.unlimited === true) return true
@@ -386,14 +441,57 @@ function enabledPlanIds(cfg, plans) {
   return out
 }
 
-/** 按 planOrder 排序；未登记的 id 保持原相对顺序追加在后面（与 Web 半口径一致）。 */
-function orderedIds(ids, planOrder) {
-  const order = Array.isArray(planOrder) ? planOrder : []
-  const rank = new Map()
-  for (let i = 0; i < order.length; i += 1) {
-    if (typeof order[i] === 'string' && !rank.has(order[i])) rank.set(order[i], i)
+/**
+ * 解析 `cfg.planOrder`。
+ *
+ * 真实配置里的值是 **JSON 字符串**（Config schema 是 `z.string().default('[]')`，
+ * 内容是 `'["deepseek","mimo",…]'`），只有测试/旧快照里才直接是数组。
+ * 口径与 `index.js` 的 `orderPlansByPlanOrder` 一致：只有非空字符串才尝试 `JSON.parse`，
+ * 解析失败或不是数组时按空数组处理；再过滤非字符串/空串并去重（先出现者优先）。
+ *
+ * @param {unknown} value
+ * @returns {string[]}
+ */
+export function parsePlanOrder(value) {
+  let order = []
+  if (Array.isArray(value)) order = value
+  else if (typeof value === 'string' && value.length > 0) {
+    try {
+      const parsed = JSON.parse(value)
+      if (Array.isArray(parsed)) order = parsed
+    } catch (err) { order = [] }
   }
-  const decorated = ids.map((id, index) => ({ id, index }))
+  const out = []
+  for (const item of order) {
+    if (typeof item !== 'string' || item.length === 0) continue
+    if (out.indexOf(item) !== -1) continue
+    out.push(item)
+  }
+  return out
+}
+
+/**
+ * 渠道显示顺序：先按已保存的 `planOrder`，再按 `NATIVE_CHANNEL_ORDER` 兜底，
+ * 仍未知的 id（例如自定义余额 `custom:xxx`）保持原相对顺序排最后。
+ *
+ * **必须同时接受数组与 JSON 字符串**：0.11.2-alpha.5 只认数组，
+ * 于真实配置下视图骨架永远退回注册表顺序（原生「额度」面板渠道顺序错误）。
+ *
+ * @param {string[]} ids
+ * @param {unknown} planOrder
+ * @returns {string[]}
+ */
+function orderedIds(ids, planOrder) {
+  const order = parsePlanOrder(planOrder)
+  const rank = new Map()
+  for (let i = 0; i < order.length; i += 1) rank.set(order[i], i)
+  // 未登记的 id 按默认顺序追加在已保存顺序之后。
+  for (let i = 0; i < NATIVE_CHANNEL_ORDER.length; i += 1) {
+    const id = NATIVE_CHANNEL_ORDER[i]
+    if (!rank.has(id)) rank.set(id, order.length + i)
+  }
+  const list = Array.isArray(ids) ? ids : []
+  const decorated = list.map((id, index) => ({ id, index }))
   decorated.sort((a, b) => {
     const ra = rank.has(a.id) ? rank.get(a.id) : Number.MAX_SAFE_INTEGER
     const rb = rank.has(b.id) ? rank.get(b.id) : Number.MAX_SAFE_INTEGER
@@ -428,12 +526,17 @@ function channelBlock(id, locale) {
         label: en ? slot.en : slot.zh,
         value: binding(base + '.' + slot.field),
         caption: binding(base + '.' + slot.caption),
-        tone: binding(base + '.tone'),
+        // [0.11.2-alpha.8] 颜色只跟额度多少有关（不再随失败状态变 warn/bad）。
+        tone: binding(base + '.barTone'),
       })
     }
   } else {
     const label = presentation.kind === 'credits' ? (en ? 'Credits' : '积分') : (en ? 'Balance' : '余额')
-    block.children.push({ type: 'keyValue', items: [[label, binding(base + '.value')]] })
+    // [0.11.2-alpha.8] 值对象带 tone：失败缓存期灰化数字（muted），正常态 null 回落默认色。
+    block.children.push({
+      type: 'keyValue',
+      items: [{ label, value: binding(base + '.value'), tone: binding(base + '.valueTone') }],
+    })
   }
   /**
    * [2026-11-17 用户要求] 不再单独渲染每个渠道的「更新 HH:MM」行——顶部已有一行。
@@ -1042,6 +1145,32 @@ function identityMapOf(wires) {
   return map
 }
 
+/**
+ * [0.11.2-alpha.8] 进度条颜色只由**剩余额度**决定（用户要求）。
+ *
+ * 取当前展示的各窗口剩余百分比的最小值：≤10 危险、≤30 注意、否则正常；
+ * 没有任何可判定的百分比（取数失败且无缓存 / 未知）→ `muted`。
+ *
+ * 关键点：**不再**因为「取数失败」把颜色改成 warn/bad。缓存显示旧值时用的是
+ * 旧 windows，所以额度多的时候颜色保持正常（旧实现会把进度条染成黄褐色）。
+ *
+ * @param {object|null} windows `windowsOf()` 的输出（槽位字段 → 百分比）
+ * @returns {'good'|'warn'|'bad'|'muted'}
+ */
+export function barToneOf(windows) {
+  if (windows === null || windows === undefined || typeof windows !== 'object') return 'muted'
+  let min = null
+  for (const slot of WINDOW_SLOTS) {
+    const value = windows[slot.field]
+    if (typeof value !== 'number' || !Number.isFinite(value)) continue
+    if (min === null || value < min) min = value
+  }
+  if (min === null) return 'muted'
+  if (min <= 10) return 'bad'
+  if (min <= 30) return 'warn'
+  return 'good'
+}
+
 /** 单个内置渠道的展示值（含暂时失败时的旧值回退）。 */
 function builtinChannelData(channel, presentation, locale, previous, now, identity) {
   const en = isEn(locale)
@@ -1054,15 +1183,30 @@ function builtinChannelData(channel, presentation, locale, previous, now, identi
   let note
   let tone = 'good'
   let clock = clockOf(typeof channel.fetchedAt === 'number' ? channel.fetchedAt : now)
+  /** 连续暂时失败次数；成功后归零。随 carry 传给下一轮做 5 次宽限。 */
+  let failCount = 0
+  /** [0.11.2-alpha.8] 数值颜色：失败缓存期只灰化数字，不显示任何失败文案。 */
+  let valueTone = null
 
   if (channel.availability === 'error') {
-    // 暂时失败：灰化保留上一次成功值（与 Web 半「失败保留旧值」的语义一致，但不做 8 次计数）。
-    if (channel.transient === true && previousEntry !== undefined && previousEntry !== null && previousEntry.hasValues === true) {
+    /**
+     * [0.11.2-alpha.7] 瞬时失败宽限：前 4 次沿用旧值（cached），没有旧值时 pending，
+     * 第 5 次或 P/A 类错误才 failed。不再依赖 `channel.transient`（内置 provider 不带它）。
+     */
+    const grace = failureGraceOf(channel, previousEntry)
+    failCount = grace.failCount
+    if (grace.mode === 'cached' && previousEntry !== undefined && previousEntry !== null) {
       amount = previousEntry.amount
       windows = previousEntry.windows
-      note = en ? 'Update failed, showing ' + previousEntry.clock + ' data' : '暂时失败，显示 ' + previousEntry.clock + ' 的数值'
+      // [0.11.2-alpha.8] 前 4 次失败不显示文案，只把数字灰化。
+      note = ''
       tone = 'warn'
+      valueTone = 'muted'
       clock = previousEntry.clock
+    } else if (grace.mode === 'pending') {
+      note = ''
+      tone = 'warn'
+      valueTone = 'muted'
     } else {
       note = errorTextOf(channel, locale)
       tone = 'bad'
@@ -1088,7 +1232,8 @@ function builtinChannelData(channel, presentation, locale, previous, now, identi
     tone = 'good'
   }
 
-  const data = { note, tone }
+  // [0.11.2-alpha.8] barTone 只按显示中的额度算（缓存时即旧额度）；valueTone 只在缓存失败时灰化数字。
+  const data = { note, tone, barTone: barToneOf(windows), valueTone }
   if (presentation.kind === 'quota') {
     for (const slot of WINDOW_SLOTS) {
       const source = windows !== null && windows[slot.field] !== undefined ? windows[slot.field] : null
@@ -1115,6 +1260,7 @@ function builtinChannelData(channel, presentation, locale, previous, now, identi
       hasValues: amount !== null || (windows !== null && WINDOW_SLOTS.some((slot) => typeof windows[slot.field] === 'number')),
       amount,
       windows,
+      failCount,
     },
   }
 }
@@ -1146,11 +1292,23 @@ function customRowOf(channel, locale, previous, identity) {
   let trailing = null
   let tone = 'good'
   let note = en ? 'Updated ' : '更新 '
+  /** 连续暂时失败次数（成功后归零）；与内置渠道共用同一套 5 次宽限。 */
+  let failCount = 0
+  /** carry 里是否有真正可复用的余额（错误态下只有 cached 才有）。 */
+  let hasCarryValues = false
   if (channel.availability === 'error') {
-    if (channel.transient === true && previousEntry !== undefined && previousEntry !== null && previousEntry.hasValues === true) {
+    const grace = failureGraceOf(channel, previousEntry)
+    failCount = grace.failCount
+    if (grace.mode === 'cached' && previousEntry !== undefined && previousEntry !== null) {
       trailing = previousEntry.amount
-      tone = 'warn'
-      note = en ? 'Update failed' : '暂时失败'
+      hasCarryValues = true
+      // [0.11.2-alpha.8] 前 4 次失败不显示文案，只把金额灰化。
+      tone = 'muted'
+      note = ''
+    } else if (grace.mode === 'pending') {
+      // [0.11.2-alpha.8] 前 4 次失败不显示文案，只把金额灰化。
+      tone = 'muted'
+      note = ''
     } else {
       trailing = errorTextOf(channel, locale)
       tone = 'bad'
@@ -1158,6 +1316,7 @@ function customRowOf(channel, locale, previous, identity) {
     }
   } else if (channel.availability === 'unavailable') {
     trailing = amountText(channel.balance, channel.currency, channel.unit, locale)
+    hasCarryValues = trailing !== null && trailing !== undefined
     tone = 'warn'
     note = en ? 'Account unavailable' : '账户当前不可用'
   } else if (channel.availability === 'unknown') {
@@ -1165,6 +1324,7 @@ function customRowOf(channel, locale, previous, identity) {
     note = en ? 'Status unknown' : '状态未知'
   } else {
     trailing = amountText(channel.balance, channel.currency, channel.unit, locale)
+    hasCarryValues = trailing !== null && trailing !== undefined
   }
   const row = {
     title: typeof channel.name === 'string' && channel.name.length > 0 ? channel.name : '自定义余额',
@@ -1179,9 +1339,11 @@ function customRowOf(channel, locale, previous, identity) {
     line,
     carry: {
       clock: clockOf(Date.now()),
-      hasValues: trailing !== null && trailing !== undefined && channel.availability !== 'error',
-      amount: trailing,
+      // [0.11.2-alpha.7] cached 时也必须为 true，否则下一轮会把旧余额当成「没有值」丢掉。
+      hasValues: hasCarryValues,
+      amount: hasCarryValues ? trailing : null,
       windows: null,
+      failCount,
     },
   }
 }
@@ -1196,13 +1358,6 @@ function customRowOf(channel, locale, previous, identity) {
  * @returns {{ data: object, snapshot: object }}
  */
 export function buildNativeData(options) {
-  /** [0.11.4] 额度面板的渠道顺序与设置页一致：DeepSeek → MiMo → WorkBuddy → Codex → OpenCode Go。 */
-  const NATIVE_CHANNEL_ORDER = ['deepseek', 'mimo', 'workbuddy', 'codex', 'opencode-go']
-  const orderIndex = (plan) => {
-    const id = plan !== null && plan !== undefined ? plan.id : ''
-    const at2 = NATIVE_CHANNEL_ORDER.indexOf(id)
-    return at2 < 0 ? 99 : at2
-  }
   const opts = options !== null && options !== undefined ? options : {}
   const locale = typeof opts.locale === 'string' && opts.locale.length > 0 ? opts.locale : 'zh-CN'
   const en = isEn(locale)
@@ -1228,8 +1383,7 @@ export function buildNativeData(options) {
   const builtinEnabled = enabledPlanIds(cfg, plans)
   const customEnabled = []
   const known = new Set()
-  const orderedPlans = plans.slice().sort((a, b) => orderIndex(a) - orderIndex(b))
-  for (const plan of orderedPlans) {
+  for (const plan of plans) {
     if (plan !== null && plan !== undefined && typeof plan.id === 'string') known.add(plan.id)
   }
   for (const entry of customEntries) {
@@ -1245,17 +1399,13 @@ export function buildNativeData(options) {
     if (requested.indexOf(wire.id) !== -1) continue
     requested.push(wire.id)
   }
-  /** [0.11.4 修正] 面板的真实顺序由 projectUsage 的请求顺序决定，必须对 requested 排序。 */
-  const orderedRequested = requested
-    .map((id, at) => ({ id, at }))
-    .sort((x, y) => {
-      const ix = NATIVE_CHANNEL_ORDER.indexOf(x.id)
-      const iy = NATIVE_CHANNEL_ORDER.indexOf(y.id)
-      const ax = ix < 0 ? 99 : ix
-      const ay = iy < 0 ? 99 : iy
-      return ax === ay ? x.at - y.at : ax - ay
-    })
-    .map((item) => item.id)
+  /**
+   * [0.11.2-alpha.6] 快照顺序与视图骨架共用同一个 `orderedIds`：
+   * planOrder（JSON 字符串）优先 + NATIVE_CHANNEL_ORDER 兜底。
+   * alpha.5 在这里另写了一套只认 NATIVE_CHANNEL_ORDER 的硬编码排序，
+   * 于是数据顺序和视图顺序可能不一致。
+   */
+  const orderedRequested = orderedIds(requested, cfg.planOrder)
   const projected = projectUsage(wires, orderedRequested, { enabled: enabledSet, known, semanticsOf })
   // [0.11.0 整改] carry 的身份映射：从原始 wire 取（投影白名单不含 identity）。
   const identityById = identityMapOf(wires)

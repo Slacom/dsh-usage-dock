@@ -127,7 +127,11 @@ function contains (node, target) {
   const winRow = byAttr(tree, 'data-policy-window', 'rolling-5h')
   const focusRow = byAttr(tree, 'data-policy-focus', 'codex').parentElement
   const statusRow = byAttr(tree, 'data-policy-status', 'codex')
-  check('D3a 窗口行可换行', winRow !== undefined && winRow.props.style.flexWrap === 'wrap')
+  // [0.11.2-alpha.8] 窗口行改为 grid（表头与行同源列宽）：不再靠 flexWrap 防溢出。
+check('D3a 窗口行用 grid 等宽列（表头与行对齐、窄屏不溢出）',
+  winRow !== undefined && winRow.props.style.display === 'grid'
+  && typeof winRow.props.style.gridTemplateColumns === 'string'
+  && winRow.props.style.flexWrap === undefined)
   check('D3b 关注行不写固定宽度、不强制 nowrap（窄宽度不会溢出）',
     focusRow !== undefined && focusRow.props.style.width === undefined
     && focusRow.props.style.minWidth === undefined && focusRow.props.style.whiteSpace !== 'nowrap',

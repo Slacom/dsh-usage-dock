@@ -2,6 +2,23 @@
 
 供本项目后续会话、接手主代理及子代理恢复协作规则；以用户最新明确指令和[项目规范](AGENTS.md)为准。这里不保存凭据、金额、认证URL或临时许可。
 
+## 2026-11-19：0.11.2-alpha.8 —— DSH Go 移动端修复并入仓库
+
+1. 来源：用户提供 `D:\MiShare\dsh-usage-dock-0.11.2-alpha.8.tgz`（移动端团队修复）。审阅结论：仅 2 个文件与仓库 alpha.5 不同
+   （`package.json` 版本号；`plans/dsh-go-native.js`），`index.js`/`client.js` 字节一致 ⇒ Web/桌面端零变化；无危险调用。
+2. 并入的关键修复：
+   - **渠道顺序**：真实配置里 `cfg.planOrder` 是 **JSON 字符串**（`z.string()`），alpha.5 的 `orderedIds` 只认数组 →
+     永远退回注册表顺序。新增 `parsePlanOrder()`（字符串/数组/坏值统一）+ `NATIVE_CHANNEL_ORDER` 兜底；
+     视图骨架与数据顺序共用同一函数。
+   - **瞬时失败 5 次宽限**：复用 `plans/quota-observer.js` 的 `classifyFailure` / `TEMPORARY_FAIL_LIMIT`：
+     1–4 次保留旧值只灰化（`note=''`）、第 5 次报错且不复用旧值；P/A 类立即报错；成功后计数归零。
+   - **颜色**：新增 `barTone`（只按剩余额度：≤10 bad / ≤30 warn / 其余 good / 无数据 muted）与
+     `valueTone`（失败缓存期 muted）；视图 `progress.tone` 绑 `barTone`、余额行改对象式 keyValue 带 `tone`。
+   - 自定义渠道 carry `hasValues` 修复（cached 时不再丢旧值）。
+3. 测试更新：`tools/test-dsh-go-native.mjs` 更新 7 处旧断言（失败文案/元组式 keyValue/tone），
+   新增 7 项守卫（planOrder 兜底与解析、宽限 5 次与恢复、永久失败、自定义 carry、barTone 边界、视图协议字段）
+   ⇒ **50 项**。另修 `test-policy-block-layout`（grid 行）与 `test-settings-layout-20261024`（L5d grid 列宽、L6b MiMo 卡片）。
+4. 状态：已并入仓库、部署 desktop profile、本机打包；**未 push / 未发布**（alpha.8 未上 npm，npm prerelease 仍 alpha.5）。
 ## 2026-11-18（重要）：**测试阶段，未经用户明确要求不得发布**
 
 > 用户原话：「现在还在测试阶段，没有我测试过的并且明确要求的话，不要进行发布」。

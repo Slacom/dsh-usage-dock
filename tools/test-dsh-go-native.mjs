@@ -21,6 +21,8 @@ import {
   buildSettingsView,
   buildSettingsData,
   buildMimoLoginView,
+  barToneOf,
+  parsePlanOrder,
   parseSettingsInput,
   placeholderPayload,
 } from '../plans/dsh-go-native.js'
@@ -412,7 +414,7 @@ check('余额/积分渠道：金额格式与单位', () => {
   assert.equal(built.data.channels.deepseek.note, '')
 })
 
-check('更新时间只出现在顶部：渠道行不再带「更新」，失败态仍逐条说明', () => {
+check('[alpha.8] 更新时间只出现在顶部：渠道行不再带「更新」；瞬时失败前 4 次静默灰化', () => {
   const now = 1_700_000_000_000
   const wires = fakeWires(now)
   // 让 WorkBuddy 变成「暂时失败」：区分「去掉时间」与「保留错误说明」
@@ -433,7 +435,8 @@ check('更新时间只出现在顶部：渠道行不再带「更新」，失败�
   for (const key of ['opencodeGo', 'deepseek', 'mimo']) {
     assert.equal(built.data.channels[key].note, '', key + ' 不应再显示更新时间')
   }
-  assert.equal(built.data.channels.workbuddy.note.length > 0, true)
+  // [alpha.8] 首次瞬时失败进入宽限期：不输出文案（第 5 次才报错，见后文宽限用例）。
+  assert.equal(built.data.channels.workbuddy.note, '')
 })
 
 check('渠道块不再渲染独立的状态/更新时间文本行（避免空行）', () => {
@@ -453,7 +456,8 @@ check('渠道块不再渲染独立的状态/更新时间文本行（避免空行
   const valueBindings = []
   walkNodes(view, (node) => {
     if (node === null || typeof node !== 'object' || node.type !== 'keyValue') return
-    for (const item of node.items) valueBindings.push(bindingText(item[1]))
+    // [alpha.8] keyValue items 由 [label, value] 元组改为 { label, value, tone } 对象。
+    for (const item of node.items) valueBindings.push(bindingText(item.value))
   })
   assert.equal(valueBindings.includes('data.channels.deepseek.value'), true)
   assert.equal(valueBindings.includes('data.channels.workbuddy.value'), true)
@@ -473,7 +477,8 @@ check('状态文案复用现有行：余额失败显示在值列，配额失败�
   assert.equal(deepseek.value.length > 0, true)
   assert.equal(deepseek.note.length > 0, true)
   const opencode = built.data.channels.opencodeGo
-  assert.equal(opencode.c5.length > 0, true, '配额渠道失败时第一行应有说明')
+  // [alpha.8] 首次瞬时失败处于宽限期：第一窗口说明为空（第 5 次才显示原因）。
+  assert.equal(opencode.c5, '')
   // 正常渠道：值列是金额，第一窗口说明仍为常规倒计时
   assert.equal(built.data.channels.mimo.value.startsWith('¥'), true)
 })
@@ -522,7 +527,9 @@ check('暂时失败：灰化保留上一次成功值（deepseek 余额不回退�
   })
   assert.equal(failed.data.channels.deepseek.amount, '¥18.03') // 保留旧值
   assert.equal(failed.data.channels.deepseek.tone, 'warn')
-  assert.equal(failed.data.channels.deepseek.note.includes('暂时失败'), true)
+  // [alpha.8] 宽限期内只灰化数值，不再提示「暂时失败」。
+  assert.equal(failed.data.channels.deepseek.note, '')
+  assert.equal(failed.data.channels.deepseek.valueTone, 'muted')
   assert.equal(failed.data.channels.opencodeGo.w5, 38) // 窗口也保留旧值
 })
 
@@ -586,7 +593,7 @@ check('[0.11.0 整改] carry 按来源身份隔离：同身份暂时失败保留
   })
   assert.equal(sameIdentity.data.channels.codex.week, 28)
   assert.equal(sameIdentity.data.channels.codex.tone, 'warn')
-  assert.equal(sameIdentity.data.channels.codex.note.includes('暂时失败'), true)
+  assert.equal(sameIdentity.data.channels.codex.note, '') // [alpha.8] 静默灰化
 
   // 身份变化（Connect → Subscription）⇒ 丢弃该渠道 carry，不把旧 72% 当新来源
   const otherIdentity = buildNativeData({
@@ -600,7 +607,7 @@ check('[0.11.0 整改] carry 按来源身份隔离：同身份暂时失败保留
     previous: first.snapshot.previous,
   })
   assert.equal(otherIdentity.data.channels.codex.week, null)
-  assert.equal(otherIdentity.data.channels.codex.tone, 'bad')
+  assert.equal(otherIdentity.data.channels.codex.tone, 'warn') // [alpha.8] 无缓存时 pending = warn
   // 旧身份的 carry 键不被继承（新快照只保留本次身份）
   assert.deepEqual(Object.keys(otherIdentity.snapshot.previous), ['codex|codex-subscription-1'])
   assert.equal(otherIdentity.snapshot.previous['codex|codex-subscription-1'].hasValues, false)
@@ -930,7 +937,9 @@ await checkAsync('data feed：首帧占位 → 取数后推送完整数据并自
   assert.equal(keys.length >= 5, true, 'channels ' + keys.join(','))
   for (const key of keys) {
     assert.equal(typeof latest.channels[key].note, 'string')
-    assert.equal(latest.channels[key].note.length > 0, true)
+    assert.equal(typeof latest.channels[key].note, 'string')
+    // [alpha.8] 无凭据属永久失败，note 仍有文案；这里额外守住新字段存在。
+    assert.equal(typeof latest.channels[key].barTone, 'string')
   }
   // 数据里不出现任何凭据/上游原文形态。
   const serialized = JSON.stringify(latest)
@@ -1113,6 +1122,155 @@ check('[0.11.4] 额度面板渠道顺序与设置页一致（DeepSeek → MiMo �
   ]
   const builtOrder = buildNativeData({ cfg: { enabled: true }, plans: plans5, wires: wires5, customEntries: [], locale: 'zh-CN', previous: null, now: now5 })
   assert.deepEqual(Object.keys(builtOrder.data.channels), ['deepseek', 'mimo', 'workbuddy', 'codex', 'opencodeGo'])
+})
+
+// ── 3.5 [alpha.6–alpha.8] 顺序 / 宽度宽限 / 颜色 守卫 ─────────────────────
+
+const NATIVE_NOW = 1_700_000_000_000
+const goOkWires = (now) => [
+  { id: 'opencode-go', identity: 'go-1', fetchedAt: now, rollingUsage: { percent: 62 }, weeklyUsage: { percent: 81 }, monthlyUsage: { percent: 47 } },
+]
+const goFailWires = (code) => [{ id: 'opencode-go', identity: 'go-1', error: code || 'server' }]
+
+function buildGo (wires, extra) {
+  return buildNativeData(Object.assign({
+    cfg: {},
+    plans,
+    semanticsOf: () => 'used',
+    wires,
+    customEntries: [],
+    locale: 'zh-CN',
+    now: NATIVE_NOW,
+    previous: null,
+  }, extra || {}))
+}
+
+check('[alpha.6] planOrder 兜底：缺省 / 空数组 / 坏 JSON / 非数组 ⇒ 固定顺序 DeepSeek→MiMo→WorkBuddy→Codex→OpenCode Go', () => {
+  const expected = ['deepseek', 'mimo', 'workbuddy', 'codex', 'opencodeGo']
+  for (const planOrder of [undefined, '[]', '', '{bad', '"not-array"']) {
+    const cfg = planOrder === undefined ? {} : { planOrder }
+    const built = buildNativeData({
+      cfg, plans, semanticsOf: () => 'used', wires: fakeWires(NATIVE_NOW), customEntries: [], locale: 'zh-CN', now: NATIVE_NOW,
+    })
+    assert.deepEqual(Object.keys(built.data.channels), expected, String(planOrder))
+  }
+  // 视图骨架与数据顺序同源：视图里渠道分块按同一顺序出现。
+  const view = buildNativeView({ cfg: {}, plans, locale: 'zh-CN' })
+  const headings = []
+  const walk = (node) => {
+    if (node === null || typeof node !== 'object') return
+    if (node.type === 'text' && typeof node.text === 'string' && /^\*\*.+\*\*$/.test(node.text)) headings.push(node.text)
+    if (Array.isArray(node.children)) node.children.forEach(walk)
+  }
+  walk(view)
+  assert.deepEqual(
+    headings.filter((h) => ['**DeepSeek**', '**MiMo**', '**WorkBuddy**', '**Codex**', '**OpenCode Go**'].includes(h)),
+    ['**DeepSeek**', '**MiMo**', '**WorkBuddy**', '**Codex**', '**OpenCode Go**'],
+  )
+})
+
+check('[alpha.6] 已保存 planOrder（JSON 字符串）优先；数组形式兼容；未知 id 排最后', () => {
+  const keysOf = (planOrder) => Object.keys(buildNativeData({
+    cfg: { planOrder }, plans, semanticsOf: () => 'used', wires: fakeWires(NATIVE_NOW), customEntries: [], locale: 'zh-CN', now: NATIVE_NOW,
+  }).data.channels)
+  assert.deepEqual(keysOf('["mimo","deepseek"]'), ['mimo', 'deepseek', 'workbuddy', 'codex', 'opencodeGo'])
+  assert.deepEqual(keysOf(['codex', 'deepseek']), ['codex', 'deepseek', 'mimo', 'workbuddy', 'opencodeGo'])
+  // 坏元素被过滤、重复项去重（先出现者优先）
+  assert.deepEqual(parsePlanOrder('["mimo", 3, "mimo", "deepseek"]'), ['mimo', 'deepseek'])
+})
+
+check('[alpha.7] 瞬时失败宽限：1–4 次保留旧值并灰化、第 5 次报错且不再复用旧值', () => {
+  const ok = buildGo(goOkWires(NATIVE_NOW), null)
+  assert.equal(ok.data.channels.opencodeGo.w5, 38) // 62% 已用 → 38 剩余
+  let previous = ok.snapshot.previous
+  for (let round = 1; round <= 4; round += 1) {
+    const failed = buildGo(goFailWires('server'), { previous })
+    const ch = failed.data.channels.opencodeGo
+    assert.equal(ch.w5, 38, '第 ' + round + ' 次应保留旧值')
+    assert.equal(ch.note, '', '第 ' + round + ' 次不应输出文案')
+    assert.equal(ch.valueTone, 'muted', '第 ' + round + ' 次数值应灰化')
+    assert.equal(ch.barTone, 'warn', '第 ' + round + ' 次进度条颜色只按额度（最小 19%）')
+    previous = failed.snapshot.previous
+  }
+  const fifth = buildGo(goFailWires('server'), { previous })
+  const ch5 = fifth.data.channels.opencodeGo
+  assert.equal(ch5.w5, null, '第 5 次不得复用旧值')
+  assert.equal(ch5.c5.length > 0, true, '第 5 次应显示原因')
+  assert.equal(ch5.valueTone, null)
+  // 恢复成功：计数归零，下一次失败重新宽限
+  const recovered = buildGo(goOkWires(NATIVE_NOW), { previous: fifth.snapshot.previous })
+  assert.equal(recovered.data.channels.opencodeGo.w5, 38)
+  const afterRecover = buildGo(goFailWires('server'), { previous: recovered.snapshot.previous })
+  assert.equal(afterRecover.data.channels.opencodeGo.w5, 38, '恢复后应重新宽限')
+  assert.equal(afterRecover.data.channels.opencodeGo.note, '')
+})
+
+check('[alpha.7] 永久失败（auth）首次即报错，且不复用旧值', () => {
+  const ok = buildGo(goOkWires(NATIVE_NOW), null)
+  const failed = buildGo(goFailWires('auth'), { previous: ok.snapshot.previous })
+  const ch = failed.data.channels.opencodeGo
+  assert.equal(ch.w5, null)
+  assert.equal(ch.c5.length > 0, true)
+  assert.equal(ch.note.length > 0, true)
+  assert.equal(ch.valueTone, null)
+})
+
+check('[alpha.7] 自定义渠道 carry：失败 4 次保留旧金额、第 5 次报错', () => {
+  const entries = [{ id: 'custom:x', enabled: true, name: 'X' }]
+  const okWires = fakeWires(NATIVE_NOW).concat([{ id: 'custom:x', custom: true, identity: 'c-1', name: 'X', fetchedAt: NATIVE_NOW, balance: 12.5, currency: 'USD' }])
+  const failWires = okWires.map((w) => (w.id === 'custom:x' ? { ...w, error: 'server' } : w))
+  const run = (wires, previous) => buildNativeData({
+    cfg: {}, plans, semanticsOf: () => 'used', wires, customEntries: entries, locale: 'zh-CN', now: NATIVE_NOW, previous,
+  })
+  let previous = run(okWires, null).snapshot.previous
+  for (let round = 1; round <= 4; round += 1) {
+    const row = run(failWires, previous).data.customRows[0]
+    assert.equal(row.trailing, '$12.5', '第 ' + round + ' 次应保留旧金额')
+    assert.equal(String(row.line).includes('失败'), false, '第 ' + round + ' 次不应输出失败文案')
+    assert.equal(row.tone, 'muted')
+    previous = run(failWires, previous).snapshot.previous
+  }
+  const fifth = run(failWires, previous).data.customRows[0]
+  assert.equal(fifth.trailing, '上游服务暂时不可用')
+  assert.equal(fifth.tone, 'bad')
+})
+
+check('[alpha.8] barTone 只由剩余额度决定：≤10 bad、≤30 warn、其余 good、无数据 muted', () => {
+  assert.equal(barToneOf({ w5: 100 }), 'good')
+  assert.equal(barToneOf({ w5: 31 }), 'good')
+  assert.equal(barToneOf({ w5: 30 }), 'warn')
+  assert.equal(barToneOf({ w5: 11 }), 'warn')
+  assert.equal(barToneOf({ w5: 10 }), 'bad')
+  assert.equal(barToneOf({ w5: 0 }), 'bad')
+  assert.equal(barToneOf({ w5: 90, week: 5 }), 'bad') // 取最小值
+  assert.equal(barToneOf({}), 'muted')
+  assert.equal(barToneOf(null), 'muted')
+})
+
+check('[alpha.8] 视图协议字段：进度条绑 barTone、余额行绑 valueTone（对象式 keyValue）', () => {
+  const view = buildNativeView({ cfg: {}, plans, locale: 'zh-CN' })
+  const bindings = []
+  const items = []
+  const walk = (node) => {
+    if (node === null || typeof node !== 'object') return
+    for (const key of ['text', 'value', 'caption', 'tone', 'label']) {
+      const v = node[key]
+      if (v !== null && typeof v === 'object' && typeof v.$ === 'string') bindings.push(v.$)
+    }
+    if (node.type === 'keyValue') items.push(node.items)
+    if (Array.isArray(node.children)) node.children.forEach(walk)
+    if (Array.isArray(node.items)) node.items.forEach(walk)
+  }
+  walk(view)
+  assert.equal(bindings.includes('data.channels.codex.barTone'), true)
+  assert.equal(bindings.includes('data.channels.deepseek.valueTone'), true)
+  assert.equal(items.length, 3)
+  for (const list of items) {
+    for (const item of list) {
+      assert.equal(Array.isArray(item), false, 'keyValue items 必须是对象')
+      assert.equal(typeof item.label, 'string')
+    }
+  }
 })
 
 console.log('\n全部 ' + passed + ' 项通过（Host 半契约，非 App 真机渲染）')

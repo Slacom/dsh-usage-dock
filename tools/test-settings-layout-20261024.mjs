@@ -184,13 +184,15 @@ const ON = {
     byAttr(tree, 'data-policy-window', 'monthly') === undefined
     && byAttr(tree, 'data-policy-window', 'rolling-5h') !== undefined
     && byAttr(tree, 'data-policy-window', 'weekly') !== undefined)
-  // [2026-10-24 收尾修订] 表头列宽必须与输入框一致，且单位外显（不只写在 aria-label）
-  const headCells = elementsOf(headRow).filter((el) => el.type === 'span')
+  // [0.11.2-alpha.8] 布局改为 grid：表头与每一行共用同一套 gridTemplateColumns，
+  // 输入框 width:100% 吃掉整列 ⇒ 不再用「固定 flex 列宽 = 输入框宽度」判定。
   const inputWidth = byAttr(tree, 'data-policy-warning', 'codex|weekly').props.style.width
-  check('L5d 表头数值列宽 = 输入框宽度（不错位）',
-    headCells.length === 4 && headCells[2].props.style.flex === '0 0 ' + inputWidth + 'px'
-    && headCells[3].props.style.flex === '0 0 ' + inputWidth + 'px',
-    { inputWidth, cells: headCells.map((c) => c.props.style.flex) })
+  const weekRow = byAttr(tree, 'data-policy-window', 'weekly')
+  check('L5d 表头与窗口行共用同一套 grid 列宽（不错位）',
+    headRow.props.style.display === 'grid'
+    && weekRow !== undefined && weekRow.props.style.gridTemplateColumns === headRow.props.style.gridTemplateColumns
+    && inputWidth === '100%',
+    { inputWidth, head: headRow.props.style.gridTemplateColumns, row: weekRow && weekRow.props.style.gridTemplateColumns })
   check('L5e 表头写明预警%/收尾%，并有外显的"剩余"单位说明',
     textAll(headRow).indexOf('预警%') !== -1 && textAll(headRow).indexOf('收尾%') !== -1
     && textAll(byAttr(tree, 'data-policy-window-unit', 'codex')).indexOf('剩余') !== -1,
@@ -223,9 +225,12 @@ const ON = {
   // MiMo 的 Cookie 与登录状态由 MiMo 登录面板（`MimoAuthMount`）独占渲染，本插件**不再**
   // 为它造第二份凭据区/教程（`tools/test-mimo-refresh-ui.mjs` 还明确断言界面不出现 F12 字样）。
   // 因此这里改为守住「不重复、不空折叠」这一真实契约。
-  check('L6b MiMo 不再有第二份凭据折叠区（Cookie 由 MiMo 登录面板独占）',
-    byAttr(tree, 'data-plan-credentials', 'mimo') === undefined
-    && byAttr(tree, 'data-plan-card', 'mimo') !== undefined)
+  // [0.11.2-alpha.5] MiMo 扫码登录入口已下线：卡片仍在，但**不再**挂凭据/登录折叠区。
+  check('L6b MiMo 卡片存在：只剩 API Key 输入与说明，扫码登录区已下线',
+    byAttr(tree, 'data-plan-card', 'mimo') !== undefined
+    && byAttr(tree, 'data-plan-credentials', 'mimo') !== undefined
+    && byAttr(tree, 'data-mimo-api-key-hint', '1') !== undefined
+    && byAttr(tree, 'data-mimo-auth-panel', '1') === undefined)
   check('L6b2 无凭据渠道不渲染空的凭据折叠区', byAttr(tree, 'data-plan-credentials', 'codex') === undefined)
   ctx.client.restore()
 
