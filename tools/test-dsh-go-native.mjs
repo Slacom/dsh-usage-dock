@@ -720,24 +720,26 @@ check('策略开关打开：OpenCode Go 三个窗口各一行两框；其它渠�
   const binds = controls.map((node) => node.bind)
   // 全局策略总开关打开 → 允许路由观察出现。
   assert.equal(binds.includes('data.form.quotaTrustRouteOrder'), true)
-  // OpenCode Go：3 行 × 2 框（grid columns:2）。
+  // OpenCode Go：2 行 × 2 框（5 小时 / 周；月窗口已按用户要求移除）。
   const opencode = groupOf(view, '**OpenCode Go**')
   const rows = opencode.children.filter((node) => node.type === 'grid')
-  assert.equal(rows.length, 3)
+  assert.equal(rows.length, 2)
   for (const row of rows) {
     assert.equal(row.columns, 2)
     assert.equal(row.children.length, 2)
     assert.equal(row.children.every((node) => node.type === 'number'), true)
   }
   assert.equal(binds.includes('data.form.policyOpencodeWarnWeek'), true)
-  assert.equal(binds.includes('data.form.policyOpencodeCloseMonth'), true)
+  assert.equal(binds.includes('data.form.policyOpencodeCloseMonth'), false) // [0.11.4] 月窗口已移除
   // 其它渠道：打开关注后出现自己的策略输入。
   assert.equal(binds.includes('data.form.policyDeepseekWarn'), true)
   assert.equal(binds.includes('data.form.policyDeepseekCurrency'), false) // [0.11.4] DeepSeek 固定 CNY，无币种选择
   assert.equal(binds.includes('data.form.policyMimoClose'), true)
   assert.equal(binds.includes('data.form.policyWorkbuddyWarn'), true)
-  // Codex 只保留关注开关（每视图最多 32 个输入字段，细阈值仍在网页版设置页）。
-  assert.equal(binds.includes('data.form.policyCodexWarnWeek'), false)
+  // [0.11.4 用户要求] Codex 也要能就地配置两档阈值（只有 5 小时 / 周两个真实窗口）。
+  assert.equal(binds.includes('data.form.policyCodexWarnWeek'), true)
+  assert.equal(binds.includes('data.form.policyCodexClose5h'), true)
+  assert.equal(binds.includes('data.form.policyCodexWarnMonth'), false)
   // 全部渠道策略都打开时，输入字段总数不得超过 v2 表单上限 32。
   assert.equal(controls.length <= 32, true, 'controls ' + controls.length)
   // 数据回显：OpenCode Go 周窗口阈值来自配置。

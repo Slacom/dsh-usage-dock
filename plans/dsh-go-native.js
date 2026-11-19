@@ -37,6 +37,8 @@ export const MIMO_PANEL_ID = 'mimo-login'
 
 /** 与 Web 半一致的刷新节奏；原生面板打开时才有 feed，关闭即取消。 */
 export const REFRESH_INTERVAL_MS = 30_000
+/** [0.11.4] 最近一次成功取到的额度面板数据：打开面板时先回放它，再后台刷新。 */
+let lastQuotaPayload = null
 
 /**
  * 内置渠道 → 原生展示形态。只登记已确认 wire 形状的渠道：
@@ -78,10 +80,10 @@ const POLICY_WINDOW_SCOPES = [
 
 /** 各渠道的额度策略形状：windows（百分比窗口）/ balance（金额+币种）/ credits（积分）。 */
 const POLICY_CHANNELS = {
-  'opencode-go': { kind: 'windows', prefix: 'policyOpencode' },
-  // Codex 只保留「关注额度策略」开关：v2 表单每视图最多 32 个输入字段，
-  // 全渠道都展开细阈值会超限（36 项）。Codex 的细阈值仍在网页版设置页编辑。
-  codex: { kind: 'toggle-only', prefix: 'policyCodex' },
+  // [0.11.4 用户要求] OpenCode Go 不再配置「月」窗口。
+  'opencode-go': { kind: 'windows', prefix: 'policyOpencode', scopes: ['rolling-5h', 'weekly'] },
+  // [0.11.4 用户要求] Codex 也要能就地配置两档阈值：只给真实存在的 5 小时 / 周两个窗口。
+  codex: { kind: 'windows', prefix: 'policyCodex', scopes: ['rolling-5h', 'weekly'] },
   deepseek: { kind: 'balance', prefix: 'policyDeepseek' },
   mimo: { kind: 'balance', prefix: 'policyMimo' },
   workbuddy: { kind: 'credits', prefix: 'policyWorkbuddy' },
@@ -111,7 +113,9 @@ const POLICY_CONTROL_DEFS = []
 for (const [channelId, spec] of Object.entries(POLICY_CHANNELS)) {
   if (spec.kind === 'toggle-only') continue
   if (spec.kind === 'windows') {
+    const scopes = Array.isArray(spec.scopes) ? spec.scopes : POLICY_WINDOW_SCOPES.map((w) => w.scope)
     for (const win of POLICY_WINDOW_SCOPES) {
+      if (!scopes.includes(win.scope)) continue
       POLICY_CONTROL_DEFS.push({
         field: spec.prefix + 'Warn' + win.key,
         kind: 'number',
@@ -137,10 +141,9 @@ for (const [channelId, spec] of Object.entries(POLICY_CHANNELS)) {
     }
     continue
   }
-  const unitZh = spec.kind === 'credits' ? '积分' : '元'
-  const unitEn = spec.kind === 'credits' ? 'credits' : 'CNY'
-  POLICY_CONTROL_DEFS.push({ field: spec.prefix + 'Warn', kind: 'number', min: 0, max: 1e9, zh: '预警' + unitZh, en: 'Warn ' + unitEn, channel: channelId, role: 'warning' })
-  POLICY_CONTROL_DEFS.push({ field: spec.prefix + 'Close', kind: 'number', min: 0, max: 1e9, zh: '收尾' + unitZh, en: 'Close ' + unitEn, channel: channelId, role: 'closing' })
+  // [0.11.4 用户要求] 统一就叫「预警 / 收尾」，不再带「元 / 积分」后缀。
+  POLICY_CONTROL_DEFS.push({ field: spec.prefix + 'Warn', kind: 'number', min: 0, max: 1e9, zh: '预警', en: 'Warning', channel: channelId, role: 'warning' })
+  POLICY_CONTROL_DEFS.push({ field: spec.prefix + 'Close', kind: 'number', min: 0, max: 1e9, zh: '收尾', en: 'Closing', channel: channelId, role: 'closing' })
   if (spec.kind === 'balance') {
     POLICY_CONTROL_DEFS.push({
       field: spec.prefix + 'Currency',
@@ -538,8 +541,9 @@ function settingControl(def, locale) {
 /** 单个渠道分组的展示顺序与固定字段。 */
 const CHANNEL_SECTIONS = [
   // [0.11.4 用户要求] 设置页渠道顺序：DeepSeek → MiMo → WorkBuddy → Codex → OpenCode Go。
-  { id: 'deepseek', titleZh: 'DeepSeek', titleEn: 'DeepSeek', enabled: FIELD.deepseekEnabled, middle: [FIELD.deepseekWarnThreshold] },
-  { id: 'mimo', titleZh: 'MiMo', titleEn: 'MiMo', enabled: FIELD.mimoEnabled, middle: [FIELD.mimoWarnThreshold] },
+  // [0.11.4 用户要求] 原生额度面板不显示余额提醒，因此设置页也不再提供该输入。
+  { id: 'deepseek', titleZh: 'DeepSeek', titleEn: 'DeepSeek', enabled: FIELD.deepseekEnabled, middle: [] },
+  { id: 'mimo', titleZh: 'MiMo', titleEn: 'MiMo', enabled: FIELD.mimoEnabled, middle: [] },
   { id: 'workbuddy', titleZh: 'WorkBuddy', titleEn: 'WorkBuddy', enabled: FIELD.workbuddyEnabled, middle: [] },
   { id: 'codex', titleZh: 'Codex', titleEn: 'Codex', enabled: FIELD.codexEnabled, middle: [FIELD.codexSource] },
   { id: 'opencode-go', titleZh: 'OpenCode Go', titleEn: 'OpenCode Go', enabled: FIELD.opencodeGoEnabled, middle: [] },
@@ -554,7 +558,9 @@ function policyNodesFor(channelId, locale) {
   const spec = POLICY_CHANNELS[channelId]
   if (spec.kind === 'toggle-only') return []
   if (spec.kind === 'windows') {
+    const scopes = Array.isArray(spec.scopes) ? spec.scopes : POLICY_WINDOW_SCOPES.map((w) => w.scope)
     for (const win of POLICY_WINDOW_SCOPES) {
+      if (!scopes.includes(win.scope)) continue
       const warn = defs.find((def) => def.scope === win.scope && def.role === 'warning')
       const close = defs.find((def) => def.scope === win.scope && def.role === 'closing')
       nodes.push({
@@ -575,7 +581,7 @@ function policyNodesFor(channelId, locale) {
   nodes.push({ type: 'grid', columns: 2, children: [settingControl(warn, locale), settingControl(close, locale)] })
   const currency = defs.find((def) => def.role === 'currency')
   // [0.11.4 用户要求] DeepSeek 余额固定为 CNY，不再提供币种选择。
-  if (currency !== undefined && channelId !== 'deepseek') nodes.push(settingControl(currency, locale))
+  if (currency !== undefined && channelId !== 'deepseek' && channelId !== 'mimo') nodes.push(settingControl(currency, locale))
   return nodes
 }
 
@@ -788,7 +794,9 @@ function mergePolicyChannel(channelId, form) {
   const defs = POLICY_CONTROL_DEFS.filter((def) => def.channel === channelId)
   if (spec.kind === 'windows') {
     const windows = {}
+    const scopes = Array.isArray(spec.scopes) ? spec.scopes : POLICY_WINDOW_SCOPES.map((w) => w.scope)
     for (const win of POLICY_WINDOW_SCOPES) {
+      if (!scopes.includes(win.scope)) continue
       const warn = form[defs.find((def) => def.scope === win.scope && def.role === 'warning').field]
       const close = form[defs.find((def) => def.scope === win.scope && def.role === 'closing').field]
       const box = {}
@@ -1188,6 +1196,13 @@ function customRowOf(channel, locale, previous, identity) {
  * @returns {{ data: object, snapshot: object }}
  */
 export function buildNativeData(options) {
+  /** [0.11.4] 额度面板的渠道顺序与设置页一致：DeepSeek → MiMo → WorkBuddy → Codex → OpenCode Go。 */
+  const NATIVE_CHANNEL_ORDER = ['deepseek', 'mimo', 'workbuddy', 'codex', 'opencode-go']
+  const orderIndex = (plan) => {
+    const id = plan !== null && plan !== undefined ? plan.id : ''
+    const at2 = NATIVE_CHANNEL_ORDER.indexOf(id)
+    return at2 < 0 ? 99 : at2
+  }
   const opts = options !== null && options !== undefined ? options : {}
   const locale = typeof opts.locale === 'string' && opts.locale.length > 0 ? opts.locale : 'zh-CN'
   const en = isEn(locale)
@@ -1213,7 +1228,8 @@ export function buildNativeData(options) {
   const builtinEnabled = enabledPlanIds(cfg, plans)
   const customEnabled = []
   const known = new Set()
-  for (const plan of plans) {
+  const orderedPlans = plans.slice().sort((a, b) => orderIndex(a) - orderIndex(b))
+  for (const plan of orderedPlans) {
     if (plan !== null && plan !== undefined && typeof plan.id === 'string') known.add(plan.id)
   }
   for (const entry of customEntries) {
@@ -1453,12 +1469,18 @@ function createSurface(deps) {
           running = false
         }
         if (!stopped) {
+          lastQuotaPayload = payload
           try { emit(payload) } catch (err) { /* 取消/断开时桥接会拒绝 */ }
         }
       })
     }
     kick = run
-    try { emit(placeholderPayload(locale)) } catch (err) { /* 首帧失败不致命 */ }
+    /** [0.11.4 用户要求] 打开面板先显示上次缓存的数据，再在后台取新数据。 */
+    if (lastQuotaPayload !== null) {
+      try { emit(lastQuotaPayload) } catch (err) { /* 首帧失败不致命 */ }
+    } else {
+      try { emit(placeholderPayload(locale)) } catch (err) { /* 首帧失败不致命 */ }
+    }
     run()
     timer = setInterval(run, REFRESH_INTERVAL_MS)
     if (timer !== null && typeof timer.unref === 'function') timer.unref()

@@ -4206,33 +4206,38 @@ function renderChannelPolicyBlock(p) {
           + '可点击上方「刷新窗口信息」，或等待一次成功采集后自动出现。'))
       } else {
         /**
-         * [2026-10-24 布局重做] 订阅策略改成对齐的表格式行：
-         * `窗口 | 当前剩余 | 预警% | 收尾%`，只在**真实存在的窗口**上渲染（不造月窗）。
-         * 行仍用 flex + flexWrap + minWidth:0：窄屏逐行折行，不写固定总宽、不产生横向溢出。
+         * [0.11.4 布局再修] 表头与每一行使用**同一套 grid 列宽**，列一定对齐；
+         * 不覆盖 font-size，保持设置页原有字体。只渲染真实存在的窗口。
          */
-        children.push(h('div', { key: 'win-head', style: policyWindowHeadStyle, 'data-policy-window-head': channelId },
-          h('span', { style: policyWindowLabelCellStyle }, '窗口'),
-          h('span', { style: policyWindowValueCellStyle }, '当前剩余'),
-          h('span', { style: policyWindowValueCellStyle }, '预警%'),
-          h('span', { style: policyWindowValueCellStyle }, '收尾%'),
-        ))
-        // 单位外显（不只写在 aria-label 里）：整表百分比都是"剩余"口径。
+        var winGrid = { display: 'grid', gridTemplateColumns: 'minmax(84px, 1fr) minmax(56px, 78px) minmax(56px, 78px) minmax(56px, 78px)', alignItems: 'center', columnGap: 8, minWidth: 0, fontSize: 12, color: 'var(--dsw-alias-label-secondary)' }
+        var winLabelStyle = Object.assign({}, policyWindowLabelCellStyle, { flex: 'none', minWidth: 0 })
+        var winValueStyle = Object.assign({}, policyWindowValueCellStyle, { flex: 'none', minWidth: 0, textAlign: 'right' })
+        /** 输入框吃掉整列宽度，避免 78px 固定宽度溢出到相邻列造成数字与输入框重叠。 */
+        var policyInputStyleFull = Object.assign({}, policyInputStyle, { width: '100%', minWidth: 0, boxSizing: 'border-box' })
         children.push(h('p', { key: 'win-unit', style: policyStatusStyle, 'data-policy-window-unit': channelId },
           '表中百分比均为该窗口的**剩余**额度占比；0 = 未配置。'))
+        children.push(h('div', { key: 'win-head', style: winGrid, 'data-policy-window-head': channelId },
+          h('span', { style: winLabelStyle }, '窗口'),
+          h('span', { style: winValueStyle }, '当前剩余'),
+          h('span', { style: winValueStyle }, '预警%'),
+          h('span', { style: winValueStyle }, '收尾%'),
+        ))
         for (var i = 0; i < POLICY_WINDOW_KEYS.length; i++) {
           var key = POLICY_WINDOW_KEYS[i]
           if (samples.keys.indexOf(key) === -1) continue
+          // [0.11.4 用户要求] OpenCode Go 不再配置「月」窗口。
+          if (channelId === 'opencode-go' && key === 'monthly') continue
           // P01：没有条目时显示**旧时真正生效**的那一个窗口的两档（不是空白）。
           var shown = policyDisplayPair(kind, entry, key, current, samples)
           var warn = shown.warning
           var close = shown.closing
           var pct = typeof samples.percentOf[key] === 'number' ? samples.percentOf[key] : null
-          children.push(h('div', { key: 'win-' + key, style: policyWindowRowStyle, 'data-policy-window': key },
-            h('span', { style: policyWindowLabelCellStyle }, policyLabelOf(key) || key),
-            h('span', { style: policyWindowValueCellStyle, 'data-policy-window-now': key },
+          children.push(h('div', { key: 'win-' + key, style: winGrid, 'data-policy-window': key },
+            h('span', { style: winLabelStyle }, policyLabelOf(key) || key),
+            h('span', { style: winValueStyle, 'data-policy-window-now': key },
               pct === null ? '—' : (pct + '%')),
             h('input', {
-              type: 'number', min: 0, max: 100, step: 1, style: policyInputStyle,
+              type: 'number', min: 0, max: 100, step: 1, style: policyInputStyleFull,
               'data-policy-warning': channelId + '|' + key,
               value: warn > 0 ? String(warn) : '',
               placeholder: '0',
@@ -4243,7 +4248,7 @@ function renderChannelPolicyBlock(p) {
               }(key),
             }),
             h('input', {
-              type: 'number', min: 0, max: 100, step: 1, style: policyInputStyle,
+              type: 'number', min: 0, max: 100, step: 1, style: policyInputStyleFull,
               'data-policy-closing': channelId + '|' + key,
               value: close > 0 ? String(close) : '',
               placeholder: '0',
