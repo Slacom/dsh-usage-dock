@@ -36,6 +36,7 @@ DeepSeek Harness（DSH）的侧栏套餐用量插件：在左侧栏底部显示�
 
 ### DeepSeek
 优先读取并显示DSH所登录账号的余额
+
 当未登录账号或读取失败时，回退到「设置 → 模型」中官方DeepSeek渠道所配置的 API Key。
 
 ### Xiaomi MiMo 及 OpenCode Go
