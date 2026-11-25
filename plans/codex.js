@@ -1,55 +1,48 @@
 /**
- * OpenAI Codex 订阅额度模块：**双来源**，按配置 `codexSource` 分派，只取选中的那一个。
+ * OpenAI Codex 订阅额度模块：**唯一来源 = 本插件自持的 ChatGPT 账号**（`account`）。
  *
- *   - `connect`（缺省，保旧）：复用 `dsh-codex-connect` 已登录的 ChatGPT OAuth，
- *     调用其公开 API `readOpenAICodexRateLimits(new OpenAICodexCredentialStore())`。
- *     OAuth access/refresh token 与 account id 均由 Codex Connect 自己管理，
- *     本模块只接收脱敏后的 rateLimits / credits / individualLimit 投影 ——
- *     **不**调用 `store.read`、**不**解析任何凭据文件。
- *   - `subscription`：只经第三方只读 service `ctx.get('codexSubscriptionUsage')`
- *     （合同见 `plans/codex-sources.js` 头注释）。本模块**不**自己 fetch URL、
- *     **不**自建 credential store、**不**读 token：授权、TTL、缓存、账号绑定
- *     全部由该 service 内部的原 usage handler 负责。只取**主 Codex 桶**
- *     （`rateLimits[].id === 'codex'`）；`additional_*` / `code_review` 等附加桶
- *     不合并、不冒充主额度。
+ * 历史：0.10.0 起曾按配置 `codexSource` 在 `connect`（复用 `dsh-codex-connect` 已登录的
+ * ChatGPT OAuth）/ `subscription`（第三方只读 service）/ `account` 三来源间**手选**。
+ * [2026-11-23 用户确认] `connect` 与 `subscription` **退场**，只保留本插件自己的
+ * ChatGPT 账号登录；`codexSource` 配置字段与 wire 上的 `codexSource:'account'` 仍然保留，
+ * 只为兼容旧配置 / 旧摘要 / 旧 wire，**不再参与分派**（`fetchPlan` 恒走 account）。
  *
- * 两条路径共用**同一份**归一化与 wire 形状（`normalizeCodexUsage`）：
- * 5 小时 / 周 / 月窗口（按 `windowSeconds` 挑，缺失就缺席，不伪造）、credits、
- * individualLimit。单位：两家窗口的重置时间都是 **Unix 秒**（Connect 字段名
- * `resetAt`，Subscription 字段名 `resetsAt`）；转换为 ISO 时才 ×1000。
+ * 边界：
+ *   - 凭据读写、设备码登录、token 刷新、额度请求全在 `plans/codex-account.js`；
+ *     本模块只把它的 Connect 形状投影交给同一套归一化，**不**回退任何其它来源；
+ *   - 多账户由 `codex-account.js` 管理（1..8 个，active 唯一），本模块只消费 **active** 账户的
+ *     额度结果，不认识也不接触其它账户的 token；
+ *   - 本模块不 import 任何第三方插件模块。
+ *
+ * 归一化（`normalizeCodexUsage`）与 wire 形状保持不变：
+ * 5 小时 / 周窗口（按 `windowSeconds` 挑，缺失就缺席，不伪造；月额度恒 `null`）、credits、
+ * individualLimit。窗口的重置时间在 `codex-account.js` 里统一成 Unix **秒**（`resetAt`），
+ * 转 ISO 时才 ×1000。
  *
  * 安全失败面：
- *   - 未安装 / 未开启 ⇒ `not-enabled`（界面统一「未启用」，**不**回退另一来源）；
- *   - 接口合同不匹配 ⇒ `incompatible`（「接口不兼容/需要适配」，不是「未启用」）；
- *   - 读取期间来源/账号变化 ⇒ `source-changed`（无 value，作废）；
+ *   - 未登录 / 坏记录 / 读不到 / 需要重新登录：固定错误码与固定中文文案（来自
+ *     `plans/codex-account.js`），不含上游正文；
  *   - 未知错误只给 generic 文案，**绝不**输出 `error.message` 原文。
  */
 import z from '@deepseek-ai/schemastery'
 import { planBase } from './util.js'
-import {
-  CODEX_SOURCE_CONNECT,
-  CODEX_SOURCE_SUBSCRIPTION,
-  CODEX_SOURCES,
-  CODEX_ERROR_NOT_ENABLED,
-  CODEX_ERROR_INCOMPATIBLE,
-  CODEX_ERROR_SOURCE_CHANGED,
-  codexSourceOf,
-  codexSourceProvider,
-  normalizeCodexSource,
-  readCodexConnectTransport,
-  readCodexSubscriptionService,
-  subscriptionFailureOf,
-} from './codex-sources.js'
+import { CODEX_SOURCE_ACCOUNT } from './codex-sources.js'
+import { fetchCodexAccountUsage } from './codex-account.js'
 
 const FIVE_HOURS_SECONDS = 5 * 60 * 60
 const WEEK_SECONDS = 7 * 24 * 60 * 60
 const MONTH_SECONDS = 30 * 24 * 60 * 60
 
-/** Connect 的窗口重置字段名（Unix 秒）。 */
-const CONNECT_RESET_KEY = 'resetAt'
-/** Subscription 的窗口重置字段名（同样 Unix 秒，**不**是毫秒）。 */
-const SUBSCRIPTION_RESET_KEY = 'resetsAt'
+/** 本插件 account 通道的窗口重置字段名（Unix 秒，**不**是毫秒）。 */
+const ACCOUNT_RESET_KEY = 'resetAt'
 
+/**
+ * Codex 的配置字段名。
+ *
+ * `source` 仍然指到 `codexSource`：字段本身保留（旧 YAML / 旧摘要 / 旧 wire 都还带着它），
+ * 但取数**不再读它**。默认值也保持 `'connect'` 字面量，理由同上 —— 只是为了让旧配置
+ * 继续按原样校验通过；实际行为由「只剩 account 一条来源」决定，与本字段无关。
+ */
 const fields = { enabled: 'codexEnabled', source: 'codexSource' }
 
 const plan = {
@@ -59,23 +52,22 @@ const plan = {
   schema: {
     codexEnabled: z.boolean().default(true),
     /**
-     * [2026-11-11 双来源] `'connect' | 'subscription'`，缺省 `'connect'`（保旧）。
+     * [2026-11-23 退场后] `'connect' | 'subscription'` 已不可选，`'account'` 是唯一实际生效的
+     * 来源；这个字段现在只承担「旧配置/旧摘要仍然能读」的兼容作用。
      *
-     * 用 `z.string()` 而不是 `z.union([z.const(..)])`：
-     *   1. 手改 YAML 写错值时不会因 schema 校验失败而拒绝整个插件配置；
-     *   2. 归一（未知 → connect）由 `normalizeCodexSource` 唯一负责，
-     *      与读配置、算摘要、探状态三处共用同一规则；
+     * 保留 `z.string()` 与本默认值的原因：
+     *   1. 手改 YAML 里还写着 connect/subscription 的老配置不会因校验失败而整体被拒；
+     *   2. 归一化词表仍在 `plans/codex-sources.js`（`normalizeCodexSource`），本模块不再用；
      *   3. DSH 的设置表单按类型渲染控件，字符串字段是最保守的形态。
      */
-    codexSource: z.string().default(CODEX_SOURCE_CONNECT),
+    codexSource: z.string().default('connect'),
   },
   source: {
     /**
-     * 运行期 provider 由 `codexSource` 决定（`codexSourceProvider()` / wire 的
-     * `codexSource` 字段）；这里只声明**可能的**第三方依赖，不再固定绑定 Connect。
-     * index.js 的身份体系对 codex 走账号型分支（ACCOUNT_BOUND_PLAN_IDS），不读它。
+     * 不再有第三方 provider：Codex 凭据与取数都只在本插件内（`plans/codex-account.js`）。
+     * 保留 `oauth:true` 表明它是账号型渠道（index.js 的身份体系走 ACCOUNT_BOUND_PLAN_IDS）。
      */
-    providers: CODEX_SOURCES.map((source) => codexSourceProvider(source)),
+    providers: [],
     oauth: true,
   },
 }
@@ -84,7 +76,7 @@ const plan = {
  * 归一化单个窗口。
  *
  * @param {object} window 上游窗口
- * @param {string} resetKey 重置时间字段名（两家都是 Unix 秒）
+ * @param {string} resetKey 重置时间字段名（account 通道是 Unix 秒）
  */
 function normalizeWindow(window, resetKey) {
   if (window === null || window === undefined || typeof window !== 'object') return null
@@ -93,7 +85,7 @@ function normalizeWindow(window, resetKey) {
   if (typeof remaining !== 'number' || !Number.isFinite(remaining)
     || remaining < 0 || remaining > 100
     || typeof duration !== 'number' || !Number.isSafeInteger(duration) || duration <= 0) return null
-  // 两家的公开语义都是「剩余额度百分比」：保持原义，不反转成已用量。
+  // 公开语义是「剩余额度百分比」：保持原义，不反转成已用量。
   // `remaining === 0` 是**有效**值（额度用尽），绝不当缺数据。
   const remainingRounded = Math.round(remaining * 10) / 10
   let resetsAt = null
@@ -122,19 +114,19 @@ function safePercent(value) {
 }
 
 /**
- * 两家 usage 投影 → plan-usage 的统一 wire 主体（不含 id/name/source）。
+ * usage 投影 → plan-usage 的统一 wire 主体（不含 id/name/source）。
  *
  * 只读 `rateLimits` 里 `id === 'codex'` 的**主桶**与 `credits` / `individualLimit`；
  * `chatPass` / `resetCredits` 不参与主余额，也不相加。
  *
- * @param {object} usage 第三方脱敏 usage 投影
+ * @param {object} usage `plans/codex-account.js` 的 Connect 形状投影
  * @param {{resetKey:string}} spec 窗口重置字段名
  * @returns {object|null} 全空时返回 null（由调用方报 quota-unavailable）
  */
 export function normalizeCodexUsage(usage, spec) {
   const resetKey = spec !== null && spec !== undefined && typeof spec.resetKey === 'string'
     ? spec.resetKey
-    : CONNECT_RESET_KEY
+    : ACCOUNT_RESET_KEY
   const limits = usage !== null && usage !== undefined && Array.isArray(usage.rateLimits) ? usage.rateLimits : []
   const primary = limits.find((limit) => limit !== null && limit !== undefined && limit.id === 'codex')
   const windows = primary !== null && primary !== undefined && Array.isArray(primary.windows) ? primary.windows : []
@@ -168,9 +160,8 @@ export function normalizeCodexUsage(usage, spec) {
       limit: safeAmount(individual.limit),
       used: safeAmount(individual.used),
       /**
-       * Connect 有精确的 `remaining` 字符串，原样保留；
-       * Subscription 的 individualLimit **没有** `remaining`（只有 limit/used/
-       * remainingPercent）⇒ 这里保持 `null`，绝不凭浮点百分比反推精确金额。
+       * 上游带精确的 `remaining` 字符串就原样保留；没有就 `null`，
+       * 绝不凭浮点百分比反推精确金额。
        */
       remaining: safeAmount(individual.remaining),
       remainingPercent: safePercent(individual.remainingPercent),
@@ -178,150 +169,83 @@ export function normalizeCodexUsage(usage, spec) {
   }
 }
 
-/** Connect 侧的固定文案（未知错误只给 generic，不回显原文）。 */
-function connectFailureOf(error) {
-  const message = error instanceof Error ? error.message : String(error)
-  if (message.includes('signed out')) {
-    return { error: 'signed-out', message: '请先在「设置 → 插件 → Codex Connect」中登录 ChatGPT' }
-  }
-  if (message.includes('authorization must be renewed')) {
-    return { error: 'reauth-required', message: 'Codex Connect 登录已过期，请重新登录 ChatGPT' }
-  }
-  if (message.includes('Cannot find package') || message.includes('Cannot find module')) {
-    return { error: 'not-installed', message: '未安装 dsh-codex-connect' }
-  }
-  return { error: 'exec', message: 'Codex 额度获取失败' }
-}
-
 /**
- * 构造一份 Codex plan（默认导出用默认依赖；测试可注入 `importConnectModule`）。
+ * 构造一份 Codex plan（默认依赖用于生产；测试可注入 `fetchCodexAccountUsage`）。
  *
- * 注入点只用于**测试替身**：生产路径永远是真实 `import('dsh-codex-connect')`，
- * 不接受任何外部 URL / handler / 参数输入。
+ * 注入点只用于**测试替身**：生产路径永远是 `plans/codex-account.js` 的真实实现，
+ * 不接受任何外部 URL / handler / 参数输入。业务上没有别的来源可回退。
  */
 export function createCodexPlan(deps) {
   const options = deps !== null && deps !== undefined && typeof deps === 'object' ? deps : {}
-  const importConnectModule = typeof options.importConnectModule === 'function'
-    ? options.importConnectModule
-    : () => import('dsh-codex-connect')
+  const readAccountUsage = typeof options.fetchCodexAccountUsage === 'function'
+    ? options.fetchCodexAccountUsage
+    : fetchCodexAccountUsage
 
-  const wireBase = (source) => Object.assign(planBase(plan), { codexSource: source })
+  /** wire 的固定头：`id` / `name` / 旧兼容用的 `codexSource`。 */
+  const wireBase = () => Object.assign(planBase(plan), { codexSource: CODEX_SOURCE_ACCOUNT })
 
-  const failureWire = (source, error, message, extra) => Object.assign(
-    wireBase(source),
+  const failureWire = (error, message, extra) => Object.assign(
+    wireBase(),
     { error, message },
     extra !== null && extra !== undefined ? extra : {},
   )
 
-  const usageWire = (source, usage, resetKey) => {
-    const normalized = normalizeCodexUsage(usage, { resetKey })
+  const usageWire = (usage) => {
+    const normalized = normalizeCodexUsage(usage, { resetKey: ACCOUNT_RESET_KEY })
     if (normalized === null) {
-      return failureWire(source, 'quota-unavailable', '已登录，但当前账户未返回可显示的额度')
+      return failureWire('quota-unavailable', '已登录，但当前账户未返回可显示的额度')
     }
-    return Object.assign(wireBase(source), normalized)
-  }
-
-  /** 旧 Connect 路径：guard 通过才 import 公开模块 / 构造 store / 调额度函数。 */
-  async function readFromConnect(ctx) {
-    const guard = readCodexConnectTransport(ctx)
-    if (guard.state === 'unknown') {
-      return failureWire(CODEX_SOURCE_CONNECT, CODEX_ERROR_NOT_ENABLED, '无法确认 Codex Connect 的状态，已停止取数')
-    }
-    if (guard.state === 'absent') {
-      // 未安装 / 未开启统一「未启用」：**不**回退、**不**读任何凭据文件。
-      return failureWire(CODEX_SOURCE_CONNECT, CODEX_ERROR_NOT_ENABLED, '未启用：未安装或未开启 Codex Connect')
-    }
-    let mod
-    try {
-      mod = await importConnectModule()
-    } catch (error) {
-      const failure = connectFailureOf(error)
-      return failureWire(CODEX_SOURCE_CONNECT, failure.error, failure.message)
-    }
-    if (typeof mod.readOpenAICodexRateLimits !== 'function'
-      || typeof mod.OpenAICodexCredentialStore !== 'function') {
-      return failureWire(CODEX_SOURCE_CONNECT, CODEX_ERROR_INCOMPATIBLE,
-        '当前 dsh-codex-connect 版本不提供额度读取接口')
-    }
-    let usage
-    try {
-      // 由 Connect 的公开 SDK 自行处理 OAuth；本模块不碰 token、不读凭据文件。
-      usage = await mod.readOpenAICodexRateLimits(new mod.OpenAICodexCredentialStore())
-    } catch (error) {
-      const failure = connectFailureOf(error)
-      return failureWire(CODEX_SOURCE_CONNECT, failure.error, failure.message)
-    }
-    return usageWire(CODEX_SOURCE_CONNECT, usage, CONNECT_RESET_KEY)
+    return Object.assign(wireBase(), normalized)
   }
 
   /**
-   * Subscription 路径：只经只读 service，绝不 fallback 到 Connect。
+   * 唯一取数路径：本插件自持 ChatGPT 账号（active 账户）的额度。
    *
-   * 读前捕获 service 对象 + revision，读后再取一次并比较：
-   *   - `ctx.get` 返回的是**同一个对象**（防卸载/换服务）；
-   *   - revision 未变（防账号切换 / ABA）。
-   * 任一不满足 ⇒ `source-changed`，**不**返回任何数值。
+   * 边界：
+   *   - 失败**不**回退任何其它来源（来源已退场）；
+   *   - 错误码 / 文案全部来自 `plans/codex-account.js` 的固定值（不含上游正文）；
+   *   - `fetchedAt`（毫秒）如实透传 —— 它是本次真正读到上游的时间。
    */
-  async function readFromSubscription(ctx, fetchOptions) {
-    const before = readCodexSubscriptionService(ctx)
-    if (before.state === 'unknown') {
-      return failureWire(CODEX_SOURCE_SUBSCRIPTION, CODEX_ERROR_NOT_ENABLED, '无法确认 Codex Subscription 的状态，已停止取数')
-    }
-    if (before.state === 'absent') {
-      return failureWire(CODEX_SOURCE_SUBSCRIPTION, CODEX_ERROR_NOT_ENABLED,
-        '未启用：未安装或未开启 Codex Subscription')
-    }
-    if (before.state === 'incompatible') {
-      return failureWire(CODEX_SOURCE_SUBSCRIPTION, CODEX_ERROR_INCOMPATIBLE,
-        '当前 Codex Subscription 未提供可用的只读额度接口（需要适配）')
-    }
+  async function readFromAccount(ctx, fetchOptions) {
     const signal = fetchOptions !== null && fetchOptions !== undefined ? fetchOptions.signal : undefined
     let result
     try {
-      // 调用 payload **只有** signal：不传 force、不传 URL、不传账号。
-      result = await before.service.readUsage({ signal })
-    } catch (error) {
-      // service 合同要求不抛；万一抛了也不外泄原因，按暂时失败处理。
-      return failureWire(CODEX_SOURCE_SUBSCRIPTION, 'exec', 'Codex 额度获取失败', { transient: true })
-    }
-    const after = readCodexSubscriptionService(ctx)
-    if (after.state !== 'ok' || after.service !== before.service || after.revision !== before.revision) {
-      return failureWire(CODEX_SOURCE_SUBSCRIPTION, CODEX_ERROR_SOURCE_CHANGED,
-        'Codex 来源或账号已变化，本次结果作废', { transient: true })
+      result = await readAccountUsage(ctx, { signal })
+    } catch (err) {
+      // `fetchCodexAccountUsage` 合同里不抛；万一抛了也按暂时失败处理，不外泄原因。
+      return failureWire('exec', 'Codex 额度获取失败', { transient: true })
     }
     if (result === null || typeof result !== 'object' || result.ok !== true) {
-      const failure = subscriptionFailureOf(result)
-      return failureWire(CODEX_SOURCE_SUBSCRIPTION, failure.error, failure.message,
+      const failure = result !== null && typeof result === 'object' ? result : {}
+      const error = typeof failure.error === 'string' && failure.error.length > 0 ? failure.error : 'exec'
+      const message = typeof failure.message === 'string' && failure.message.length > 0
+        ? failure.message
+        : 'Codex 额度获取失败'
+      return failureWire(error, message,
         failure.transient === true ? { transient: true } : undefined)
     }
-    const usage = result.value
-    /**
-     * [终审 N3 整改] `{ok:true}` 不等于「有值」：service 违反合同时 `value` 可能是
-     * `null` / 字符串 / 数组。直接进归一化会读出「空额度」（`quota-unavailable`），
-     * 读 `usage.fetchedAt` 还会抛 `TypeError` 落进通用兜底 —— 两者都会把
-     * 「对方给了错东西」说成「这个账号没有额度」。这里按**硬失败**处理，
-     * 且**不**伪造任何窗口/百分比/credits。
-     */
+    const usage = result.usage
     if (usage === null || typeof usage !== 'object' || Array.isArray(usage)) {
-      return failureWire(CODEX_SOURCE_SUBSCRIPTION, 'exec', 'Codex 额度获取失败')
+      // `{ok:true}` 不等于「有值」：坏形状按硬失败处理，绝不伪造窗口/百分比。
+      return failureWire('exec', 'Codex 额度获取失败')
     }
-    const wire = usageWire(CODEX_SOURCE_SUBSCRIPTION, usage, SUBSCRIPTION_RESET_KEY)
-    /**
-     * 原采样时间（`usage.fetchedAt`，毫秒）如实透传：它表示 service 内部那次
-     * 读取的时间，不是本轮「假新鲜」。缺失就不写（由 Host 按本轮时间处理）。
-     */
+    const wire = usageWire(usage)
     if (typeof usage.fetchedAt === 'number' && Number.isFinite(usage.fetchedAt) && usage.fetchedAt > 0) {
       wire.fetchedAt = usage.fetchedAt
     }
     return wire
   }
 
-  /** 拉取 Codex 额度（按配置选中的来源，只取这一个）。 */
+  /**
+   * 拉取 Codex 额度（**只有 account 一条来源**）。
+   *
+   * `cfg` 仍接收但**不读**：`codexSource` 字段已退化为兼容字段。签名保持
+   * `(ctx, shell, cfg, fetchOptions)` 以免打乱调用方。
+   */
   async function fetchPlan(ctx, shell, cfg, fetchOptions) {
     void shell
-    const source = codexSourceOf(cfg)
-    if (source === CODEX_SOURCE_SUBSCRIPTION) return readFromSubscription(ctx, fetchOptions)
-    return readFromConnect(ctx)
+    void cfg
+    return readFromAccount(ctx, fetchOptions)
   }
 
   return { plan, fetch: fetchPlan }
@@ -329,10 +253,7 @@ export function createCodexPlan(deps) {
 
 const instance = createCodexPlan()
 
-/** 默认来源为 connect 的实例（注册表使用）。 */
+/** 注册表使用的取数入口。 */
 export const fetchPlan = instance.fetch
-
-/** 供测试/工具复用：归一化的来源枚举。 */
-export { normalizeCodexSource, CODEX_SOURCE_CONNECT, CODEX_SOURCE_SUBSCRIPTION }
 
 export default Object.assign(instance.plan, { fetch: instance.fetch })

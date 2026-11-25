@@ -1,12 +1,12 @@
 /**
- * 浏览器半回归测试（0.8.2）：详情卡片的退出逻辑、展开动画与 WorkBuddy 部分取数脚注。
+ * 浏览器半回归测试（0.8.2）：详情卡片的退出逻辑、展开动画与部分取数脚注。
  *
  * 背景（0.8.2 用户需求）：
  *   - 详情卡片此前只能靠再次点击胶囊关闭 → 打开后点击卡片外任意位置应自动关闭
  *     （pointerdown 捕获阶段判定，胶囊/面板内不关），Esc 同样关闭；
  *   - 参考 DSH 桌面端左侧工作区「点击项目展开会话记录」的动效语言 →
  *     面板出现那一帧播一次「从胶囊向上展开 + 渐显」的 WAAPI 动画；
- *   - WorkBuddy 一方版本取不到数据时整体不再报错 → 展示已取到版本并加灰色脚注。
+ *   - 部分渠道取不到数据时整体不再报错 → 展示已取到版本并加灰色脚注。
  *
  * 用法：node tools/test-panel-interactions.mjs
  */
@@ -232,48 +232,6 @@ const client = loadClient(runtime, { payload: API_PAYLOAD })
 }
 
 client.restore()
-
-// ===========================================================================
-// 第二组：WorkBuddy partial 脚注（独立运行时 + 专属 payload）
-// ===========================================================================
-{
-  try {
-    const runtimeB = createRuntime()
-    const clientB = loadClient(runtimeB, {
-      payload: {
-        ok: true,
-        data: { plans: [{ id: 'workbuddy', name: 'WorkBuddy', creditsTotal: 1846, creditsUnlimited: false,
-          creditsAccounts: [{ packageName: '企业额度', remain: 1846 }],
-          partial: true, partialNote: '以下版本未取到数据：WorkBuddy AI：fetch failed' }] },
-      },
-    })
-    const row = fakeNode({ display: 'flex', flexDirection: 'row', flexWrap: 'nowrap' })
-    runtimeB.setParent(row)
-    runtimeB.mount(clientB.Badge, { wide: true, configForm: null })
-    await runtimeB.settle({ wide: true, configForm: null })
-    const tree = await runtimeB.settle({ wide: true, configForm: null })
-    tree.props.children[0].props.onClick()
-    const opened = await runtimeB.settle({ wide: true, configForm: null })
-    const texts = []
-    const walk = (n) => {
-      if (n === null || n === undefined) return
-      if (typeof n === 'string' || typeof n === 'number') { texts.push(String(n)); return }
-      if (typeof n !== 'object') return
-      if (Array.isArray(n)) { n.forEach(walk); return }
-      const kids = n.props ? n.props.children : undefined
-      if (Array.isArray(kids)) kids.forEach(walk)
-      else if (kids !== undefined) walk(kids)
-    }
-    walk(opened.props.children[1])
-    const joined = texts.join('\n')
-    assert.ok(joined.includes('以下版本未取到数据：WorkBuddy AI：fetch failed'), '应渲染 partial 脚注')
-    assert.ok(joined.includes('1,846') || joined.includes('1846'), '合计行仍应展示已取到版本的数据')
-    clientB.restore()
-    record('T18 WorkBuddy 部分取数脚注渲染', 'PASS')
-  } catch (err) {
-    record('T18 WorkBuddy 部分取数脚注', 'FAIL', err.message)
-  }
-}
 
 // ===========================================================================
 // 第三组：展开动画（waapi 运行时记录 element.animate）

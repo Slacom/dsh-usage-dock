@@ -1,6 +1,9 @@
 /**
- * 一次性校验：把 F1/F2 的修复分别临时回退，确认用例会失败。
+ * 一次性校验：把 F1 的修复分别临时回退，确认用例会失败。
  * 仅本地运行，跑完自动还原文件。
+ *
+ * MiMo 的冻结 Cookie 语义（原 F2）已随 0.12.0 删除扫码/Cookie 通道而移除，
+ * 对应 mutation 项不再适用。
  *
  * 用法：node tools/verify-f-mutations.mjs
  */
@@ -29,20 +32,6 @@ const cases = [
     from: "  } else if (frozenKind === 'none' || frozenKind === 'unsupported') {",
     to: "  } else if (false) {",
     test: 'F1.3',
-  },
-  {
-    id: 'F2a MiMo 把 none 当未采样',
-    file: 'plans/mimo.js',
-    from: '  if (frozen !== null) {',
-    to: "  if (frozen !== null && frozen.kind !== 'none') {",
-    test: 'F2.1',
-  },
-  {
-    id: 'F2b MiMo 显式缺字段回退 cfg',
-    file: 'plans/mimo.js',
-    from: '    cookieSource = frozen.fields.mimoCookie',
-    to: '    cookieSource = cfg != null ? cfg.mimoCookie : undefined',
-    test: 'F2.2',
   },
 ]
 

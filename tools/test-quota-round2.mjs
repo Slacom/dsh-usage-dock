@@ -22,7 +22,7 @@ function check(name, cond, detail) {
 
 const DISABLED = {
   opencodeGoEnabled: false, deepseekEnabled: false, codexEnabled: false,
-  mimoEnabled: false, workbuddyEnabled: false, workbuddyAiEnabled: false,
+  mimoEnabled: false,
 }
 
 function makeSystemPrompt() {
@@ -75,9 +75,9 @@ async function guiBody(app) {
   return JSON.parse(res.state.body)
 }
 
-const wb = PLANS.find((p) => p.id === 'workbuddy')
+const ds = PLANS.find((p) => p.id === 'deepseek')
 const mimo = PLANS.find((p) => p.id === 'mimo')
-const originalWb = wb.fetch
+const originalDs = ds.fetch
 const originalMimo = mimo.fetch
 
 // ===========================================================================
@@ -85,84 +85,84 @@ const originalMimo = mimo.fetch
 // ===========================================================================
 {
   const app = boot({
-    workbuddyEnabled: true,
+    deepseekEnabled: true,
     quotaPolicyEnabled: true,
-    quotaFocusChannels: '["workbuddy"]',
-    quotaWarningCreditsThreshold: 1000,
-    quotaClosingCreditsThreshold: 500,
+    quotaFocusChannels: '["deepseek"]',
+    quotaWarningBalanceThreshold: 1000,
+    quotaClosingBalanceThreshold: 500, quotaBalanceCurrency: 'CNY',
   })
   // 用可控 Promise 编排完成顺序：第一个请求挂起，第二个先完成。
   let releaseFirst = null
   const firstGate = new Promise((resolve) => { releaseFirst = resolve })
   let call = 0
-  wb.fetch = async () => {
+  ds.fetch = async () => {
     call += 1
     if (call === 1) {
       await firstGate               // 第一次采集挂起
-      return { id: 'workbuddy', name: 'WorkBuddy', creditsTotal: 1 }
+      return { id: 'deepseek', name: 'DeepSeek', balance: 1 }
     }
-    return { id: 'workbuddy', name: 'WorkBuddy', creditsTotal: 9000 }
+    return { id: 'deepseek', name: 'DeepSeek', balance: 9000 }
   }
 
   const firstPending = guiBody(app)   // 挂起
   await new Promise((r) => setTimeout(r, 20))
   const second = await guiBody(app)   // 先完成：9000
-  check('R2-01a 先完成的请求返回 9000', second.data.plans[0].creditsTotal === 9000,
-    second.data.plans[0].creditsTotal)
+  check('R2-01a 先完成的请求返回 9000', second.data.plans[0].balance === 9000,
+    second.data.plans[0].balance)
 
   releaseFirst()
   const first = await firstPending
   // A 收口：不能只保护内部缓存，GUI 的迟到响应也必须撤掉旧成功值。
-  check('R2-01b 迟到GUI响应同样采用当前有效9000', first.data.plans[0].creditsTotal === 9000,
-    first.data.plans[0].creditsTotal)
+  check('R2-01b 迟到GUI响应同样采用当前有效9000', first.data.plans[0].balance === 9000,
+    first.data.plans[0].balance)
 
   // 关键：迟到结果**不能**改写 Host 的有效状态。
   // 用一次失败采集读出当前 effectiveStatus 之外的数值：直接发第三次请求看缓存值。
-  wb.fetch = async () => ({ id: 'workbuddy', name: 'WorkBuddy', error: 'exec', transient: true })
+  ds.fetch = async () => ({ id: 'deepseek', name: 'DeepSeek', error: 'exec', transient: true })
   const third = await guiBody(app)
   const entry = third.data.plans[0]
   check('R2-01c 迟到旧结果未覆盖新结果（缓存仍是 9000）',
-    entry.creditsTotal === 9000, { status: entry.effectiveStatus, creditsTotal: entry.creditsTotal })
+    entry.balance === 9000, { status: entry.effectiveStatus, balance: entry.balance })
   check('R2-01d 失败后状态为 cached', entry.effectiveStatus === 'cached', entry.effectiveStatus)
   app.close()
-  wb.fetch = originalWb
+  ds.fetch = originalDs
 }
 
 // ===========================================================================
 // R2-02 — 逐渠道身份：改一个渠道的凭据不误清其它渠道
 // ===========================================================================
 {
-  // MiMo 需要 Cookie；用合成值，绝不使用真实凭据。
-  const COOKIE_A = 'uid=1; serviceToken=AAA; userId=1A'
-  const COOKIE_B = 'uid=1; serviceToken=BBB; userId=1B'
+  // MiMo 只认 API Key（0.11.4 起无 Cookie/扫码通道）；用合成值，绝不使用真实凭据。
+  const KEY_A = 'sk-mimo-AAA'
+  const KEY_B = 'sk-mimo-BBB'
   mimo.fetch = async () => ({ id: 'mimo', name: 'Xiaomi MiMo', balance: 1, currency: 'CNY', unit: 'currency' })
-  wb.fetch = async () => ({ id: 'workbuddy', name: 'WorkBuddy', creditsTotal: 123 })
+  ds.fetch = async () => ({ id: 'deepseek', name: 'DeepSeek', balance: 123 })
   const app = boot({
-    workbuddyEnabled: true,
+    deepseekEnabled: true,
     mimoEnabled: true,
-    mimoCookie: COOKIE_A,
+    mimoApiKey: KEY_A,
     quotaPolicyEnabled: true,
-    quotaFocusChannels: '["workbuddy","mimo"]',
-    quotaWarningCreditsThreshold: 1000,
-    quotaClosingCreditsThreshold: 500,
+    quotaFocusChannels: '["deepseek","mimo"]',
+    quotaWarningBalanceThreshold: 1000,
+    quotaClosingBalanceThreshold: 500, quotaBalanceCurrency: 'CNY',
   })
   await guiBody(app)
 
-  // 只改 MiMo Cookie 并触发配置重载。
+  // 只改 MiMo API Key 并触发配置重载。
   // 通过模拟 configEditor 重读实现：这里直接改 boot 时的 cfg 不可行，
   // 因此改为重新 apply 一个新实例来验证「身份是否区分」这一纯逻辑。
   const { createHash } = await import('node:crypto')
   const fp = (v) => createHash('sha256').update(v).digest('hex').slice(0, 12)
-  check('R2-02a 不同 Cookie 得到不同指纹', fp(COOKIE_A) !== fp(COOKIE_B))
+  check('R2-02a 不同 API Key 得到不同指纹', fp(KEY_A) !== fp(KEY_B))
 
   // 端到端：两个实例分别用 A/B，各自都能正常取数（说明身份参与但不破坏功能）。
-  const appA = boot({ workbuddyEnabled: true, mimoEnabled: true, mimoCookie: COOKIE_A })
-  const appB = boot({ workbuddyEnabled: true, mimoEnabled: true, mimoCookie: COOKIE_B })
+  const appA = boot({ deepseekEnabled: true, mimoEnabled: true, mimoApiKey: KEY_A })
+  const appB = boot({ deepseekEnabled: true, mimoEnabled: true, mimoApiKey: KEY_B })
   const bodyA = await guiBody(appA)
   const bodyB = await guiBody(appB)
   check('R2-02b 两个身份都能正常采集', bodyA.ok === true && bodyB.ok === true)
   app.close(); appA.close(); appB.close()
-  wb.fetch = originalWb
+  ds.fetch = originalDs
   mimo.fetch = originalMimo
 }
 
@@ -184,28 +184,28 @@ const originalMimo = mimo.fetch
   // 而未变化渠道仍然投放（这由逐条 identityOf 保证）。
   const cfg = {
     quotaPolicyEnabled: true,
-    quotaFocusChannels: '["workbuddy","mimo"]',
-    quotaWarningCreditsThreshold: 1000,
-    quotaClosingCreditsThreshold: 500,
+    quotaFocusChannels: '["deepseek","mimo"]',
+    quotaWarningBalanceThreshold: 1000,
+    quotaClosingBalanceThreshold: 500, quotaBalanceCurrency: 'CNY',
   }
   const channels = {
-    workbuddy: { id: 'workbuddy', name: 'WorkBuddy', availability: 'ok', unit: 'credits', balance: 123 },
+    deepseek: { id: 'deepseek', name: 'DeepSeek', availability: 'ok', unit: 'currency', balance: 123 },
     mimo: { id: 'mimo', name: 'MiMo', availability: 'ok', unit: 'currency', currency: 'CNY', balance: 1 },
   }
   const metas = {
-    workbuddy: { status: 'ok', identity: 'wb-1', sampledAt: 1 },
+    deepseek: { status: 'ok', identity: 'wb-1', sampledAt: 1, source: 'api' },
     mimo: { status: 'ok', identity: 'mimo-1', sampledAt: 1 },
   }
-  const identities = { workbuddy: 'wb-1', mimo: 'mimo-2' }   // 只有 mimo 变了
+  const identities = { deepseek: 'wb-1', mimo: 'mimo-2' }   // 只有 mimo 变了
   const read = (id) => buildQuotaView({
     cfg,
-    observation: { provider: id },
+    observation: { provider: id === 'deepseek' ? 'deepseek-official' : 'mimo' },
     readChannel: () => channels[id],
     readObservation: () => metas[id],
     pickSmallestWindow: (w) => (Array.isArray(w) && w.length > 0 ? w[0] : null),
     identityOf: (x) => identities[x],
   })
-  check('R2-02c 未改动渠道仍投放（workbuddy）', read('workbuddy').channelId === 'workbuddy', read('workbuddy'))
+  check('R2-02c 未改动渠道仍投放（deepseek）', read('deepseek').channelId === 'deepseek', read('deepseek'))
   check('R2-02d 身份变化的渠道被拒绝（mimo）', read('mimo').channelId === null, read('mimo'))
   void baseCustom; void otherCustom
 }
@@ -218,7 +218,7 @@ const originalMimo = mimo.fetch
     quotaPolicyEnabled: true,
     quotaFocusChannels: '["deepseek"]',
     quotaWarningBalanceThreshold: 10,
-    quotaClosingBalanceThreshold: 5,
+    quotaClosingBalanceThreshold: 5, quotaBalanceCurrency: 'CNY',
     quotaBalanceCurrency: 'CNY',
   }
   const channel = { id: 'deepseek', name: 'DeepSeek', availability: 'ok', unit: 'currency', currency: 'CNY', balance: 1 }
@@ -271,20 +271,20 @@ const originalMimo = mimo.fetch
 // ===========================================================================
 {
   const app = boot({
-    workbuddyEnabled: true,
+    deepseekEnabled: true,
     quotaPolicyEnabled: true,
-    quotaFocusChannels: '["workbuddy"]',
-    quotaWarningCreditsThreshold: 1000,
-    quotaClosingCreditsThreshold: 500,
+    quotaFocusChannels: '["deepseek"]',
+    quotaWarningBalanceThreshold: 1000,
+    quotaClosingBalanceThreshold: 500, quotaBalanceCurrency: 'CNY',
     // 不设置 quotaTrustRouteOrder
   })
-  wb.fetch = async () => ({ id: 'workbuddy', name: 'WorkBuddy', creditsTotal: 1 })
+  ds.fetch = async () => ({ id: 'deepseek', name: 'DeepSeek', balance: 1 })
   await guiBody(app)
   // 没有路由观察（闸门关闭）→ context 必须为空
   check('R2-03a 未显式授权时闸门关闭 → 无投放', app.systemPrompt.text(null) === '',
     app.systemPrompt.text(null))
   app.close()
-  wb.fetch = originalWb
+  ds.fetch = originalDs
 }
 
 // ===========================================================================
@@ -307,20 +307,20 @@ const originalMimo = mimo.fetch
 // R2-05 — cached 必须携带 Host 的有效缓存值
 // ===========================================================================
 {
-  wb.fetch = async () => ({ id: 'workbuddy', name: 'WorkBuddy', creditsTotal: 321 })
-  const app = boot({ workbuddyEnabled: true })
+  ds.fetch = async () => ({ id: 'deepseek', name: 'DeepSeek', balance: 321 })
+  const app = boot({ deepseekEnabled: true })
   const ok = await guiBody(app)
-  check('R2-05a 首次成功 321', ok.data.plans[0].creditsTotal === 321, ok.data.plans[0].creditsTotal)
+  check('R2-05a 首次成功 321', ok.data.plans[0].balance === 321, ok.data.plans[0].balance)
 
-  wb.fetch = async () => ({ id: 'workbuddy', name: 'WorkBuddy', error: 'exec', transient: true })
+  ds.fetch = async () => ({ id: 'deepseek', name: 'DeepSeek', error: 'exec', transient: true })
   const cached = await guiBody(app)
   const entry = cached.data.plans[0]
   check('R2-05b 失败后状态为 cached', entry.effectiveStatus === 'cached', entry.effectiveStatus)
-  check('R2-05c cached 响应携带 Host 缓存值（321）', entry.creditsTotal === 321, entry.creditsTotal)
+  check('R2-05c cached 响应携带 Host 缓存值（321）', entry.balance === 321, entry.balance)
   check('R2-05d 缓存值有标记', entry.balanceFromCache === true, entry.balanceFromCache)
   check('R2-05e 带原采样时间', typeof entry.staleSampledAt === 'number', entry.staleSampledAt)
   app.close()
-  wb.fetch = originalWb
+  ds.fetch = originalDs
 }
 
 console.log('\n' + (passCount + failCount) + ' 项：' + passCount + ' 通过, ' + failCount + ' 失败')

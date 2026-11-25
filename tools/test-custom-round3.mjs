@@ -131,10 +131,10 @@ function byTextExact(tree, text) {
     name: '甲', balancePath: 'v', subtractPath: '', currency: 'CNY', enabled: true,
   }]
   /**
-   * 已保存顺序把内置渠道排成**非默认**顺序（workbuddy 在 deepseek 之前），
-   * 并把自定义甲放在 workbuddy 之后、deepseek 之前。
+   * 已保存顺序把内置渠道排成**非默认**顺序（codex 在 deepseek 之前），
+   * 并把自定义甲放在 codex 之后、deepseek 之前。
    */
-  const savedOrder = ['opencode-go', 'workbuddy', 'custom:aaaaaaaaaaaa', 'deepseek', 'codex', 'mimo', 'workbuddy-ai']
+  const savedOrder = ['opencode-go', 'codex', 'custom:aaaaaaaaaaaa', 'deepseek', 'mimo']
   const mutations = []
   const form = {
     value: { enabled: true, planOrder: JSON.stringify(savedOrder), customBalances: custom },
@@ -156,7 +156,7 @@ function byTextExact(tree, text) {
   await new Promise((r) => setTimeout(r, 40))
   tree = await runtime.settle({ form })
 
-  // 把甲上移一格：它应当越过 workbuddy（跨组），且 workbuddy 与 deepseek 的相对顺序不变。
+  // 把甲上移一格：它应当越过 codex（跨组），且 codex 与 deepseek 的相对顺序不变。
   const up = byAria(tree, '甲 上移')
   check('S2a 「甲 上移」按钮存在且可用', up !== undefined && up.props.disabled === false,
     up && up.props.disabled)
@@ -172,14 +172,14 @@ function byTextExact(tree, text) {
   const orderOp = batch.find((op) => Array.isArray(op.path) && op.path.length === 1 && op.path[0] === 'planOrder')
   const order = orderOp !== undefined && typeof orderOp.value === 'string' ? JSON.parse(orderOp.value) : []
 
-  check('S2b 上移后甲排在 workbuddy 之前（跨组成功）',
+  check('S2b 上移后甲排在 codex 之前（跨组成功）',
     order.indexOf('custom:aaaaaaaaaaaa') !== -1
-    && order.indexOf('custom:aaaaaaaaaaaa') < order.indexOf('workbuddy'), order)
-  check('S2c 内置渠道的非默认顺序没被重置（workbuddy 仍在 deepseek 之前）',
-    order.indexOf('workbuddy') < order.indexOf('deepseek'), order)
+    && order.indexOf('custom:aaaaaaaaaaaa') < order.indexOf('codex'), order)
+  check('S2c 内置渠道的非默认顺序没被重置（codex 仍在 deepseek 之前）',
+    order.indexOf('codex') < order.indexOf('deepseek'), order)
   check('S2d 其它渠道相对顺序保持不变',
-    order.indexOf('opencode-go') < order.indexOf('workbuddy')
-    && order.indexOf('deepseek') < order.indexOf('codex'), order)
+    order.indexOf('opencode-go') < order.indexOf('codex')
+    && order.indexOf('deepseek') < order.indexOf('mimo'), order)
   client.restore()
 }
 
@@ -203,7 +203,7 @@ function byTextExact(tree, text) {
     id: 'custom:aaaaaaaaaaaa', provider: 'p', balanceEndpoint: '/credits',
     name: '甲', balancePath: 'v', subtractPath: '', currency: 'CNY', enabled: true,
   }]
-  const savedOrder = ['opencode-go', 'custom:aaaaaaaaaaaa', 'deepseek', 'codex', 'mimo', 'workbuddy', 'workbuddy-ai']
+  const savedOrder = ['opencode-go', 'custom:aaaaaaaaaaaa', 'deepseek', 'codex', 'mimo']
   const mutations = []
   const form = {
     value: { enabled: true, planOrder: JSON.stringify(savedOrder), customBalances: custom },

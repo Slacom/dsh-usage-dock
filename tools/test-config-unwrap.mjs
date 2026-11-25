@@ -54,7 +54,7 @@ const allDisabled = Object.fromEntries(PLANS.map((p) => [p.fields.enabled, false
     deepseekEnabled: true,
     deepseekApiKey: 'sk-synthetic-deepseek',
     deepseekWarnThreshold: 25,
-    mimoCookie: 'userId=1; serviceToken=abc',
+    mimoApiKey: 'sk-synthetic-mimo',
     customBalances: [{ id: 'custom:aaaaaaaaaaaa', name: 'A', url: 'https://a.example/b', balancePath: 'data.balance', enabled: true }],
     customKeys: { 'custom:aaaaaaaaaaaa': 'sk-custom' },
     // 旧配置字段（退场渠道）必须保留
@@ -70,7 +70,7 @@ const allDisabled = Object.fromEntries(PLANS.map((p) => [p.fields.enabled, false
 
   const plain = unpackConfig(parsed)
   check('U1b 解包后 Key 是字符串', typeof plain.deepseekApiKey === 'string' && plain.deepseekApiKey === 'sk-synthetic-deepseek', plain.deepseekApiKey)
-  check('U1c 解包后 Cookie 是字符串', typeof plain.mimoCookie === 'string' && plain.mimoCookie.includes('serviceToken'), plain.mimoCookie)
+  check('U1c 解包后 MiMo API Key 是字符串', typeof plain.mimoApiKey === 'string' && plain.mimoApiKey === 'sk-synthetic-mimo', plain.mimoApiKey)
   check('U1d 解包后阈值是数字', typeof plain.deepseekWarnThreshold === 'number' && plain.deepseekWarnThreshold === 25, plain.deepseekWarnThreshold)
   check('U1e 解包后自定义数组是普通数组', Array.isArray(plain.customBalances) && plain.customBalances[0].id === 'custom:aaaaaaaaaaaa', plain.customBalances)
   check('U1f 解包后 customKeys 是普通对象且值是字符串',

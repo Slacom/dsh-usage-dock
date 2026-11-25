@@ -252,8 +252,6 @@ const PLAN_ENABLED_FIELDS = Object.freeze({
   deepseek: 'deepseekEnabled',
   codex: 'codexEnabled',
   mimo: 'mimoEnabled',
-  workbuddy: 'workbuddyEnabled',
-  'workbuddy-ai': 'workbuddyAiEnabled',
 })
 
 /**

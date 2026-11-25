@@ -276,141 +276,105 @@ async function openPanel(payload) {
 }
 
 // ---------------------------------------------------------------------------
-/**
- * [0.10.0 夹具] MiMo「显示会话可信 absent」的最小投影 + 纯投影 helper。
- * 离线环境没有真实 Host 显示会话，用 pick 构造与 Host 同构的快照，
- * 再喂给 overlay 断言「未选中时按 wire 渲染」。
- */
-const MIMO_ABSENT_DISPLAY = {
-  ok: true,
-  display: { displaySupported: false, selected: false, state: 'absent', displayId: null, generation: 0, balance: null },
-}
-const mimoApi = client.module.mimoDisplay
-mimoApi.setPoll(0)
-// T9 MiMo 渠道：MiMo 行按 wire 渲染（显示会话未选中时）
-// ---------------------------------------------------------------------------
-/**
- * [0.10.0 断言更新] MiMo 改成「显示会话优先」之后，胶囊/面板里的 MiMo 行由
- * `mimoDisplayOverlay(plans, snapshot, { resolving })` 决定：
- *   - `resolving === true`（尚未拿到可信 Host 显示状态）⇒ 遮蔽成「读取中」，**不看** wire 值；
- *   - `resolving === false` 且快照不是 selected ⇒ **原样返回 wire**，按 wire 余额渲染。
- * 离线 mock 没有 Host 显示会话，`resolving` 一直为 true（真机上探测一次就落定），
- * 所以这里断言**同一个投影函数**在这两种状态下的行为，而不是胶囊最终文案；
- * 胶囊层面的行结构由 test-footer-row / test-capsule-pending 覆盖。
- */
-{
-  const wirePlan = {
-    id: 'mimo', name: '小米 MiMo', balance: 16.48, cashBalance: 16.48,
-    giftBalance: 0, currency: 'CNY', isAvailable: true, via: 'console', warnThreshold: 10,
-  }
-  const absent = mimoApi.pick(MIMO_ABSENT_DISPLAY).display
-  const masked = mimoApi.overlay([wirePlan], null, { allowMimo: true, resolving: true })
-  const m1 = masked.filter((p) => p.id === 'mimo')[0]
-  check('T9 N4 [0.11.4] MiMo 扫码通道下线：显示会话未就绪也不再遮蔽 wire 余额',
-    m1 !== undefined && m1.balance === 16.48, m1)
-
-  const trusted = mimoApi.overlay([wirePlan], absent, { allowMimo: true, resolving: false })
-  const m2 = trusted.filter((p) => p.id === 'mimo')[0]
-  check('T9 可信 absent（未选本机显示会话）⇒ MiMo 按 wire 余额 16.48 CNY',
-    m2 !== undefined && m2.balance === 16.48 && m2.currency === 'CNY', m2)
-  check('T9 wire 的现金/赠送明细字段原样保留（面板据此分行）',
-    m2 !== undefined && m2.cashBalance === 16.48 && m2.giftBalance === 0, m2)
-
-  const usdPlan = Object.assign({}, wirePlan, { balance: 25.51, cashBalance: 20, giftBalance: 5.51, currency: 'USD' })
-  const usd = mimoApi.overlay([usdPlan], absent, { allowMimo: true, resolving: false })[0]
-  check('T9 USD 渠道保留 $ 币种与 25.51', usd !== undefined && usd.currency === 'USD' && usd.balance === 25.51, usd)
-}
-
-// T10 MiMo 低余额：红灯判据
-// ---------------------------------------------------------------------------
-/**
- * [0.10.0 断言更新] 同 T9：离线拿不到可信显示状态，MiMo 行会被遮蔽成「读取中」，
- * mock 里根本走不到「低余额转红」。这里改为断言**判据本身**：
- * 展示用投影保留 wire 余额后，`balance < warnThreshold` 成立（红灯输入条件），
- * 并给一个足够余额的对照（防止「怎么都红」）。
- */
-{
-  const low = mimoApi.overlay(
-    [{ id: 'mimo', name: '小米 MiMo', balance: 5.2, cashBalance: 5.2, giftBalance: 0, currency: 'CNY', warnThreshold: 10 }],
-    mimoApi.pick(MIMO_ABSENT_DISPLAY).display, { allowMimo: true, resolving: false },
-  )[0]
-  check('T10 低余额：wire 余额 5.2 < 阈值 10（红灯条件成立）',
-    low !== undefined && low.balance === 5.2 && low.warnThreshold === 10 && low.balance < low.warnThreshold, low)
-  const ok = mimoApi.overlay(
-    [{ id: 'mimo', name: '小米 MiMo', balance: 16.48, currency: 'CNY', warnThreshold: 10 }],
-    mimoApi.pick(MIMO_ABSENT_DISPLAY).display, { allowMimo: true, resolving: false },
-  )[0]
-  check('T10 对照：余额 16.48 > 阈值 10（不应红灯）',
-    ok !== undefined && !(ok.balance < ok.warnThreshold), ok)
-}
-
-// ---------------------------------------------------------------------------
-// T11 WorkBuddy 积分渠道：胶囊「✦ 」前缀（0.8.2，替代「（积分）」后缀）+ 明细自适应列表
+// T9 MiMo 渠道：只有普通 API Key wire（0.11.4 删除显示会话 / displaySource / 覆盖层）
 // ---------------------------------------------------------------------------
 {
-  // 少量明细（≤3 行）：普通文字铺开，无滚动容器。
-  const few = {
+  const payload = {
     ok: true,
     data: {
       plans: [{
-        id: 'workbuddy', name: 'WorkBuddy', creditsTotal: 3401.5, creditsUnlimited: false,
-        creditsAccounts: [{ variant: 'WorkBuddy', packageName: '企业额度', remain: 3401.5, size: null, endTimeMs: null }],
-        variants: [{ label: 'WorkBuddy', total: 3401.5, unlimited: false }],
-        isAvailable: true,
+        id: 'mimo', name: 'Xiaomi MiMo', balance: 16.48, cashBalance: 16.48, giftBalance: 0,
+        currency: 'CNY', isAvailable: true, via: 'api-key', warnThreshold: 10,
       }],
     },
   }
-  let tree = await refreshWith(async () => ({ json: async () => few }))
-  // [0.8.3 方案 B] ✦ 与数字现在是 flex 的两个子项（中心对齐不依赖字体基线），
-  // 两者间距由数字子项的 marginLeft(0.34em) 提供，不再是文本里的空格。
-  // 因此断言：符号与数字都在、顺序正确、无「（积分）」后缀、且数值区是 flex 容器。
+  const tree = await refreshWith(async () => ({ json: async () => payload }))
   const pillText = textOf(tree)
-  check('T11a 胶囊显示「✦ + 3,401.5」（flex 结构，符号在前）',
-    pillText.includes('✦') && pillText.includes('3,401.5')
-    && pillText.indexOf('✦') < pillText.indexOf('3,401.5')
-    && !pillText.includes('（积分）'), pillText)
-  const starFlex = elementsOf(tree).find((el) => el.props && el.props.style
-    && el.props.style.display === 'flex' && el.props.style.alignItems === 'center')
-  check('T11a2 WorkBuddy 数值区为 flex 中心对齐（方案 B）', starFlex !== undefined)
-  tree = await openPanel(few)
-  let text = textAll(tree)
-  check('T11b 少量明细以文字铺开（无滚动容器）', text.includes('企业额度') && !text.includes('积分来自'), text)
-  check('T11b2 无「WorkBuddy：合计」小计行（与合计重复，用户定稿移除）', !text.includes('WorkBuddy：3,401.5'), text)
-  const scrollers = elementsOf(tree).filter((el) => el.props && el.props.style
-    && el.props.style.overflowY === 'auto' && typeof el.props.style.maxHeight === 'number')
-  // 面板本体也是滚动容器（maxHeight:'70vh' 字符串），这里只断言**数值高度**的
-  // 明细列表不存在——少量明细不应产生固定高度的滚动列表。
-  check('T11c 少量明细不出固定高度滚动列表', scrollers.length === 0)
+  check('T9 MiMo 余额按普通 wire 直接上胶囊（Xiaomi MiMo 16.48）',
+    pillText.includes('Xiaomi MiMo') && pillText.includes('16.48'), pillText)
+  check('T9 客户端不再导出 MiMo 登录 / 显示会话模块',
+    Object.keys(client.module).every((key) => !/^mimo(Display|Auth|Login|Remember)/.test(key)),
+    Object.keys(client.module).filter((k) => /mimo/i.test(k)))
+  const opened = await openPanel(payload)
+  const panelText = textAll(opened)
+  check('T9 详情面板保留现金 / 赠送明细（面板据此分行）',
+    panelText.includes('现金余额') && panelText.includes('赠送余额'), panelText.slice(0, 300))
+}
 
-  // 大量明细（>3 行）：收进 maxHeight 列表，滚动条避让（paddingRight）。
-  const manyAccounts = []
-  for (let i = 1; i <= 6; i++) {
-    manyAccounts.push({ variant: 'WorkBuddy', packageName: '套餐 ' + i, remain: 100 * i, size: 1000, endTimeMs: null })
-  }
-  const many = {
+// T10 MiMo 低余额：红灯判据来自 wire 余额与 warnThreshold（无显示层覆盖）
+// ---------------------------------------------------------------------------
+{
+  const payload = {
     ok: true,
     data: {
-      plans: [{
-        id: 'workbuddy', name: 'WorkBuddy', creditsTotal: 2100, creditsUnlimited: false,
-        creditsAccounts: manyAccounts,
-        variants: [{ label: 'WorkBuddy', total: 2100, unlimited: false }],
-        isAvailable: true,
-      }],
+      plans: [{ id: 'mimo', name: 'Xiaomi MiMo', balance: 5.2, currency: 'CNY', isAvailable: true, via: 'api-key', warnThreshold: 10 }],
     },
   }
-  tree = await refreshWith(async () => ({ json: async () => many }))
-  tree = await openPanel(many)
-  text = textAll(tree)
-  check('T11d 大量明细文字仍在（滚动列表渲染）', text.includes('套餐 6'), text)
-  const list = elementsOf(tree).find((el) => el.props && el.props.style
-    && el.props.style.overflowY === 'auto' && typeof el.props.style.maxHeight === 'number')
-  check('T11e 明细收进固定高度列表', list !== undefined, null)
-  if (list) {
-    check('T11f 列表滚动条避让（paddingRight 预留）', list.props.style.paddingRight >= 8, list.props.style.paddingRight)
-    check('T11g maxHeight 已设置（72px，用户定稿）', list.props.style.maxHeight === 72, list.props.style.maxHeight)
+  const tree = await refreshWith(async () => ({ json: async () => payload }))
+  const lowText = textOf(tree)
+  check('T10 低余额 5.2 仍按 wire 显示（不被显示会话遮蔽）', lowText.includes('5.20'), lowText)
+  const redDot = elementsOf(tree).find((el) => el.props && el.props.style
+    && el.props.style.background === 'var(--dsw-alias-state-error-primary)')
+  check('T10 余额 5.2 < 阈值 10 ⇒ 状态点转红', redDot !== undefined)
+  const high = await refreshWith(async () => ({
+    json: async () => ({
+      ok: true,
+      data: { plans: [{ id: 'mimo', name: 'Xiaomi MiMo', balance: 16.48, currency: 'CNY', isAvailable: true, via: 'api-key', warnThreshold: 10 }] },
+    }),
+  }))
+  const noRed = elementsOf(high).find((el) => el.props && el.props.style
+    && el.props.style.background === 'var(--dsw-alias-state-error-primary)')
+  check('T10 对照：余额 16.48 > 阈值 10 不红', noRed === undefined)
+}
+
+// ---------------------------------------------------------------------------
+// T11 [2026-11-23 B1] WorkBuddy 退场：即使旧 Host 仍返回 `workbuddy` / `workbuddy-ai`
+// 的 wire，客户端也不画行、不渲染积分符号；清单外的未知内置 id 同样丢弃，自定义条目不受影响。
+// ---------------------------------------------------------------------------
+{
+  const payload = {
+    ok: true,
+    data: {
+      plans: [
+        { id: 'deepseek', name: 'DeepSeek', balance: 7.38, isAvailable: true, via: 'account', warnThreshold: 10 },
+        {
+          id: 'workbuddy', name: 'WorkBuddy', creditsTotal: 3401.5, creditsUnlimited: false,
+          creditsAccounts: [{ variant: 'WorkBuddy', packageName: '企业额度', remain: 3401.5 }],
+          variants: [{ label: 'WorkBuddy', total: 3401.5, unlimited: false }],
+          isAvailable: true,
+        },
+        {
+          id: 'workbuddy-ai', name: 'WorkBuddy AI', creditsTotal: 349, creditsUnlimited: false,
+          variants: [{ label: 'WorkBuddy AI', total: 349, unlimited: false }],
+          isAvailable: true,
+        },
+        // 既不在 PLANS 也不在退场清单的旧内置 id：白名单守卫应直接丢弃（B1 根因回归）。
+        { id: 'old-plan-x', name: 'OldPlanX', balance: 3, isAvailable: true },
+        // 自定义渠道（custom:*）不能被白名单守卫误杀。
+        {
+          id: 'custom:abcdef123456', name: '自定义渠道A', custom: true, balance: 12.3,
+          isAvailable: true, enabled: true,
+        },
+      ],
+    },
   }
-  check('T11h 无「积分来自」脚注（用户定稿移除）', !text.includes('积分来自'), text)
-  check('T11i 列表高度扩大一倍（72px）', list !== undefined && list.props.style.maxHeight === 72, list ? list.props.style.maxHeight : null)
+  const tree = await refreshWith(async () => ({ json: async () => payload }))
+  const pillText = textOf(tree)
+  check('T11a 退场渠道不出现在胶囊里',
+    !pillText.includes('WorkBuddy') && !pillText.includes('workbuddy-ai') && !pillText.includes('WorkBuddy AI'), pillText)
+  check('T11b 不再渲染积分符号/数值（无 ✦、无 3,401.5 / 349）',
+    !pillText.includes('✦') && !pillText.includes('3,401.5') && !pillText.includes('349'), pillText)
+  check('T11c 清单外的未知内置 id 也不画行（不再回退成「id 当名字」）',
+    !pillText.includes('OldPlanX') && !pillText.includes('old-plan-x'), pillText)
+  check('T11d 自定义条目不受白名单守卫影响（custom:* 仍显示）',
+    pillText.includes('自定义渠道A'), pillText)
+  const opened = await openPanel(payload)
+  const text = textAll(opened)
+  check('T11e 详情面板也没有 WorkBuddy / workbuddy-ai 行',
+    !text.includes('WorkBuddy') && !text.includes('workbuddy-ai'), text.slice(0, 200))
+  check('T11f 详情面板也没有未知内置 id', !text.includes('OldPlanX'), text.slice(0, 200))
+  check('T11g 详情面板仍显示自定义条目', text.includes('自定义渠道A'), text.slice(0, 200))
+  check('T11h 真实渠道仍显示（DeepSeek ¥7.38）', text.includes('¥ 7.38') || text.includes('7.38'), text.slice(0, 160))
 }
 
 // T12 旧请求已进入 JSON 解析，abort 也不能阻止其迟到；不得覆盖强刷结果。

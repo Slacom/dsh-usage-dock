@@ -24,8 +24,8 @@ function check(name, cond, detail) {
 }
 
 const CONTEXT = {
-  enabled: ['deepseek', 'codex', 'mimo', 'opencode-go', 'workbuddy', 'workbuddy-ai'],
-  known: ['deepseek', 'codex', 'mimo', 'opencode-go', 'workbuddy', 'workbuddy-ai'],
+  enabled: ['deepseek', 'codex', 'mimo', 'opencode-go'],
+  known: ['deepseek', 'codex', 'mimo', 'opencode-go'],
   semanticsOf: percentSemanticsOf,
 }
 
@@ -36,7 +36,7 @@ const CONTEXT = {
   check('P1a 工具名', TOOL_NAME === 'usage_status')
   check('P1b 缓存 TTL 30 秒', TOOL_CACHE_TTL_MS === 30000)
   check('P1c 预算为正', TOOL_BUDGET_MS > 0 && TOOL_BUDGET_MS <= 30000)
-  check('P1d 内置 id 合法', isKnownIdShape('deepseek') && isKnownIdShape('workbuddy-ai'))
+  check('P1d 内置 id 合法', isKnownIdShape('deepseek') && isKnownIdShape('mimo'))
   check('P1e 自定义 id 合法', isKnownIdShape('custom:abcdef123456'))
   check('P1f 非法 id 被拒', !isKnownIdShape('nope') && !isKnownIdShape('') && !isKnownIdShape(42))
   check('P1g 退场 id 可识别', isRetiredId('kimi-code') && isRetiredId('glm-zhipu') && isRetiredId('glm-zai'))
@@ -133,26 +133,13 @@ const CONTEXT = {
   check('P5i OpenCode 已用 90% → 剩余 10%', opencode.windows[0].percent === 10, opencode.windows)
   check('P5j OpenCode 已用 20% → 剩余 80%', opencode.windows[1].percent === 80, opencode.windows)
 
-  // [D6-C] WorkBuddy 真实 wire 用 creditsTotal
-  const wb = projectPlan({ id: 'workbuddy', creditsTotal: 1906 }, { semantics: 'used' })
-  check('P5k WorkBuddy 读取 creditsTotal', wb.balance === 1906, wb)
-  check('P5l WorkBuddy 是 credits 类型', wb.kind === 'credits', wb.kind)
-  check('P5m 积分单位明确', wb.unit === 'credits', wb.unit)
-  check('P5n 积分不带币种', wb.currency === null, wb.currency)
-  check('P5o 积分可用性 ok', wb.availability === 'ok', wb.availability)
-
-  const wbZero = projectPlan({ id: 'workbuddy', creditsTotal: 0 }, { semantics: 'used' })
-  check('P5p 0 积分有效（不是缺失）', wbZero.balance === 0, wbZero)
-
-  const wbNegative = projectPlan({ id: 'workbuddy', creditsTotal: -5 }, { semantics: 'used' })
-  check('P5q 负积分保留', wbNegative.balance === -5, wbNegative)
-
-  const wbUnlimited = projectPlan({ id: 'workbuddy', creditsUnlimited: true }, { semantics: 'used' })
-  check('P5r unlimited 单独标记', wbUnlimited.unlimited === true && wbUnlimited.availability === 'unlimited', wbUnlimited)
-  check('P5s unlimited 不伪造积分', wbUnlimited.balance === null)
-
-  const wbMissing = projectPlan({ id: 'workbuddy' }, { semantics: 'used' })
-  check('P5t 无积分字段时 unknown', wbMissing.availability === 'unknown' && wbMissing.balance === null, wbMissing)
+  // MiMo 与 DeepSeek 同为余额渠道，但币种/单位必须来自 wire。
+  const mimo = projectPlan({ id: 'mimo', balance: 9.5, currency: 'CNY', via: 'api-key' }, { semantics: 'used' })
+  check('P5k MiMo 读取 balance', mimo.balance === 9.5, mimo)
+  check('P5l MiMo 是 balance 类型', mimo.kind === 'balance', mimo.kind)
+  check('P5m MiMo 币种与单位来自 wire', mimo.currency === 'CNY' && mimo.unit === 'currency', mimo)
+  check('P5n MiMo 不虚构其它字段', mimo.windows.length === 0 && mimo.unlimited === false, mimo)
+  check('P5o MiMo 可用性 ok', mimo.availability === 'ok', mimo.availability)
 }
 
 // ===========================================================================
@@ -300,13 +287,13 @@ const CONTEXT = {
   const out = projectUsage([
     { id: 'deepseek', balance: 7.38, currency: 'CNY' },
     { id: 'codex', rollingUsage: { percent: 33 } },
-    { id: 'workbuddy', creditsTotal: 1906 },
-    { id: 'mimo', error: 'auth' },
-  ], ['deepseek', 'codex', 'workbuddy', 'mimo'], CONTEXT)
+    { id: 'mimo', balance: 9.5, currency: 'CNY' },
+    { id: 'opencode-go', error: 'auth' },
+  ], ['deepseek', 'codex', 'mimo', 'opencode-go'], CONTEXT)
   const text = renderUsage(out)
   check('P11a 含余额与币种', text.includes('7.38') && text.includes('CNY'), text)
   check('P11b 含剩余百分比', text.includes('剩余') && text.includes('33%'), text)
-  check('P11c 积分带单位', text.includes('积分') && text.includes('1906'), text)
+  check('P11c MiMo 余额也进入渲染', text.includes('9.5'), text)
   check('P11d 含错误说明', text.includes('鉴权失败'), text)
   check('P11e 空结果固定文案', renderUsage({ channels: [] }).includes('没有可查询'))
 

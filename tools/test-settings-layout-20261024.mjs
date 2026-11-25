@@ -74,7 +74,7 @@ const ON = {
   deepseekWarnThreshold: 12,
   deepseekApiKey: 'sk-layout-fixture',
   // 全局顺序：把自定义条目夹在 deepseek 与 codex 之间（不得被挪到末尾）
-  planOrder: '["opencode-go","deepseek","custom:layout0002","codex","mimo","workbuddy"]',
+  planOrder: '["opencode-go","deepseek","custom:layout0002","codex","mimo"]',
   customBalances: [CUSTOM],
 }
 
@@ -139,7 +139,7 @@ const ON = {
     else if (el.props['data-custom-id'] !== undefined) order.push(el.props['data-custom-id'])
   }
   const dedup = order.filter((id, i) => order.indexOf(id) === i)
-  const expected = ['opencode-go', 'deepseek', 'custom:layout0002', 'codex', 'mimo', 'workbuddy']
+  const expected = ['opencode-go', 'deepseek', 'custom:layout0002', 'codex', 'mimo']
   check('L3a 渲染顺序等于全局 orderedIds（custom 夹在中间）', dedup.join(',') === expected.join(','), dedup)
   check('L3b 自定义卡片确实不是最后一个', dedup[dedup.length - 1] !== 'custom:layout0002', dedup)
   ctx.client.restore()
@@ -221,16 +221,13 @@ const ON = {
     && !hasDetailsAncestor(byAttr(tree, 'data-plan-credential', 'deepseek')))
   check('L6a2 Key 输入仍是受控输入且带原值',
     (() => { const el = byAttr(tree, 'data-plan-credential', 'deepseek'); return el !== undefined && el.type === 'input' && el.props.value === 'sk-layout-fixture' })())
-  // [2026-11-11 断言更正] 旧的 L6b 断言（MiMo Cookie 与本插件 details + F12 长教程）已过时：
-  // MiMo 的 Cookie 与登录状态由 MiMo 登录面板（`MimoAuthMount`）独占渲染，本插件**不再**
-  // 为它造第二份凭据区/教程（`tools/test-mimo-refresh-ui.mjs` 还明确断言界面不出现 F12 字样）。
-  // 因此这里改为守住「不重复、不空折叠」这一真实契约。
-  // [0.11.2-alpha.5] MiMo 扫码登录入口已下线：卡片仍在，但**不再**挂凭据/登录折叠区。
+  // [2026-11-11 断言更正] 旧的 L6b 断言（MiMo Cookie 与本插件 details + F12 长教程）已过时。
+  // [0.12.0] MiMo 登录已删除（扫码 / 记住登录 / 控制台 Cookie 整条通道下线）：本插件只为
+  // MiMo 渲染 API Key 输入与说明；因此这里守住「不重复、不空折叠」这一真实契约。
   check('L6b MiMo 卡片存在：只剩 API Key 输入与说明，扫码登录区已下线',
     byAttr(tree, 'data-plan-card', 'mimo') !== undefined
     && byAttr(tree, 'data-plan-credentials', 'mimo') !== undefined
-    && byAttr(tree, 'data-mimo-api-key-hint', '1') !== undefined
-    && byAttr(tree, 'data-mimo-auth-panel', '1') === undefined)
+    && byAttr(tree, 'data-mimo-api-key-hint', '1') !== undefined)
   check('L6b2 无凭据渠道不渲染空的凭据折叠区', byAttr(tree, 'data-plan-credentials', 'codex') === undefined)
   ctx.client.restore()
 

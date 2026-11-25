@@ -144,20 +144,21 @@ const SettingsPage = client.SettingsPage
   check('C1b 设置页不再出现 GLM Z.AI', !text.includes('GLM Z.AI'))
   check('C1c 设置页不再出现 GLM 智谱', !text.includes('GLM 智谱'))
   check('C1d 退场渠道的开关输入不再存在', byId(tree, 'plan-usage-kimi-code-api-key') === undefined)
-  check('C1e 保留渠道仍在（DeepSeek / MiMo / WorkBuddy）',
-    text.includes('DeepSeek') && text.includes('Xiaomi MiMo') && text.includes('WorkBuddy'))
+  check('C1e 保留渠道仍在（OpenCode Go / DeepSeek / MiMo / Codex）',
+    text.includes('DeepSeek') && text.includes('Xiaomi MiMo') && text.includes('OpenCode Go')
+    && text.includes('OpenAI Codex') && !text.includes('WorkBuddy'))
   check('C1f 排序候选不含退场 id',
     byAria(tree, 'Kimi Code 上移') === undefined
     && byAria(tree, 'GLM Z.AI 上移') === undefined
     && byAria(tree, 'GLM 智谱 上移') === undefined)
 }
 
-// 旧 planOrder 里的退场 id 不占槽位：上移 WorkBuddy 应跨过 mimo，而不是被旧 id 卡住。
+// 旧 planOrder 里的退场 id 不占槽位：上移 Codex 应跨过 mimo，而不是被旧 id 卡住。
 {
-  const { form, writes, mutations } = makeForm({ planOrder: '["glm-zai","kimi-code","glm-zhipu","deepseek","mimo","workbuddy"]' })
+  const { form, writes, mutations } = makeForm({ planOrder: '["glm-zai","kimi-code","glm-zhipu","deepseek","mimo","codex"]' })
   const tree = await mountSettings(runtime, client, form)
-  const up = byAria(tree, 'WorkBuddy 上移')
-  assert.ok(up !== undefined, '应能找到 WorkBuddy 上移按钮')
+  const up = byAria(tree, 'OpenAI Codex 上移')
+  assert.ok(up !== undefined, '应能找到 Codex 上移按钮')
   up.props.onClick()
   // 排序改动先进整页草稿；点「保存更改」才落盘（这是 0.8.1 起的既有交互）。
   const afterMove = await runtime.settle({ form })
@@ -172,12 +173,14 @@ const SettingsPage = client.SettingsPage
   const savedValue = setSaved !== undefined ? setSaved.value : (mutateSaved !== undefined ? mutateSaved.value : undefined)
   assert.ok(savedValue !== undefined, '点保存后应写入 planOrder（set 或 mutate）')
   const order = JSON.parse(savedValue)
-  check('C1g 旧 planOrder 的退场 id 不占排序槽位（WorkBuddy 直接跨过 mimo）',
-    order.indexOf('workbuddy') < order.indexOf('mimo'), order)
+  check('C1g 旧 planOrder 的退场 id 不占排序槽位（Codex 直接跨过 mimo）',
+    order.indexOf('codex') < order.indexOf('mimo'), order)
   check('C1h 保存的排序不再包含退场 id',
-    order.indexOf('glm-zai') === -1 && order.indexOf('kimi-code') === -1 && order.indexOf('glm-zhipu') === -1, order)
-  // [2026-10-21] workbuddy-ai 已退场，内置渠道由 6 个减为 5 个。
-  check('C1i 排序仍保留其余内置渠道', order.length === 5 && order.indexOf('deepseek') !== -1, order)
+    order.indexOf('glm-zai') === -1 && order.indexOf('kimi-code') === -1 && order.indexOf('glm-zhipu') === -1,
+    order)
+  // WorkBuddy 也已退场：剩余内置渠道恰好 4 个。
+  check('C1i 排序仍保留其余 4 个内置渠道', order.length === 4 && order.indexOf('deepseek') !== -1
+    && order.indexOf('mimo') !== -1 && order.indexOf('codex') !== -1 && order.indexOf('opencode-go') !== -1, order)
 }
 
 // ---------------------------------------------------------------------------

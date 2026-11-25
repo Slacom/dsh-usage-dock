@@ -30,6 +30,15 @@ import {
   FAIL_PERMANENT,
   FAIL_EXPIRED,
 } from './quota-observer.js'
+/**
+ * [2026-11-23 Codex 只保留本插件 ChatGPT 账号登录] 原生设置页**不再**提供「额度来源」下拉：
+ * `connect` / `subscription` 两个来源已退场，来源不再是用户可选项，登录/切换账户都在网页版
+ * 设置页完成。因此这里也不再 import `normalizeCodexSource`（那只是旧来源值的归一函数）。
+ *
+ * [2026-11-22 教训] 曾经因为原生页只认 `'subscription'`、其余一律回 `'connect'`，把已保存的
+ * `account` 显示成 connect，用户一点保存就静默改回了来源。删除字段是比「再写一套归一」更
+ * 安全的收口：没有这个控件，就不会有「保存时改写用户意图」。
+ */
 
 /** 面板 id；`package.json` 的 `dshGo.contributes.panels` 必须与之一致。 */
 export const PANEL_ID = 'quota'
@@ -41,9 +50,6 @@ const STRIP_ID = 'strip'
  * 清单里单独声明（placement: plugin），因此 App 的插件详情页也能直达。
  */
 export const SETTINGS_PANEL_ID = 'settings'
-
-/** [0.11.0] MiMo 扫码登录面板：从设置页「MiMo 扫码登录」按钮打开。 */
-export const MIMO_PANEL_ID = 'mimo-login'
 
 /** 与 Web 半一致的刷新节奏；原生面板打开时才有 feed，关闭即取消。 */
 export const REFRESH_INTERVAL_MS = 30_000
@@ -60,17 +66,19 @@ const CHANNEL_PRESENTATION = {
   codex: { key: 'codex', kind: 'quota', name: 'Codex', scopes: ['rolling-5h', 'weekly'] },
   deepseek: { key: 'deepseek', kind: 'balance', name: 'DeepSeek' },
   mimo: { key: 'mimo', kind: 'balance', name: 'MiMo' },
-  workbuddy: { key: 'workbuddy', kind: 'credits', name: 'WorkBuddy' },
 }
 
 /**
- * [0.11.2-alpha.6] 用户要求的原生默认顺序：DeepSeek → MiMo → WorkBuddy → Codex → OpenCode Go。
+ * [0.11.2-alpha.6] 原生默认顺序：DeepSeek → MiMo → Codex → OpenCode Go。
  *
  * 设置页的 `CHANNEL_SECTIONS` 同序；`cfg.planOrder` 非空时以**已保存顺序**为准，
  * 这里只做兜底——用户从没拖过顺序（`planOrder` 缺省 / `'[]'` / 坏 JSON）时，
  * 面板按这个顺序出现，不再退回 `plans/index.js` 的注册表顺序。
+ *
+ * [2026-11-23] 已退场的积分类渠道已从原生半移除（以后改由用户自建「自定义余额渠道」添加），
+ * 因此不在本顺序里。
  */
-export const NATIVE_CHANNEL_ORDER = ['deepseek', 'mimo', 'workbuddy', 'codex', 'opencode-go']
+export const NATIVE_CHANNEL_ORDER = ['deepseek', 'mimo', 'codex', 'opencode-go']
 
 /** 内置渠道固定的三个额度窗口；scope 与 plans/usage-tool.js 的 WINDOWS 保持一致。 */
 const WINDOW_SLOTS = [
@@ -105,7 +113,6 @@ const POLICY_CHANNELS = {
   codex: { kind: 'windows', prefix: 'policyCodex', scopes: ['rolling-5h', 'weekly'] },
   deepseek: { kind: 'balance', prefix: 'policyDeepseek' },
   mimo: { kind: 'balance', prefix: 'policyMimo' },
-  workbuddy: { kind: 'credits', prefix: 'policyWorkbuddy' },
 }
 
 const FOCUS_FIELDS = {
@@ -113,7 +120,6 @@ const FOCUS_FIELDS = {
   deepseek: 'policyDeepseekFocus',
   codex: 'policyCodexFocus',
   mimo: 'policyMimoFocus',
-  workbuddy: 'policyWorkbuddyFocus',
 }
 
 /** 「关注额度策略」开关（onChange 即时保存并刷新视图）。 */
@@ -184,20 +190,8 @@ const FIELD = {
   deepseekEnabled: { field: 'deepseekEnabled', kind: 'toggle', zh: 'DeepSeek', en: 'DeepSeek' },
   deepseekWarnThreshold: { field: 'deepseekWarnThreshold', kind: 'number', min: 0, max: 100000, zh: '余额提醒（元，0 = 关闭）', en: 'Balance alert (CNY, 0 = off)' },
   codexEnabled: { field: 'codexEnabled', kind: 'toggle', zh: 'Codex', en: 'Codex' },
-  codexSource: {
-    field: 'codexSource',
-    kind: 'select',
-    zh: '额度来源',
-    en: 'Quota source',
-    options: [
-      { value: 'connect', label: 'Codex Connect' },
-      { value: 'subscription', label: 'Codex Subscription' },
-    ],
-  },
   mimoEnabled: { field: 'mimoEnabled', kind: 'toggle', zh: 'MiMo', en: 'MiMo' },
   mimoWarnThreshold: { field: 'mimoWarnThreshold', kind: 'number', min: 0, max: 100000, zh: '余额提醒（元，0 = 关闭）', en: 'Balance alert (CNY, 0 = off)' },
-  mimoRememberLogin: { field: 'mimoRememberLogin', kind: 'toggle', zh: '记住登录（重启引擎后免扫码）', en: 'Remember login (skip QR after restart)' },
-  workbuddyEnabled: { field: 'workbuddyEnabled', kind: 'toggle', zh: 'WorkBuddy', en: 'WorkBuddy' },
 }
 
 /** 扁平的全部控件（数据 / 校验 / 写回遍历用；顺序与视图无关）。 */
@@ -211,21 +205,17 @@ const SETTINGS_CONTROLS = [
   FIELD.deepseekWarnThreshold,
   focusToggleDef('deepseek'),
   FIELD.codexEnabled,
-  FIELD.codexSource,
   focusToggleDef('codex'),
   FIELD.mimoEnabled,
   FIELD.mimoWarnThreshold,
-  FIELD.mimoRememberLogin,
   focusToggleDef('mimo'),
-  FIELD.workbuddyEnabled,
-  focusToggleDef('workbuddy'),
 ].concat(POLICY_CONTROL_DEFS)
 
 /** 直接写回配置的字段：普通渠道字段 + 策略总开关 + 路由观察授权。 */
 const CONFIG_FIELD_NAMES = new Set([
   'enabled', 'opencodeGoEnabled', 'deepseekEnabled', 'deepseekWarnThreshold',
-  'codexEnabled', 'codexSource', 'mimoEnabled', 'mimoWarnThreshold', 'workbuddyEnabled',
-  'mimoRememberLogin', 'quotaPolicyEnabled', 'quotaTrustRouteOrder',
+  'codexEnabled', 'mimoEnabled', 'mimoWarnThreshold',
+  'quotaPolicyEnabled', 'quotaTrustRouteOrder',
 ])
 
 /** 与 Config schema 的默认值保持一致（读不到配置时的兜底）。 */
@@ -235,11 +225,8 @@ const SETTINGS_DEFAULTS = {
   deepseekEnabled: true,
   deepseekWarnThreshold: 10,
   codexEnabled: true,
-  codexSource: 'connect',
   mimoEnabled: true,
   mimoWarnThreshold: 10,
-  mimoRememberLogin: true,
-  workbuddyEnabled: true,
   quotaPolicyEnabled: false,
   quotaTrustRouteOrder: false,
 }
@@ -612,6 +599,149 @@ function plainValue(value) {
   return value
 }
 
+/* ──────────────────────────────────────────────────────────────────────────────
+ * ChatGPT 账户列表（原生设置页只做「查看 + 选择」，登录/退出仍在网页版设置页）
+ *
+ * 设计（2026-11-24 用户定稿）：
+ *   - 原生插件设置页**不提供**添加账户 / 退出账号 / 复制代码 / 打开登录页 / 取消登录；
+ *     这些能力全部保留在网页版设置页（`client.js#CodexAccountBlock`）；
+ *   - 原生页只在 Codex 分组里放一个**账号列表**：显示已登录可用的账号，
+ *     点一行即把该账号设为当前（`codexAccountSelect`）；
+ *   - 列表用 `list` + `data.codexAccountRows` 绑定：账号增减、当前账号变化都会随数据刷新，
+ *     不需要重建视图；
+ *   - 没登录 / 状态读不到时，列表退化成一条**不可点**的说明行，不显示点了必然失败的按钮。
+ *
+ * 硬边界：
+ *   - 输入只有 Host 的白名单投影（`codexAccountStateWireOf`），不含 token / 明文账号 id；
+ *   - 文案全部固定短语，不回显异常原文；
+ *   - 没有桥接（检查器 / 老宿主）时 `codexAccount` 为 `null` ⇒ 视图退回原静态说明。
+ * ────────────────────────────────────────────────────────────────────────────── */
+
+/** 账户 id 形状：与 Host `index.js#CODEX_ACCOUNT_ID_PATTERN`、客户端、plans/codex-account.js 同一套。 */
+const CODEX_ACCOUNT_ID_PATTERN = /^[A-Za-z0-9-]{1,100}$/u
+
+/** 列表最多显示多少个账户（与 Host 的 `MAX_CODEX_ACCOUNTS_WIRE = 8` 一致）。 */
+const CODEX_ACCOUNT_ROW_LIMIT = 8
+
+/** Codex 订阅类型显示名（Host 给的是小写 `planType`；与 Web 半同一张表）。 */
+const CODEX_ACCOUNT_PLAN_LABELS = {
+  plus: 'Plus',
+  pro: 'Pro',
+  team: 'Team',
+  enterprise: 'Enterprise',
+  free: 'Free',
+}
+
+/** 账户列表的固定文案（zh / en）。 */
+const CODEX_ACCOUNT_STRINGS = {
+  zh: {
+    sectionTitle: '账户',
+    signedOut: '未登录',
+    signedOutHint: '在网页版设置页登录 ChatGPT 账号',
+    unavailable: '登录状态无法读取',
+    unavailableHint: '请稍后在网页版设置页处理',
+    current: '当前',
+    chooseAccount: '选择额度来源账号',
+    select: '设为当前',
+    selectOk: '已切换账户',
+    selectFailed: '切换账户失败，请稍后再试。',
+    badId: '账户标识无效，请刷新后重试。',
+  },
+  en: {
+    sectionTitle: 'Account',
+    signedOut: 'Not signed in',
+    signedOutHint: 'Sign in to ChatGPT on the Web settings page',
+    unavailable: 'Account status unavailable',
+    unavailableHint: 'Try again later on the Web settings page',
+    current: 'Current',
+    chooseAccount: 'Select quota source account',
+    select: 'Set as current',
+    selectOk: 'Account switched',
+    selectFailed: 'Could not switch account; try again later.',
+    badId: 'Invalid account id; refresh and try again.',
+  },
+}
+
+function codexAccountStrings(locale) {
+  return isEn(locale) ? CODEX_ACCOUNT_STRINGS.en : CODEX_ACCOUNT_STRINGS.zh
+}
+
+/** 账户 id 形状校验：非法一律 null（不猜目标）。 */
+function codexAccountIdOf(raw) {
+  return typeof raw === 'string' && CODEX_ACCOUNT_ID_PATTERN.test(raw) ? raw : null
+}
+
+/** 展示文本白名单：只接受字符串，去掉控制字符并截断；其它一律空串。 */
+function codexAccountTextOf(raw, max) {
+  if (typeof raw !== 'string') return ''
+  const cleaned = raw.replace(/[\u0000-\u001f\u007f]/gu, '').trim()
+  const limit = typeof max === 'number' && max > 0 ? max : 320
+  return cleaned.length > limit ? cleaned.slice(0, limit) : cleaned
+}
+
+/** 订阅类型显示名：已知值查表，未知值首字母大写后原样展示。 */
+function codexAccountPlanLabelOf(raw) {
+  const text = codexAccountTextOf(raw, 40)
+  if (text.length === 0) return ''
+  const known = CODEX_ACCOUNT_PLAN_LABELS[text.toLowerCase()]
+  if (known !== undefined) return known
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+/**
+ * 账号选择器的数据（**纯函数**，供视图绑定与测试共用）。
+ *
+ * 用户定稿（2026-11-24 第二版）：
+ *   - 界面上是**一个折叠框**：收起时只显示当前账号的邮箱；
+ *   - 点开框 → 展开所有可用账号；点某个账号 → 收起并显示该账号邮箱。
+ *
+ * @param {object|null} state `codexAccountStateWireOf()` 的输出；null = 读不到 / 无桥接。
+ * @param {string} [locale]
+ * @returns {{
+ *   currentLabel: string,
+ *   options: Array<{ label: string, value: string, description?: string }>,
+ *   selected: string,
+ * }}
+ */
+export function codexAccountOptionsOf(state, locale) {
+  const text = codexAccountStrings(locale)
+  const source = state !== null && state !== undefined && typeof state === 'object' ? state : null
+  if (source === null) {
+    return { currentLabel: text.unavailable, options: [], selected: '' }
+  }
+  if (source.configured !== true) {
+    return { currentLabel: text.signedOut, options: [], selected: '' }
+  }
+  const activeAccountId = codexAccountIdOf(source.activeAccountId)
+  const options = []
+  let currentLabel = ''
+  for (const raw of Array.isArray(source.accounts) ? source.accounts : []) {
+    if (options.length >= CODEX_ACCOUNT_ROW_LIMIT) break
+    if (raw === null || raw === undefined || typeof raw !== 'object') continue
+    const id = codexAccountIdOf(raw.id)
+    if (id === null) continue
+    const label = codexAccountTextOf(raw.label, 120)
+    const plan = codexAccountPlanLabelOf(raw.planType !== undefined ? raw.planType : raw.plan)
+    const shown = (label.length > 0 ? label : text.signedOut) + (plan.length > 0 ? ' · ' + plan : '')
+    // [2026-11-24 用户要求] 选中态由 App 的对勾表示，**不再**输出「当前/已选」文字。
+    if ((raw.active === true || id === activeAccountId) && currentLabel.length === 0) {
+      currentLabel = label.length > 0 ? label : shown
+    }
+    options.push({ label: shown, value: id })
+  }
+  if (options.length === 0) {
+    return { currentLabel: text.signedOut, options: [], selected: '' }
+  }
+  const selected = activeAccountId !== null && options.some((o) => o.value === activeAccountId)
+    ? activeAccountId
+    : (options[0] !== undefined ? options[0].value : '')
+  if (currentLabel.length === 0) {
+    const hit = options.find((o) => o.value === selected)
+    currentLabel = hit !== undefined ? String(hit.label).split(' · ')[0] : text.signedOut
+  }
+  return { currentLabel, options, selected }
+}
+
 /** 当前 App 是否支持设置表单所需的 v2 组件（缺 caps 时按 v1 处理）。 */
 function supportsSettingsForm(caps) {
   const components = caps !== null && caps !== undefined && Array.isArray(caps.components) ? caps.components : null
@@ -643,12 +773,15 @@ function settingControl(def, locale) {
 
 /** 单个渠道分组的展示顺序与固定字段。 */
 const CHANNEL_SECTIONS = [
-  // [0.11.4 用户要求] 设置页渠道顺序：DeepSeek → MiMo → WorkBuddy → Codex → OpenCode Go。
+  // [2026-11-23] 原生设置页渠道顺序：DeepSeek → MiMo → Codex → OpenCode Go。
   // [0.11.4 用户要求] 原生额度面板不显示余额提醒，因此设置页也不再提供该输入。
   { id: 'deepseek', titleZh: 'DeepSeek', titleEn: 'DeepSeek', enabled: FIELD.deepseekEnabled, middle: [] },
   { id: 'mimo', titleZh: 'MiMo', titleEn: 'MiMo', enabled: FIELD.mimoEnabled, middle: [] },
-  { id: 'workbuddy', titleZh: 'WorkBuddy', titleEn: 'WorkBuddy', enabled: FIELD.workbuddyEnabled, middle: [] },
-  { id: 'codex', titleZh: 'Codex', titleEn: 'Codex', enabled: FIELD.codexEnabled, middle: [FIELD.codexSource] },
+  /**
+   * [2026-11-23] Codex 分组只剩开关：`connect` / `subscription` 来源退场，「额度来源」下拉与
+   * 「一键适配」按钮均已下线（见 `buildSettingsView` 里的静态说明）。
+   */
+  { id: 'codex', titleZh: 'Codex', titleEn: 'Codex', enabled: FIELD.codexEnabled, middle: [] },
   { id: 'opencode-go', titleZh: 'OpenCode Go', titleEn: 'OpenCode Go', enabled: FIELD.opencodeGoEnabled, middle: [] },
 ]
 
@@ -689,75 +822,22 @@ function policyNodesFor(channelId, locale) {
 }
 
 /**
- * [0.11.2] Codex 分组的「本地适配」节点（纯展示；按钮动作走 settingsActions.codexAdapt）。
- *
- * 由 Host 的 `codexAdaptStatusForNative()` 给出五态，这里只决定画什么：
- *   - `appliable`   → 说明 + 「一键适配」按钮 + 「需重启引擎」提示；
- *   - `pending`     → 只说「已适配，重启引擎后生效」，**不给**按钮（避免重复点按）；
- *   - `unsupported` → 说明已收录哪些版本，**不给**按钮（Host 同样会拒绝写入）；
- *   - 其它（hidden / 未知）→ 一个节点都不渲染。
- *
- * 已适配且能读到余额时 Host 返回 hidden —— 也就是「不显示一键适配按钮」。
- */
-function codexAdaptNodes(adapt, locale) {
-  const en = isEn(locale)
-  if (adapt === null || adapt === undefined || typeof adapt !== 'object') return []
-  const state = typeof adapt.state === 'string' ? adapt.state : ''
-  const version = typeof adapt.version === 'string' && adapt.version.length > 0 ? adapt.version : null
-  const manifestVersion = typeof adapt.manifestVersion === 'string' && adapt.manifestVersion.length > 0 ? adapt.manifestVersion : null
-  const covered = Array.isArray(adapt.covered) ? adapt.covered.filter((item) => typeof item === 'string' && item.length > 0) : []
-  if (state === 'appliable') {
-    const text = version !== null
-      ? (en
-        ? 'dsh-codex-subscription ' + version + ' installed — one local adapt is needed to read its quota.'
-        : '已装 dsh-codex-subscription ' + version + '，需要一次本地适配才能读订阅额度。')
-      : (en
-        ? 'Codex subscription quota needs a one-time local adapt on this device.'
-        : 'Codex 订阅额度需要在本机做一次本地适配。')
-    return [
-      { type: 'text', text, tone: 'muted' },
-      ...(adapt.auto === true && typeof adapt.autoFromVersion === 'string' && adapt.autoFromVersion.length > 0
-        ? [{ type: 'text', tone: 'muted', text: en
-          ? 'Anchors from ' + adapt.autoFromVersion + ' matched automatically; a backup is kept before adapting.'
-          : '已按 ' + adapt.autoFromVersion + ' 的锚点自动匹配当前版本，适配前会先备份。' }]
-        : []),
-      { type: 'actions', items: [{ label: en ? 'Adapt' : '一键适配', action: 'codexAdapt', icon: 'wrench' }] },
-      { type: 'text', text: en ? 'Takes effect after restarting the engine.' : '适配后需重启引擎生效。', tone: 'muted' },
-    ]
-  }
-  if (state === 'pending') {
-    return [{
-      type: 'text',
-      tone: 'muted',
-      text: en ? 'Already adapted — restart the engine to take effect.' : '已适配，重启引擎后生效。',
-    }]
-  }
-  if (state === 'unsupported') {
-    let text
-    if (version !== null && manifestVersion !== null && manifestVersion === version) {
-      text = en
-        ? version + ' is covered, but the installed file differs from the known baseline — one-click adapt is unavailable.'
-        : version + ' 有清单，但本机文件与基线不一致，无法一键适配。'
-    } else if (version !== null && covered.length > 0) {
-      text = en
-        ? 'No adapt manifest for ' + version + ' (covered: ' + covered.join(' / ') + ').'
-        : version + ' 暂无适配清单（已收录：' + covered.join(' / ') + '）。'
-    } else {
-      text = en ? 'No adapt manifest for the installed version.' : '当前第三方插件版本暂无适配清单。'
-    }
-    return [{ type: 'text', text, tone: 'muted' }]
-  }
-  return []
-}
-
-/**
  * 原生设置面板视图：v2 表单，按渠道分组；策略输入只在「关注额度策略」打开时出现。
  * 老 App 没有 v2 组件时降级成只读说明，不影响额度面板使用。
  *
- * @param {{ caps?: object, locale?: string, cfg?: object,
- *   codexAdapt?: { state: string, version?: string|null, manifestVersion?: string|null, covered?: string[] } }} [options]
- *   `codexAdapt` 为 Host 的本地适配探测结果（见 index.js 的 `codexAdaptStatusForNative`）；
- *   缺省/非对象 ⇒ 不渲染适配入口（fail-closed）。
+ * [2026-11-23] Codex「本地适配」入口**已下线**：Subscription 来源退场后，那个「一键适配」
+ * （给第三方 dsh-codex-subscription 打本地只读补丁）不再有意义 —— 原生设置页既没有来源可选，
+ * 也没有订阅额度可读。Host 侧的写入口（同一路径下的 `POST` 应用接口与两个适配回调）也已
+ * 整体删除（R3 2026-11-25），只剩只读的 `GET …/patch-state` 供维护/诊断；任何视图/动作都不再
+ * 把它暴露给用户。
+ *
+ * @param {{
+ *   caps?: object, locale?: string, cfg?: object,
+ *   codexAccount?: object|null,
+ * }} [options]
+ *   `codexAccount` 是 `codexAccountStateWireOf()` 的输出（**原始 state wire**）：
+ *   **省略 / null** ⇒ 保持旧的静态说明（无桥接 / 检查器）；
+ *   有值 ⇒ 在 Codex 分组里插入「账户」列表（`list` + `data.codexAccountRows` 绑定）。
  */
 export function buildSettingsView(options) {
   const opts = options !== null && options !== undefined ? options : {}
@@ -784,6 +864,22 @@ export function buildSettingsView(options) {
     }
   }
   const cfg = opts.cfg !== null && typeof opts.cfg === 'object' ? opts.cfg : {}
+  /**
+   * [2026-11-24 原生设置页 ChatGPT 账户] 只有 Host 真的给了桥接模型才渲染账户块：
+   * `codexAccount === null/undefined`（检查器、老宿主、apply 提前返回）⇒ 保持原静态说明。
+   */
+  const codexAccount = opts.codexAccount !== null && opts.codexAccount !== undefined
+    && typeof opts.codexAccount === 'object'
+    ? opts.codexAccount
+    : null
+  /**
+   * [2026-11-24] 折叠框依赖 v2 的 `collapsible` + `options` 组件；老 App 没有这两样时
+   * 退回原来的静态说明（不渲染半截控件，也不影响其它设置项）。
+   */
+  const capsComponents = opts.caps !== null && opts.caps !== undefined && Array.isArray(opts.caps.components)
+    ? opts.caps.components
+    : []
+  const supportsAccountPicker = capsComponents.indexOf('collapsible') !== -1 && capsComponents.indexOf('options') !== -1
   const focus = new Set(safeJsonArray(plainValue(cfg.quotaFocusChannels)))
   const policyMaster = plainValue(cfg.quotaPolicyEnabled) === true
   const groups = []
@@ -791,46 +887,80 @@ export function buildSettingsView(options) {
   const general = [{ type: 'text', text: '**' + (en ? 'General' : '通用') + '**' }, settingControl(FIELD.enabled, locale), settingControl(FIELD.quotaPolicyEnabled, locale)]
   if (policyMaster) {
     general.push(settingControl(FIELD.quotaTrustRouteOrder, locale))
-    general.push({ type: 'text', text: en ? 'Quota policy only feeds hints to the model; it never changes quota.' : '额度策略只影响给模型的提示，不改变额度。', tone: 'muted' })
   }
+  // [2026-11-24 用户要求] 通用分组末尾也加横线：与第一个渠道（DeepSeek）区分开。
+  general.push({ type: 'divider' })
   groups.push({ type: 'stack', children: general })
 
   for (const section of CHANNEL_SECTIONS) {
-    const children = [{ type: 'text', text: '**' + (en ? section.titleEn : section.titleZh) + '**' }, settingControl(section.enabled, locale)]
+    /**
+     * [2026-11-24 用户要求] 不再单独渲染渠道标题：开关本身的 label 就是渠道名，
+     * 上一版「Codex」标题 + 「Codex」开关重复显示，看起来冗余。
+     */
+    const children = [settingControl(section.enabled, locale)]
     for (const def of section.middle) children.push(settingControl(def, locale))
-    // [0.11.2] Codex 分组：紧跟在「额度来源」下面显示本地适配入口（需适配时才出现）。
-    if (section.id === 'codex') children.push(...codexAdaptNodes(opts.codexAdapt, locale))
+    /**
+     * [2026-11-24 ChatGPT 账户 · 用户定稿] 原生设置页**只做「查看 + 选择」**：
+     *   - 添加账户 / 退出账号 / 重新登录全部保留在**网页版设置页**（那里已有完整 UI）；
+     *   - 这里只在 Codex 分组里放一个账号列表：显示已登录可用的账号，点一行 = 设为当前；
+     *   - 列表是 `list` + `data.codexAccountRows` 绑定：账号增减、当前账号变化都会随数据刷新；
+     *   - 没有桥接（检查器 / 老宿主）时退回原来的静态说明。
+     */
+    if (section.id === 'codex') {
+      if (codexAccount === null) {
+        children.push({
+          type: 'text',
+          tone: 'muted',
+          text: en
+            ? 'The ChatGPT account is signed in and switched on the Web settings page.'
+            : 'ChatGPT 账号在网页版设置登录/切换。',
+        })
+      } else if (supportsAccountPicker) {
+        // [2026-11-24 第二版] 折叠框：收起只显示当前账号邮箱，点开显示全部账号。
+        children.push({
+          type: 'collapsible',
+          // [2026-11-24 用户要求] 标题固定为「选择额度来源账号」，不再显示当前账号；
+          // 自动收起在真机上不生效（App 的 collapsible 不受数据控制），先不做。
+          label: codexAccountStrings(locale).chooseAccount,
+          children: [
+            {
+              type: 'options',
+              id: 'codexAccountSelect',
+              options: binding('data.codexAccountOptions'),
+              selected: binding('data.codexAccountSelected'),
+            },
+          ],
+        })
+      } else {
+        children.push({
+          type: 'text',
+          tone: 'muted',
+          text: en
+            ? 'The ChatGPT account is signed in and switched on the Web settings page.'
+            : 'ChatGPT 账号在网页版设置登录/切换。',
+        })
+      }
+    }
     children.push(settingControl(focusToggleDef(section.id), locale))
     if (focus.has(section.id)) children.push(...policyNodesFor(section.id, locale))
+    // [2026-11-24 用户要求] 每个渠道末尾一条横线，区分相邻渠道。
+    children.push({ type: 'divider' })
     groups.push({ type: 'stack', children })
   }
 
+  const children = [
+    {
+      type: 'form',
+      submit: 'save',
+      submitLabel: en ? 'Save' : '保存',
+      children: groups,
+    },
+  ]
   return {
     v: 2,
     type: 'stack',
     title: en ? 'Settings' : '设置',
-    children: [
-      {
-        type: 'callout',
-        tone: 'info',
-        text: en
-          ? 'Changes take effect after saving; turning a policy switch on/off saves and refreshes right away. API keys, cookies and custom balances stay in the Web settings page.'
-          : '修改后点保存生效；额度策略开关会即时保存并刷新表单。API Key、Cookie 和自定义余额仍在网页版设置页配置。',
-      },
-      {
-        type: 'form',
-        submit: 'save',
-        submitLabel: en ? 'Save' : '保存',
-        children: groups,
-      },
-      {
-        type: 'text',
-        tone: 'muted',
-        text: en
-          ? 'Saved to the same profile config as the Web settings page.'
-          : '保存在 profile 配置里，与网页版设置页共用同一份配置。',
-      },
-    ],
+    children,
   }
 }
 
@@ -860,25 +990,32 @@ function policyValueOf(def, thresholds) {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }
 
-/** 设置面板数据：当前配置值（未配置时用 schema 默认值）。 */
+/**
+ * 设置面板数据：当前配置值（未配置时用 schema 默认值）。
+ *
+ * @param {object} cfg 当前配置
+ * @param {{ codexAccount?: object|null, locale?: string }} [options]
+ *   `codexAccount` 是 `codexAccountStateWireOf()` 的输出（缺省 ⇒ 列表退化成一条「未登录」说明行）。
+ */
 export function buildSettingsData(cfg, options) {
   const source = cfg !== null && typeof cfg === 'object' ? cfg : {}
   const opts = options !== null && options !== undefined && typeof options === 'object' ? options : {}
   const form = {}
+  /**
+   * [2026-11-23] 这里只剩开关与数字阈值：`codexSource` 下拉已随 `connect` / `subscription`
+   * 退场而删除，读配置时不再归一/回写任何来源值（旧配置里的该字段保持原样、不被本页触碰）。
+   */
   const baseDefs = [
     FIELD.enabled, FIELD.quotaPolicyEnabled, FIELD.quotaTrustRouteOrder,
     FIELD.opencodeGoEnabled, FIELD.deepseekEnabled, FIELD.deepseekWarnThreshold,
-    FIELD.codexEnabled, FIELD.codexSource, FIELD.mimoEnabled, FIELD.mimoWarnThreshold,
-    FIELD.mimoRememberLogin, FIELD.workbuddyEnabled,
+    FIELD.codexEnabled, FIELD.mimoEnabled, FIELD.mimoWarnThreshold,
   ]
   for (const def of baseDefs) {
     const raw = plainValue(source[def.field])
     if (def.kind === 'toggle') {
       form[def.field] = typeof raw === 'boolean' ? raw : defaultSettingValue(def) === true
-    } else if (def.kind === 'number') {
-      form[def.field] = typeof raw === 'number' && Number.isFinite(raw) ? raw : defaultSettingValue(def)
     } else {
-      form[def.field] = raw === 'subscription' ? 'subscription' : 'connect'
+      form[def.field] = typeof raw === 'number' && Number.isFinite(raw) ? raw : defaultSettingValue(def)
     }
   }
   const focus = safeJsonArray(plainValue(source.quotaFocusChannels))
@@ -887,8 +1024,20 @@ export function buildSettingsData(cfg, options) {
   }
   const thresholds = safeJsonObject(plainValue(source.quotaChannelThresholds)) || {}
   for (const def of POLICY_CONTROL_DEFS) form[def.field] = policyValueOf(def, thresholds)
-  form.mimoStatus = typeof opts.mimoStatus === 'string' ? opts.mimoStatus : ''
-  return { form }
+  /**
+   * [2026-11-24 ChatGPT 账户] 折叠框 + 账号选项数据：
+   *   - `codexAccountCurrentLabel`：收起时显示的当前账号邮箱；
+   *   - `codexAccountOptions`：展开后的全部可用账号；
+   *   - `codexAccountSelected`：当前选中项（options 控件的 selected 绑定）。
+   */
+  const account = codexAccountOptionsOf(opts.codexAccount, opts.locale)
+  return {
+    form,
+    codexAccountCurrentLabel: account.currentLabel,
+    codexAccountOptions: account.options,
+    codexAccountSelected: account.selected,
+    codexAccountExpanded: false,
+  }
 }
 
 /** 把一个渠道的策略输入合并进 JSON 条目；全为 0 时删掉该分支。返回新条目（可能为空对象）。 */
@@ -1028,65 +1177,6 @@ export function parseSettingsInput(event, locale, cfg) {
 
   return { ok: true, patch, form }
 }
-
-/** MiMo 登录固定错误码 → 人话（不把原始英文异常直接抛给用户）。 */
-function mimoCodeText(code, locale) {
-  const en = isEn(locale)
-  const map = {
-    E_MIMO_AUTH_UNAVAILABLE: en ? 'This host does not support scan login.' : '当前宿主不支持扫码登录。',
-    E_MIMO_AUTH_SESSION_ACTIVE: en ? 'Another MiMo login is already running.' : '已有 MiMo 登录会话在进行中。',
-    E_MIMO_AUTH_SESSION_MISSING: en ? 'The login session has gone.' : '登录会话不存在。',
-    E_MIMO_AUTH_SESSION_EXPIRED: en ? 'The login session expired.' : '登录会话已过期。',
-    E_MIMO_AUTH_FLOW: en ? 'The login flow failed.' : '登录流程失败。',
-    E_MIMO_AUTH_QR_UNAVAILABLE: en ? 'QR code is not available yet.' : '二维码暂不可用。',
-    E_MIMO_AUTH_TARGET_EXPIRED: en ? 'The QR code expired; request a new one.' : '二维码已过期，请重新获取。',
-    E_MIMO_AUTH_CANCELLED: en ? 'Login cancelled.' : '登录已取消。',
-    E_MIMO_AUTH_REJECTED: en ? 'This login was rejected.' : '这次登录被拒绝。',
-    E_MIMO_CONSOLE_FLOW: en ? 'MiMo console login failed.' : 'MiMo 控制台登录失败。',
-    E_SET_COOKIE_REJECTED: en
-      ? 'The login cookies were rejected (official login domain may have changed).'
-      : '登录返回的 Cookie 被安全校验拒绝（官方登录域可能又变了）。',
-    E_URL_PURPOSE_MISMATCH: en
-      ? 'The official login address failed the host check.'
-      : '官方登录地址未通过域名校验。',
-  }
-  if (typeof code === 'string' && map[code] !== undefined) return map[code]
-  return (en ? 'Login failed: ' : '登录失败：') + (typeof code === 'string' && code.length > 0 ? code : 'unknown')
-}
-
-/** 余额展示（登录完成时如果 Host 顺带读到余额就显示出来）。 */
-function mimoBalanceLine(balance, locale) {
-  if (balance === null || balance === undefined || typeof balance !== 'object') return ''
-  const value = typeof balance.balance === 'number' ? balance.balance : null
-  if (value === null) return ''
-  const amount = amountText(value, balance.currency, null, locale)
-  return amount === null ? '' : (isEn(locale) ? 'Balance: ' : '余额：') + amount
-}
-
-/** MiMo 扫码登录面板视图（静态骨架 + 数据绑定）。 */
-export function buildMimoLoginView(options) {
-  const opts = options !== null && options !== undefined ? options : {}
-  const locale = typeof opts.locale === 'string' && opts.locale.length > 0 ? opts.locale : 'zh-CN'
-  const en = isEn(locale)
-  return {
-    type: 'stack',
-    title: en ? 'MiMo login' : 'MiMo 登录',
-    children: [
-      { type: 'callout', text: binding('data.note'), tone: binding('data.tone') },
-      { type: 'text', text: binding('data.status') },
-      { type: 'image', src: binding('data.qr'), alt: en ? 'QR code' : '二维码', aspect: 1 },
-      { type: 'text', text: binding('data.hint'), tone: 'muted' },
-      {
-        type: 'actions',
-        items: [
-          { label: en ? 'New QR code' : '重新获取二维码', action: 'restart', icon: 'refresh', style: 'primary' },
-          { label: en ? 'Cancel' : '取消', action: 'cancel', icon: 'clear' },
-        ],
-      },
-    ],
-  }
-}
-
 
 /** 进度条 caption：把「具体剩余百分比」和重置时间一起显示（否则只有轨道、看不出剩余多少）。 */
 function windowCaption(percent, resetText, locale) {
@@ -1410,17 +1500,6 @@ export function buildNativeData(options) {
   // [0.11.0 整改] carry 的身份映射：从原始 wire 取（投影白名单不含 identity）。
   const identityById = identityMapOf(wires)
 
-  /**
-   * 原始 wire 里带着 MiMo 的「缺失原因」枚举（`mimoState`），投影层不保留它。
-   * 首屏/恢复尚未完成时用它区分「正在读取」与「确实没登录」，避免把读取中写成缺数据。
-   */
-  const mimoWireState = (() => {
-    for (const wire of wires) {
-      if (wire !== null && wire !== undefined && wire.id === 'mimo' && typeof wire.mimoState === 'string') return wire.mimoState
-    }
-    return null
-  })()
-
   for (const channel of projected.channels) {
     const identity = typeof channel.identity === 'string' && channel.identity.length > 0
       ? channel.identity
@@ -1428,11 +1507,6 @@ export function buildNativeData(options) {
     const presentation = CHANNEL_PRESENTATION[channel.id]
     if (presentation !== undefined) {
       const built = builtinChannelData(channel, presentation, locale, previous, now, identity)
-      if (channel.id === 'mimo' && mimoWireState === 'pending' && built.data.amount === null) {
-        // 登录态还在恢复（首次打开面板常见）：显示读取中，而不是「没有数据」。
-        built.data.value = isEn(locale) ? 'Reading…' : '正在读取…'
-        built.data.tone = 'info'
-      }
       data.channels[presentation.key] = built.data
       snapshot.channels.push(built.line)
       const key = carryKeyOf(channel.id, identity)
@@ -1468,7 +1542,10 @@ export function buildNativeData(options) {
  *   customEntries?: (cfg: object) => Array,
  *   saveConfig?: (patch: object) => Promise<void>,
  *   onConfigReload?: (fn: Function) => (Function | null),
+ *   codexAccount?: () => (object | null),
  * }} deps
+ *   `codexAccount` 是**惰性**取 Host 账户桥接的函数（可能返回 null：检查器 / 老宿主 /
+ *   `apply()` 还没走到 codex 路由注册）。原位调用即抛错也无害——这里一律当 null 处理。
  */
 export function registerDshGoSurface(ctx, deps) {
   const state = { disposers: [] }
@@ -1540,38 +1617,53 @@ function createSurface(deps) {
   const collect = typeof deps.collect === 'function' ? deps.collect : async () => []
   const listCustom = typeof deps.customEntries === 'function' ? deps.customEntries : () => []
   const sessionChannelLabel = typeof deps.sessionChannelLabel === 'function' ? deps.sessionChannelLabel : null
-  const debugLog = typeof deps.debug === 'function' ? deps.debug : null
-  const mimoSessionBalance = typeof deps.mimoSessionBalance === 'function' ? deps.mimoSessionBalance : null
-  const dbg = (line) => { if (debugLog !== null) { try { debugLog(line) } catch (err) { /* 忽略 */ } } }
-  /** 面板请求超时：宿主 handler 挂住时宁可报错，也不要永远停在旧画面。 */
-  const withTimeout = (promise, ms, label) => {
-    let timer = null
-    return Promise.race([
-      Promise.resolve(promise),
-      new Promise((resolve, reject) => {
-        timer = setTimeout(() => {
-                    reject(Object.assign(new Error('E_REQUEST_TIMEOUT'), { code: 'E_REQUEST_TIMEOUT' }))
-        }, ms)
-        if (timer !== null && typeof timer.unref === 'function') timer.unref()
-      }),
-    ]).finally(() => { if (timer !== null) clearTimeout(timer) })
-  }
   const plans = Array.isArray(deps.plans) ? deps.plans : []
   const semanticsOf = typeof deps.semanticsOf === 'function' ? deps.semanticsOf : () => 'used'
   const saveConfig = typeof deps.saveConfig === 'function' ? deps.saveConfig : null
   const onConfigReload = typeof deps.onConfigReload === 'function' ? deps.onConfigReload : null
-  const mimoAuth = deps.mimoAuth !== null && deps.mimoAuth !== undefined && typeof deps.mimoAuth === 'object'
-    ? deps.mimoAuth
-    : null
-  /** [0.11.2] Codex Subscription 本地适配：状态探测（异步、只读）与一次性应用。 */
-  const codexAdapt = typeof deps.codexAdapt === 'function' ? deps.codexAdapt : null
-  const codexAdaptApply = typeof deps.codexAdaptApply === 'function' ? deps.codexAdaptApply : null
+  /**
+   * [0.11.4 MiMo 扫码登录彻底删除] 不再读取 `deps.mimoAuth` / `deps.mimoSessionBalance` /
+   * `deps.debug`：本机登录面板已经整块移除（MiMo 只保留 API Key 查余额，配置在网页版设置页）。
+   * Host 仍可以传这些键，这里一律忽略，不会因此报错。
+   *
+   * [R3 2026-11-25] Codex「一键适配」的两个 deps 回调**Host 已不再传**（不是「仍传但忽略」）：
+   * 写入口与该适配入口都已整体删除，Host 的 deps 对象里没有这两个键。
+   * 本模块同样**不读取**它们（不探测补丁状态、不写任何文件）；万一旧版 Host 仍传，
+   * 这里也只是安静忽略未知 deps 键，不会报错，更不会重新引入适配视图。
+   */
+  /**
+   * [2026-11-24 原生设置页 ChatGPT 账户] `deps.codexAccount` 是**惰性**函数：Host 在 codex
+   * 路由注册之后才赋值那个桥接对象，而 `ctx.inject` 的回调可能更早触发 —— 所以这里只记住
+   * **取函数本身**，每次用的时候再调（可能拿到 null）。
+   */
+  const codexAccountDep = typeof deps.codexAccount === 'function' ? deps.codexAccount : null
+
+  /** 取当前账户桥接（形状不对/抛错一律 null：原生半绝不能因此崩掉设置页）。 */
+  const codexAccountBridgeOf = () => {
+    if (codexAccountDep === null) return null
+    let api = null
+    try { api = codexAccountDep() } catch (err) { api = null }
+    return api !== null && api !== undefined && typeof api === 'object' ? api : null
+  }
 
   let locale = 'zh-CN'
   let lastSnapshot = null
   let kick = null
-  /** MiMo 登录面板的控制句柄（面板 data 启动时挂上，关闭/取消时摘除）。 */
-  let mimoControl = null
+
+  /**
+   * 账户 **state wire**（无桥接 ⇒ `null`，视图退回静态说明；读失败 ⇒ `null`，
+   * 列表显示「登录状态无法读取」）。原生页只读、不登录、不退出。
+   */
+  const codexAccountStateOf = async () => {
+    const api = codexAccountBridgeOf()
+    if (api === null) return null
+    try {
+      const state = await api.state()
+      return state !== null && state !== undefined && typeof state === 'object' ? state : null
+    } catch (err) {
+      return null
+    }
+  }
 
   // ── 额度面板 ────────────────────────────────────────────────────────────
 
@@ -1670,28 +1762,37 @@ function createSurface(deps) {
     let cfgNow = null
     try { cfgNow = await loadConfig() } catch (err) { cfgNow = null }
     /**
-     * [0.11.2] 每次重建视图都重新探测一次本地适配状态：点过「一键适配」后 App 会
-     * `refresh` 重建视图，于是按钮变成「已适配，重启引擎后生效」；引擎重启后服务出现，
-     * 状态变 hidden，按钮自然消失。
+     * [2026-11-24 ChatGPT 账户] 只在**视图被请求时**读一次账户状态（`state()` 是本地凭据记录
+     * 读取，不发上游请求）；没有桥接 ⇒ null ⇒ 视图保留原静态说明。
      */
-    let adapt = null
-    if (codexAdapt !== null) {
-      try { adapt = await codexAdapt() } catch (err) { adapt = null }
-    }
+    const codexAccount = await codexAccountStateOf()
     // 策略开关是即时保存后再 refresh 视图的，所以这里必须按当前配置重建分组。
-    return buildSettingsView({ caps, locale, cfg: cfgNow, codexAdapt: adapt })
+    return buildSettingsView({ caps, locale, cfg: cfgNow, codexAccount })
   }
 
   const settingsData = (scope, emit) => {
     let stopped = false
-    const push = () => {
+    let running = false
+    const emitSafe = (payload) => {
       if (stopped) return
+      try { emit(payload) } catch (err) { /* 取消/断开 */ }
+    }
+    /**
+     * [2026-11-24 ChatGPT 账户] 原生页只有**账号列表**（不登录、不退出），所以不需要轮询：
+     * 面板打开时推一次（含账号列表），配置重载时再推一次。账号变化（网页版登录/退出）
+     * 下次打开设置页或点保存/刷新时自然生效。
+     */
+    const push = () => {
+      if (stopped || running) return
+      running = true
       Promise.resolve().then(async () => {
         let cfgNow = null
         try { cfgNow = await loadConfig() } catch (err) { cfgNow = null }
+        const codexAccount = await codexAccountStateOf()
+        running = false
         if (stopped) return
-        try { emit(buildSettingsData(cfgNow, { mimoStatus: mimoStatusText() })) } catch (err) { /* 取消/断开 */ }
-      })
+        emitSafe(buildSettingsData(cfgNow, { codexAccount, locale }))
+      }).catch(() => { running = false })
     }
     push()
     let off = null
@@ -1728,47 +1829,6 @@ function createSurface(deps) {
         },
       }
     },
-  }
-
-  /** MiMo 登录可用性（显示在设置页底部）。 */
-  const mimoStatusText = () => {
-    if (mimoAuth === null) return isEn(locale) ? 'MiMo login: bridge unavailable' : 'MiMo 登录：桥接不可用'
-    let status = null
-    try { status = mimoAuth.status() } catch (err) { status = null }
-    if (status !== null && status.supported === true) return isEn(locale) ? 'MiMo login: available' : 'MiMo 登录：可用'
-    const code = status !== null && typeof status.code === 'string' && status.code.length > 0 ? status.code : 'E_MIMO_AUTH_UNAVAILABLE'
-    return (isEn(locale) ? 'MiMo login: unavailable (' : 'MiMo 登录：不可用（') + code + '）'
-  }
-
-  settingsActions.mimoLogin = () => ({ open: 'panel:' + MIMO_PANEL_ID })
-
-  /**
-   * [0.11.2] 「一键适配」：调用 Host 的 `applyCodexPatchOnce()`（与网页版 POST 路由、CLI
-   * 同一实现：wx 备份 → 临时文件 → 读回校验 → rename → 校验新哈希）。
-   *
-   * 写完立刻 `refresh` 重建设置视图，让按钮变成「已适配，重启引擎后生效」；
-   * 失败只回固定文案，不回显错误码/路径/上游正文。
-   */
-  settingsActions.codexAdapt = async (scope, event) => {
-    const loc = localeOfEvent(event, locale)
-    if (codexAdaptApply === null) {
-      return { toast: isEn(loc) ? 'This host cannot apply it' : '当前主机无法执行适配' }
-    }
-    let out = null
-    try { out = await codexAdaptApply() } catch (err) { out = null }
-    if (out === null || out === undefined) return { toast: isEn(loc) ? 'Adapt failed, try again later' : '适配失败，请稍后重试' }
-    if (out.ok !== true) {
-      const code = typeof out.code === 'string' ? out.code : ''
-      return {
-        toast: code === 'E_CS_PATCH_UNSUPPORTED'
-          ? (isEn(loc) ? 'This version cannot be adapted' : '该版本暂不支持一键适配')
-          : (isEn(loc) ? 'Adapt failed, try again later' : '适配失败，请稍后重试'),
-      }
-    }
-    return {
-      refresh: true,
-      toast: isEn(loc) ? 'Adapted — restart the engine to take effect' : '已适配，重启引擎后生效',
-    }
   }
 
   /**
@@ -1815,278 +1875,80 @@ function createSurface(deps) {
     return { refresh: true }
   }
 
-  // ── MiMo 扫码登录面板 ─────────────────────────────────────────────────────
+  // ── ChatGPT 账户动作（原生页只做「选择当前账户」）────────────────────────────
   //
-  // 直接调用 Host 已注册在 connection.fetch 上的 auth / qr handler（同进程，不过 HTTP）：
-  //   capability(GET) → start → begin → 轮询 status；hasQr 时一次性取 QR（PNG → data URL）。
-  // 动态审批（approvalId）只在 long-poll 场景出现，原生面板不提供批准控件，只提示去网页版。
+  // 用户定稿（2026-11-24）：添加账户 / 退出账号 / 重新登录全部保留在**网页版设置页**；
+  // 原生设置页只显示账号列表，点一行 = 把该账号设为当前（`codexAccountSelect`）。
+  //
+  // 账户 id **必须再验一次**形状：不合法就给固定 toast，绝不扫描/猜测其它账户。
 
-  const mimoData = (scope, emit) => {
-    let stopped = false
-    let timer = null
-    let busy = false
-    let lastQr = ''
-    const session = { bootEpoch: null, ticketId: null, generation: null, qrTaken: false, balanceSkipped: false }
+  /**
+   * 事件里的账户 id。
+   *
+   * **协议形状（真机实测 2026-11-24）**：视图里 `action: { id, args }` 的 `args` 会**直接**
+   * 作为 `event.value` 传给 handler —— 即 `event.value = { id: 'acc-1' }`，不是
+   * `{ args: { id } }`。上一版按 `event.value.args.id` 读，真机点列表就报「账户标识无效」。
+   * 这里同时兼容两种形状（App 直传 / 旧测试包一层），但只认 `id` 一个字段。
+   *
+   * 缺省 / 空 ⇒ `{ ok:false }`：本动作必须显式指定目标账户，不猜「当前账户」。
+   */
+  const codexAccountArgIdOf = (event) => {
+    const value = event !== null && event !== undefined && event.value !== null && event.value !== undefined
+      ? event.value
+      : null
+    // ① 直接是字符串（某些 App 版本把单选值直接当 value）
+    if (typeof value === 'string') {
+      const id = codexAccountIdOf(value)
+      return id === null ? { ok: false, id: null } : { ok: true, id }
+    }
+    if (value === null || typeof value !== 'object') return { ok: false, id: null }
+    // ② 协议形状：args 直接作为 value（`{ id }`）
+    // ③ 兼容旧形状：`{ args: { id } }`
+    // ④ 兼容 `{ value: 'id' }`（options 风格）
+    let raw = value.id
+    if (raw === undefined && value.args !== null && value.args !== undefined && typeof value.args === 'object') raw = value.args.id
+    if (raw === undefined && typeof value.value === 'string') raw = value.value
+    const id = codexAccountIdOf(raw)
+    return id === null ? { ok: false, id: null } : { ok: true, id }
+  }
 
-    const emitSafe = (payload) => {
-      if (stopped) return
-      try { emit(payload) } catch (err) { /* 取消/断开 */ }
+  /**
+   * 切换当前账户（下拉里点选；必须带该行 id）。成功 ⇒ toast + **patch**（立即更新
+   * 折叠框标题 / 选中项，不依赖 App 是否重新拉数据）+ refresh（重建视图、收起折叠框）。
+   */
+  settingsActions.codexAccountSelect = async (scope, event) => {
+    const loc = localeOfEvent(event, locale)
+    const text = codexAccountStrings(loc)
+    const api = codexAccountBridgeOf()
+    if (api === null) return { toast: text.selectFailed }
+    const picked = codexAccountArgIdOf(event)
+    if (picked.ok !== true || picked.id === null) return { toast: text.badId }
+    if (typeof api.select !== 'function') return { toast: text.selectFailed }
+    let out = null
+    try {
+      out = await api.select(picked.id)
+    } catch (err) {
+      out = null
     }
-    const clearTimer = () => {
-      if (timer !== null) clearTimeout(timer)
-      timer = null
-    }
-    const fail = (code, diagnostic) => {
-      clearTimer()
-      const cookieCodes = diagnostic !== null && diagnostic !== undefined && Array.isArray(diagnostic.cookieCodes)
-        ? diagnostic.cookieCodes.filter((item) => typeof item === 'string')
-        : []
-      const credential = diagnostic !== null && diagnostic !== undefined && typeof diagnostic.field === 'string'
-        ? { field: diagnostic.field, reason: typeof diagnostic.reason === 'string' ? diagnostic.reason : 'unknown' }
-        : null
-      const network = diagnostic !== null && diagnostic !== undefined && typeof diagnostic.networkCode === 'string'
-        ? { step: typeof diagnostic.step === 'string' ? diagnostic.step : 'unknown', code: diagnostic.networkCode }
-        : null
-      const urlCheck = diagnostic !== null && diagnostic !== undefined && typeof diagnostic.rejectedPurpose === 'string'
-        ? {
-          purpose: diagnostic.rejectedPurpose,
-          reason: typeof diagnostic.rejectedReason === 'string' ? diagnostic.rejectedReason : 'unknown',
-          hostClass: typeof diagnostic.hostClass === 'string' ? diagnostic.hostClass : 'other',
-        }
-        : null
-      emitSafe({
-        status: isEn(locale) ? 'Login unavailable' : '无法完成登录',
-        note: mimoCodeText(code, locale),
-        tone: 'warn',
-        qr: lastQr,
-        hint: cookieCodes.length > 0
-          ? (isEn(locale) ? 'Cookie reject reason: ' : 'Cookie 拒绝原因：') + cookieCodes.join(', ')
-          : credential !== null
-          ? (isEn(locale) ? 'Bad credential field: ' : '凭据字段异常：') + credential.field + ' · ' + credential.reason
-          : network !== null
-          ? (isEn(locale) ? 'Network error: ' : '网络错误：') + network.step + ' · ' + network.code
-          : urlCheck !== null
-          ? (isEn(locale) ? 'Login URL check: ' : '登录地址校验：') + urlCheck.purpose + ' · ' + urlCheck.reason + ' · ' + urlCheck.hostClass
-          : '',
-      })
-    }
-    const cancelHostSession = () => {
-      if (mimoAuth === null || typeof session.ticketId !== 'string' || session.bootEpoch === null) return Promise.resolve()
-      const body = {
-        action: 'cancel',
-        bootEpoch: session.bootEpoch,
-        ticketId: session.ticketId,
-        generation: session.generation,
-      }
-      return Promise.resolve()
-        .then(() => mimoAuth.request('auth', body))
-        .catch(() => null)
-    }
-
-    let loggedState = ''
-    let pollCount = 0
-    const pollOnce = async () => {
-      if (stopped || busy) return
-      busy = true
-      try {
-        const reply = await withTimeout(mimoAuth.request('auth', {
-          action: 'status',
-          bootEpoch: session.bootEpoch,
-          ticketId: session.ticketId,
-          generation: session.generation,
-        }), 20_000, 'mimo-status')
-        const statusBody = reply !== null && reply.body !== null && reply.body !== undefined ? reply.body : null
-        pollCount += 1
-        const stateLabel = String(statusBody !== null ? (statusBody.state ?? statusBody.code ?? '') : 'null')
-        if (stateLabel !== loggedState || pollCount % 6 === 1) {
-          loggedState = stateLabel
-                  }
-        const body = reply !== null && reply.body !== null && typeof reply.body === 'object' ? reply.body : null
-        if (body === null || body.ok !== true) { fail(body !== null && typeof body.code === 'string' ? body.code : 'E_MIMO_AUTH_FLOW'); return }
-        const state = typeof body.state === 'string' ? body.state : ''
-        // legacy 流程读余额后会等界面确认（约 100 秒超时）；原生面板没有确认控件，
-        // 直接回 later 表示「稍后再说」，让流程立即完成，不再让用户空等。
-        if (state === 'running' && body.awaitingBalanceMatch === true && session.balanceSkipped !== true) {
-          session.balanceSkipped = true
-          try {
-            await withTimeout(mimoAuth.request('auth', {
-              action: 'confirm',
-              bootEpoch: session.bootEpoch,
-              ticketId: session.ticketId,
-              generation: session.generation,
-              verdict: 'later',
-            }), 10_000, 'mimo-confirm')
-          } catch (err) { /* 忽略：让下一次轮询决定 */ }
-          emitSafe({
-            status: isEn(locale) ? 'Signed in, reading balance…' : '已登录，正在读取余额…',
-            note: '',
-            tone: 'info',
-            qr: lastQr,
-            hint: '',
-          })
-        }
-        if (state === 'done') {
-          clearTimer()
-          emitSafe({
-            status: isEn(locale) ? 'Signed in' : '登录完成',
-            note: mimoBalanceLine(body.balance, locale),
-            tone: 'good',
-            qr: lastQr,
-            hint: isEn(locale) ? 'Close this panel and reopen the usage panel.' : '可以返回额度面板查看 MiMo 余额。',
-          })
-          return
-        }
-        if (state === 'failed' || state === 'expired' || state === 'cancelled' || state === 'disposed') {
-          const failure = body.failure !== null && typeof body.failure === 'object' ? body.failure : null
-          const code = failure !== null && typeof failure.code === 'string' && failure.code.length > 0
-            ? failure.code
-            : (typeof body.failureCode === 'string' && body.failureCode.length > 0 ? body.failureCode : 'E_MIMO_AUTH_FLOW')
-          fail(code, failure !== null ? failure.diagnostic : null)
-          return
-        }
-        if (body.hasQr === true && session.qrTaken !== true) {
-          session.qrTaken = true
-          const qr = await withTimeout(mimoAuth.request('qr', {
-            bootEpoch: session.bootEpoch,
-            ticketId: session.ticketId,
-            generation: session.generation,
-          }), 20_000, 'mimo-qr')
-          if (qr !== null && qr.ok === true && qr.bytes !== undefined) {
-            lastQr = 'data:' + (typeof qr.mime === 'string' ? qr.mime : 'image/png') + ';base64,' + Buffer.from(qr.bytes).toString('base64')
-          }
-        }
-        const waitingApproval = typeof body.approvalId === 'string' && body.approvalId.length > 0
-        const remainingSec = statusBody !== null && typeof statusBody.remainingMs === 'number'
-          ? statusBody.remainingMs / 1000
-          : null
-        // 二维码过期：宿主会一直停在 running 等回执；直接告诉用户而不是「卡住」。
-        if (state === 'running' && remainingSec !== null && remainingSec <= 0) {
-          clearTimer()
-          emitSafe({
-            status: isEn(locale) ? 'QR code expired' : '二维码已过期',
-            note: isEn(locale) ? 'The login window ended before the scan was confirmed.' : '登录窗口已结束（未在有效期内完成扫码确认）。',
-            tone: 'warn',
-            qr: lastQr,
-            hint: isEn(locale) ? 'Tap “New QR code” and scan again.' : '点「重新获取二维码」后重新扫描。',
-          })
-          return
-        }
-        const expiringSoon = state === 'running' && remainingSec !== null && remainingSec > 0 && remainingSec < 45
-        const status = state === 'running'
-          ? (lastQr.length > 0
-            ? (isEn(locale) ? 'Scan with the MiMo app' : '请用 MiMo App 扫码登录')
-            : (isEn(locale) ? 'Preparing QR code…' : '正在准备二维码…'))
-          : (isEn(locale) ? 'Waiting…' : '等待中…')
-        emitSafe({
-          status,
-          note: '',
-          tone: 'info',
-          qr: lastQr,
-          hint: waitingApproval
-            ? (isEn(locale) ? 'This login needs an approval in the Web settings page.' : '这次登录需要在网页版设置页批准后才能继续。')
-            : expiringSoon
-            ? (isEn(locale) ? 'The QR code expires soon; scan now.' : '二维码即将过期，请尽快扫描。')
-            : '',
-        })
-        if (waitingApproval) return
-        timer = setTimeout(() => { void pollOnce() }, 2000)
-        if (timer !== null && typeof timer.unref === 'function') timer.unref()
-      } catch (err) {
-                fail(err !== null && err !== undefined && err.code === 'E_REQUEST_TIMEOUT' ? 'E_REQUEST_TIMEOUT' : 'E_MIMO_AUTH_FLOW')
-      } finally {
-        busy = false
-      }
-    }
-
-    const startFlow = async () => {
-      clearTimer()
-      lastQr = ''
-      session.bootEpoch = null
-      session.ticketId = null
-      session.generation = null
-      session.qrTaken = false
-      session.balanceSkipped = false
-      // 本引擎里已经完成过 legacy 扫码登录：直接显示已有余额，不重新出二维码。
-      if (mimoSessionBalance !== null) {
-        let existing = null
-        try { existing = mimoSessionBalance() } catch (err) { existing = null }
-        if (existing !== null && existing.balance !== null && typeof existing.balance.balance === 'number') {
-          emitSafe({
-            status: isEn(locale) ? 'Signed in' : '已登录',
-            note: (isEn(locale) ? 'Balance: ' : '余额：') + '¥' + Number(existing.balance.balance).toFixed(2),
-            tone: 'good',
-            qr: '',
-            hint: isEn(locale) ? 'Tap “New QR code” to sign in with another account.' : '要换账号可点「重新获取二维码」。',
-          })
-          return
-        }
-      }
-      if (mimoAuth === null) { fail('E_MIMO_AUTH_UNAVAILABLE'); return }
-      let capability = null
-      try { capability = mimoAuth.status() } catch (err) { capability = null }
-      if (capability === null || capability.supported !== true) {
-        fail(capability !== null && typeof capability.code === 'string' ? capability.code : 'E_MIMO_AUTH_UNAVAILABLE')
-        return
-      }
-      emitSafe({ status: isEn(locale) ? 'Requesting QR code…' : '正在获取二维码…', note: '', tone: 'info', qr: '', hint: '' })
-      const cap = await withTimeout(mimoAuth.request('auth', null), 20_000, 'mimo-cap')
-      const capBody = cap !== null && cap.body !== null ? cap.body : null
-      if (capBody === null || capBody.ok !== true || capBody.supported !== true) { fail(capBody !== null && typeof capBody.code === 'string' ? capBody.code : 'E_MIMO_AUTH_UNAVAILABLE'); return }
-      if (typeof capBody.bootEpoch !== 'string') { fail('E_MIMO_AUTH_UNAVAILABLE'); return }
-      session.bootEpoch = capBody.bootEpoch
-      const started = await withTimeout(mimoAuth.request('auth', { action: 'start', bootEpoch: session.bootEpoch }), 20_000, 'mimo-start')
-      const startBody = started !== null && started.body !== null ? started.body : null
-      if (startBody === null || startBody.ok !== true || typeof startBody.ticketId !== 'string' || typeof startBody.generation !== 'number') {
-        fail(startBody !== null && typeof startBody.code === 'string' ? startBody.code : 'E_MIMO_AUTH_FLOW', startBody !== null ? startBody.diagnostic : null)
-        return
-      }
-      session.ticketId = startBody.ticketId
-      session.generation = startBody.generation
-      const begun = await withTimeout(mimoAuth.request('auth', {
-        action: 'begin',
-        bootEpoch: session.bootEpoch,
-        ticketId: session.ticketId,
-        generation: session.generation,
-      }), 20_000, 'mimo-begin')
-      const beginBody = begun !== null && begun.body !== null ? begun.body : null
-      if (beginBody === null || beginBody.ok !== true) { fail(beginBody !== null && typeof beginBody.code === 'string' ? beginBody.code : 'E_MIMO_AUTH_FLOW', beginBody !== null ? beginBody.diagnostic : null); return }
-      await pollOnce()
-    }
-
-    mimoControl = {
-      restart: () => { void cancelHostSession().then(() => startFlow()) },
-      cancel: () => { void cancelHostSession() },
-    }
-    void startFlow()
-    return () => {
-      stopped = true
-      mimoControl = null
-      clearTimer()
-      void cancelHostSession()
+    if (out === null || typeof out !== 'object' || out.ok !== true) return { toast: text.selectFailed }
+    // 用**刚切换后的**真实 state 重算数据，保证 patch 与磁盘一致（不猜）。
+    const account = codexAccountOptionsOf(await codexAccountStateOf(), loc)
+    return {
+      toast: text.selectOk,
+      patch: {
+        codexAccountCurrentLabel: account.currentLabel,
+        codexAccountOptions: account.options,
+        codexAccountSelected: account.selected,
+        codexAccountExpanded: false,
+      },
+      refresh: true,
     }
   }
 
-  const mimoView = async (scope, caps) => {
-    locale = localeOf(caps)
-    return buildMimoLoginView({ locale })
-  }
-
+  // [0.11.4 MiMo 扫码登录彻底删除] 原生半只剩两个面板：额度（quota）与设置（settings）。
+  // MiMo 没有登录面板、也没有「登录/扫码/记住登录」动作；余额只由 API Key 取数。
   return {
     quota: { view: quotaView, data: quotaData, actions: quotaActions },
     settings: { view: settingsView, data: settingsData, actions: settingsActions },
-    mimo: {
-      view: mimoView,
-      data: mimoData,
-      actions: {
-        restart: () => {
-          if (mimoControl !== null) mimoControl.restart()
-          return { toast: isEn(locale) ? 'Requesting a new QR code…' : '正在重新获取二维码…' }
-        },
-        cancel: () => {
-          if (mimoControl !== null) mimoControl.cancel()
-          return { toast: isEn(locale) ? 'Cancel requested' : '已请求取消' }
-        },
-      },
-    },
   }
 }

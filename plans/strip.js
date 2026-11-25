@@ -18,7 +18,6 @@ const FULL_NAMES = Object.freeze({
   codex: 'Codex',
   deepseek: 'DeepSeek',
   mimo: 'MiMo',
-  workbuddy: 'WorkBuddy',
 })
 
 /** 窗口 scope → 短标签（中文/英文同一套，尽量短）。 */
@@ -28,13 +27,17 @@ const WINDOW_LABELS = Object.freeze({
   monthly: { zh: '月', en: 'mo' },
 })
 
-/** 渠道属于哪类 strip 形态：percent（窗口百分比）/ balance（金额）/ credits（积分）。 */
+/**
+ * 渠道属于哪类 strip 形态：percent（窗口百分比）/ balance（金额）/ credits（积分）。
+ *
+ * [2026-11-23] WorkBuddy 退场后没有内置渠道使用 credits 形态；未登记渠道一律
+ * 回退 `balance`，**不**把未知 id 猜成某个已退场的积分类渠道。
+ */
 const STRIP_KIND = Object.freeze({
   'opencode-go': 'percent',
   codex: 'percent',
   deepseek: 'balance',
   mimo: 'balance',
-  workbuddy: 'credits',
 })
 
 function isEn(locale) {
@@ -184,7 +187,7 @@ function windowPercents(windows) {
  * 投影后的渠道快照 → strip 文本。
  *
  * 格式：渠道全名 + 数值（按 5 小时 → 周 → 月 依次，最多 24 字）。
- * 例：`OpenCode Go 96% 79% 90%`、`DeepSeek ¥12.34`、`WorkBuddy 3,200 分`。
+ * 例：`OpenCode Go 96% 79% 90%`、`DeepSeek ¥12.34`。
  * 单行文本无法做真正的右对齐（宿主会折叠空白），这是宿主 slot 的限制。
  *
  * @param {{channelId: string, custom: boolean, name: string|null}} channel
@@ -220,6 +223,10 @@ export function formatStripText(channel, projected, options) {
     }
   }
 
+  /**
+   * 通用积分格式化（`unit: 'credits'`）：WorkBuddy 退场后没有内置渠道走这里，
+   * 但保留这个纯格式化分支给未来的积分渠道；它只读投影值，不按渠道名映射。
+   */
   if (kind === 'credits') {
     const credits = typeof projected.balance === 'number' ? projected.balance : null
     if (credits === null) return null

@@ -1,10 +1,10 @@
 /**
- * Codex **双来源**（Connect / Subscription）的纯观察层：来源归一、启用/兼容探测、
+ * Codex **三来源**（Connect / Subscription / Account）的纯观察层：来源归一、启用/兼容探测、
  * 运行期身份摘要、第三方服务失败码映射。
  *
  * 为什么单独成模块：
- *   1. `plans/codex.js` 需要按 `codexSource` 分派两条完全不同的读取路径（旧 Connect
- *      公开 SDK / 新的第三方只读 service），分派与其他渠道无关；
+ *   1. `plans/codex.js` 需要按 `codexSource` 分派三条完全不同的读取路径（旧 Connect
+ *      公开 SDK / 新的第三方只读 service / 本插件自持的 ChatGPT 账号 OAuth），分派与其他渠道无关；
  *   2. `index.js` 的观察身份（`identityOfChannel`）、`/api/plan-usage/codex-sources`
  *      状态路由、以及 `plans/custom-balance.js` 的配置摘要都要用**同一套**归一规则，
  *      各写一份必然漂移；
@@ -16,7 +16,7 @@
  *   - **未安装**与**未开启**对外都只有一种说法：`enabled:false`（界面统一显示「未启用」）；
  *   - **已安装且已激活、但没装只读接口补丁**（接口不兼容/需要适配）必须显示
  *     `enabled:true / compatible:false`，**不能**冒充「未启用」；
- *   - `subscription` 显式不可用时**绝不回退** `connect`；
+ *   - `subscription` / `account` 显式不可用时**绝不回退** `connect`；
  *   - 不构造 ownerPeer、不读 token/credential record、不读取任何来源的额度；
  *   - 不输出账号 ID、记录路径、令牌或上游原文。
  *
@@ -30,12 +30,28 @@
  *   `E_CODEX_SOURCE_CHANGED` / `E_CODEX_USAGE_FAILED` / `E_CODEX_USAGE_NOT_READY`），
  *   或原 handler 形状 `{ok:false,error:{code,message,details}}`。
  *   失败 message **只做精确等值映射**（见 `subscriptionFailureOf`），绝不回显原文。
+ *
+ * [2026-11-22 新增 `account`] `account` 来源不需要任何第三方插件：凭据是本插件自己的
+ * `ctx.get('credentials')` 记录，额度由 `plans/codex-account.js` 直接读。本模块对它只做
+ * 「宿主凭据服务是否可用」的**纯观察**（不读记录内容），因此这里也不会出现 token / 账号。
  */
 
-/** 来源枚举：只有这两个值（没有 auto，不做后台自动选择）。 */
+/**
+ * 来源枚举：只有这三个值（没有 auto，不做后台自动选择）。
+ *
+ * - `connect`（缺省，保旧）：复用 `dsh-codex-connect` 已登录的 ChatGPT OAuth；
+ * - `subscription`：第三方 `dsh-codex-subscription` 的只读 service；
+ * - `account`（[2026-11-22]）：**本插件自己**持有的 ChatGPT 账号 OAuth 凭据
+ *   （见 `plans/codex-account.js`），不依赖任何第三方插件。
+ */
 export const CODEX_SOURCE_CONNECT = 'connect'
 export const CODEX_SOURCE_SUBSCRIPTION = 'subscription'
-export const CODEX_SOURCES = Object.freeze([CODEX_SOURCE_CONNECT, CODEX_SOURCE_SUBSCRIPTION])
+export const CODEX_SOURCE_ACCOUNT = 'account'
+export const CODEX_SOURCES = Object.freeze([
+  CODEX_SOURCE_CONNECT,
+  CODEX_SOURCE_SUBSCRIPTION,
+  CODEX_SOURCE_ACCOUNT,
+])
 /** [主已决定] 缺省 `connect`：既有用户行为不变，不做暗迁移。 */
 export const DEFAULT_CODEX_SOURCE = CODEX_SOURCE_CONNECT
 
@@ -59,16 +75,19 @@ export const CODEX_ERROR_NOT_ENABLED = 'not-enabled'
 export const CODEX_ERROR_INCOMPATIBLE = 'incompatible'
 export const CODEX_ERROR_SOURCE_CHANGED = 'source-changed'
 
-/** 来源 → 面向用户的名称（设置页两行、详情文案共用）。 */
+/** 来源 → 面向用户的名称（设置页三行、详情文案共用）。 */
 const SOURCE_LABELS = Object.freeze({
   connect: 'Codex Connect',
   subscription: 'Codex Subscription',
+  account: 'ChatGPT 账号（本插件登录）',
 })
 
 /** 来源 → 它实际依赖的第三方 provider（`plan.source` 描述/文档用）。 */
 const SOURCE_PROVIDERS = Object.freeze({
   connect: CONNECT_PACKAGE_NAME,
   subscription: SUBSCRIPTION_PACKAGE_NAME,
+  // `account` 不依赖第三方插件：凭据与取数都在本插件内（`dsh-usage-dock` 自己）。
+  account: 'dsh-usage-dock',
 })
 
 /**
@@ -89,6 +108,7 @@ function literalOf(raw) {
  * 把任意值归一成来源枚举。
  *
  * - `'subscription'` → subscription；
+ * - `'account'` → account；
  * - 其余（`'connect'` / 缺失 / 未知字符串 / 非字符串）→ **connect**。
  *
  * 未知值回落到既有默认（而不是动态猜来源/自动探测服务）：这是主已定的口径 ——
@@ -96,7 +116,9 @@ function literalOf(raw) {
  */
 export function normalizeCodexSource(value) {
   const text = typeof value === 'string' ? value.trim().toLowerCase() : ''
-  return text === CODEX_SOURCE_SUBSCRIPTION ? CODEX_SOURCE_SUBSCRIPTION : CODEX_SOURCE_CONNECT
+  if (text === CODEX_SOURCE_SUBSCRIPTION) return CODEX_SOURCE_SUBSCRIPTION
+  if (text === CODEX_SOURCE_ACCOUNT) return CODEX_SOURCE_ACCOUNT
+  return CODEX_SOURCE_CONNECT
 }
 
 /** 读整份配置里的选中来源（缺失/未知 → connect）。 */
@@ -188,6 +210,48 @@ export function readCodexSubscriptionService(ctx) {
     return { state: 'incompatible', service, reason: 'revision-invalid' }
   }
   return { state: 'ok', service, revision }
+}
+
+/**
+ * 校验一个「宿主凭据服务」对象是否可用于本插件自持的 Codex 凭据。
+ *
+ * 合同（`dsh-credentials` record 侧的最小子集，本项目只用到这两个）：
+ *   - `readRecord(key)`：读一条记录（缺失返回 `undefined`/`null`）；
+ *   - `modifyRecord(key, mutate)`：**唯一写路径**，在独占时刻把当前记录交给 `mutate`
+ *     （返回 `undefined` 表示不写）。
+ *
+ * 注意：这里**不读**任何记录内容，只判断成员是否存在 —— 状态路由因此仍是纯 metadata。
+ *
+ * @returns {{state:'ok', service:object}|{state:'absent'}|{state:'incompatible', service?:object, reason:string}|{state:'unknown'}}
+ */
+export function describeCodexCredentialsService(service) {
+  if (service === undefined || service === null) return { state: 'absent' }
+  if (typeof service !== 'object' && typeof service !== 'function') {
+    return { state: 'incompatible', service, reason: 'shape' }
+  }
+  if (typeof service.readRecord !== 'function') return { state: 'incompatible', service, reason: 'read-record' }
+  if (typeof service.modifyRecord !== 'function') {
+    return { state: 'incompatible', service, reason: 'modify-record' }
+  }
+  return { state: 'ok', service }
+}
+
+/**
+ * 读宿主的公开凭据服务（`ctx.get('credentials')`）。**纯观察**：不读记录、不发请求。
+ *
+ * @returns {{state:'ok', service:object}|{state:'absent'}|{state:'incompatible', service?:object, reason:string}|{state:'unknown'}}
+ *   `unknown` = `ctx.get` 本身抛错，状态**不可证明**（调用方必须 fail-closed）。
+ */
+export function readCodexCredentialsService(ctx) {
+  let service
+  try {
+    service = ctx !== null && ctx !== undefined && typeof ctx.get === 'function'
+      ? ctx.get('credentials')
+      : undefined
+  } catch (err) {
+    return { state: 'unknown' }
+  }
+  return describeCodexCredentialsService(service)
 }
 
 /**
@@ -321,9 +385,13 @@ export function codexRuntimeIdentityOf(ctx) {
  *     - 服务不在 ⇒ 再看 loader 条目：目标插件**已激活**（`disabled===false` 且
  *       fiber ACTIVE）⇒ `true/false`（已激活但没装只读接口补丁）；
  *       否则（未安装 / 已停用 / 无法证明安装）⇒ `false/false`（统一「未启用」）。
+ *   - Account（[2026-11-22]）：`ctx.get('credentials')` 可用（`readRecord` + `modifyRecord`
+ *     都是函数）⇒ `enabled:true / compatible:true`。**不读记录内容**（是否已登录由
+ *     `plans/codex-account.js#codexAccountState` 单独回答）；凭据服务不在 ⇒ `false/false`；
+ *     `ctx.get` 抛错 ⇒ `unknown:true`（按现有规则 fail-closed）。
  *
  * @param {object} ctx
- * @param {object} [options] 测试注入：`{ cfg, entries, connect, subscription }`
+ * @param {object} [options] 测试注入：`{ cfg, entries, connect, subscription, credentials, source }`
  * @returns {{sources:Array<{id:string,label:string,enabled:boolean,compatible:boolean}>, selected:string, unknown:boolean}}
  *   `unknown:true` 表示状态**不可证明**（`ctx.get` 抛错）；调用方必须 fail-closed，
  *   不能把这份结果当「未启用」发布。
@@ -339,6 +407,16 @@ export function getCodexSourceState(ctx, options) {
     && typeof opts.subscription === 'object'
     ? opts.subscription
     : readCodexSubscriptionService(ctx)
+  /**
+   * 注入形态：既接受 `{state, service}` 形式的观察结果，也接受一个原始服务对象
+   * （测试里最常用）—— 原始对象一律过 `describeCodexCredentialsService` 的同一套规则。
+   */
+  const credentials = opts.credentials !== null && opts.credentials !== undefined
+    && typeof opts.credentials === 'object'
+    ? (typeof opts.credentials.state === 'string'
+      ? opts.credentials
+      : describeCodexCredentialsService(opts.credentials))
+    : readCodexCredentialsService(ctx)
 
   const entries = Array.isArray(opts.entries)
     // 测试注入允许直接给数组（等价于 `{ known:true, list }`）。
@@ -369,6 +447,10 @@ export function getCodexSourceState(ctx, options) {
     subscriptionCompatible = false
   }
 
+  // Account：只有「宿主凭据服务可用」这一条事实；记录里有没有登录态不在这里判断。
+  const accountEnabled = credentials.state === 'ok'
+  const accountUnknown = credentials.state === 'unknown'
+
   return {
     sources: [
       {
@@ -383,9 +465,15 @@ export function getCodexSourceState(ctx, options) {
         enabled: subscriptionEnabled,
         compatible: subscriptionCompatible,
       },
+      {
+        id: CODEX_SOURCE_ACCOUNT,
+        label: SOURCE_LABELS[CODEX_SOURCE_ACCOUNT],
+        enabled: accountEnabled,
+        compatible: accountEnabled,
+      },
     ],
     selected,
-    unknown: connectUnknown || subscriptionUnknown,
+    unknown: connectUnknown || subscriptionUnknown || accountUnknown,
   }
 }
 

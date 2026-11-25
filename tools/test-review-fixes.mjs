@@ -494,7 +494,6 @@ async function withServer(routes, fn) {
     deepseekApiKey: { get: () => 'sk-synthetic-test' },
     deepseekEnabled: { get: () => true },
     deepseekWarnThreshold: { get: () => 10 },
-    mimoCookie: { get: () => '' },
     customBalances: { get: () => [] },
     customKeys: { get: () => ({}) },
   }

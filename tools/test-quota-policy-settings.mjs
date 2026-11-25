@@ -639,19 +639,20 @@ const OFF = {
     value: Object.assign({}, BASE, {
       quotaPolicyEnabled: true,
       quotaTrustRouteOrder: true,
-      quotaFocusChannels: '["workbuddy"]',
-      quotaWarningCreditsThreshold: 400,
-      quotaClosingCreditsThreshold: 100,
+      quotaFocusChannels: '["deepseek"]',
+      quotaWarningBalanceThreshold: 400,
+      quotaClosingBalanceThreshold: 100,
+      quotaBalanceCurrency: 'CNY',
     }),
   })
   const tree = await mount(ctx)
   check('S15a 积分类 legacy 两档显示在输入框（不是空白）',
-    byAttr(tree, 'data-policy-warning', 'workbuddy|credits').props.value === '400'
-    && byAttr(tree, 'data-policy-closing', 'workbuddy|credits').props.value === '100',
-    { warn: byAttr(tree, 'data-policy-warning', 'workbuddy|credits').props.value })
+    byAttr(tree, 'data-policy-warning', 'deepseek|balance').props.value === '400'
+    && byAttr(tree, 'data-policy-closing', 'deepseek|balance').props.value === '100',
+    { warn: byAttr(tree, 'data-policy-warning', 'deepseek|balance').props.value })
   check('S15b 状态行说明正在按旧版全局阈值判定',
-    attrText(tree, 'data-policy-status', 'workbuddy').indexOf('旧版全局阈值') !== -1,
-    attrText(tree, 'data-policy-status', 'workbuddy'))
+    attrText(tree, 'data-policy-status', 'deepseek').indexOf('旧版全局阈值') !== -1,
+    attrText(tree, 'data-policy-status', 'deepseek'))
   ctx.client.restore()
 }
 
@@ -663,19 +664,20 @@ const OFF = {
     value: Object.assign({}, BASE, {
       quotaPolicyEnabled: true,
       quotaTrustRouteOrder: true,
-      quotaFocusChannels: '["workbuddy"]',
-      quotaWarningCreditsThreshold: 400,
-      quotaClosingCreditsThreshold: 100,
+      quotaFocusChannels: '["deepseek"]',
+      quotaWarningBalanceThreshold: 400,
+      quotaClosingBalanceThreshold: 100,
+      quotaBalanceCurrency: 'CNY',
     }),
   })
   let tree = await mount(ctx)
-  byAttr(tree, 'data-policy-warning', 'workbuddy|credits').props.onChange({ target: { value: '500' } })
+  byAttr(tree, 'data-policy-warning', 'deepseek|balance').props.onChange({ target: { value: '500' } })
   tree = await runtimeSettle(ctx)
   byText(tree, '保存更改')[0].props.onClick()
   await runtimeSettle(ctx)
   const p = JSON.parse(ctx.form.value.quotaChannelThresholds)
   check('S16a 改预警后收尾 100 不丢（先 seed 旧值）',
-    p.workbuddy.credits.warning === 500 && p.workbuddy.credits.closing === 100, p.workbuddy)
+    p.deepseek.balance.warning === 500 && p.deepseek.balance.closing === 100, p.deepseek)
   ctx.client.restore()
 
   const ctx2 = open({
@@ -699,37 +701,6 @@ const OFF = {
     p2.codex.windows)
   check('S16c 周窗口写入的是新值', p2.codex.windows.weekly.warning === 15, p2.codex.windows.weekly)
   ctx2.client.restore()
-}
-
-// ===========================================================================
-// S23 — 审查 E01：WorkBuddy 账号选择变化也算来源变化 → 重取窗口能力
-// ===========================================================================
-{
-  const ctx = open({
-    value: Object.assign({}, BASE, {
-      quotaPolicyEnabled: true,
-      quotaTrustRouteOrder: true,
-      quotaFocusChannels: '["workbuddy"]',
-      workbuddyAccounts: '["review-A"]',
-    }),
-  })
-  await mount(ctx)
-  const before = ctx.metadataFetches
-  ctx.form.value = Object.assign({}, ctx.form.value, { workbuddyAccounts: '["review-B"]' })
-  await runtimeSettle(ctx)
-  check('S23a 换账号选择会重新拉取窗口能力',
-    ctx.metadataFetches > before, { before, after: ctx.metadataFetches })
-  // 顺序无关：同样内容换个顺序不算来源变化
-  const beforeOrder = ctx.metadataFetches
-  ctx.form.value = Object.assign({}, ctx.form.value, { workbuddyAccounts: '["review-B","review-C"]' })
-  await runtimeSettle(ctx)
-  const afterOrder = ctx.metadataFetches
-  ctx.form.value = Object.assign({}, ctx.form.value, { workbuddyAccounts: '["review-C","review-B"]' })
-  await runtimeSettle(ctx)
-  check('S23b 账号列表顺序变化不算来源切换（不重复重取）',
-    ctx.metadataFetches === afterOrder, { afterOrder, now: ctx.metadataFetches })
-  void beforeOrder
-  ctx.client.restore()
 }
 
 // ===========================================================================
@@ -764,27 +735,27 @@ const OFF = {
     value: Object.assign({}, BASE, {
       quotaPolicyEnabled: true,
       quotaTrustRouteOrder: true,
-      quotaFocusChannels: '["workbuddy"]',
-      quotaChannelThresholds: JSON.stringify({ workbuddy: { credits: { warning: 400, closing: 100 } } }),
+      quotaFocusChannels: '["deepseek"]',
+      quotaChannelThresholds: JSON.stringify({ deepseek: { balance: { warning: 400, closing: 100, currency: 'CNY' } } }),
     }),
   })
   let tree = await mount(ctx)
   // 原生 DOM：非法输入时 value 为空串但 badInput 为 true
-  byAttr(tree, 'data-policy-warning', 'workbuddy|credits').props.onChange({
+  byAttr(tree, 'data-policy-warning', 'deepseek|balance').props.onChange({
     target: { value: '', validity: { badInput: true } },
   })
   tree = await runtimeSettle(ctx)
   check('S25a 非法编辑被拒绝（不写入草稿）',
-    ctx.form.value.quotaChannelThresholds === JSON.stringify({ workbuddy: { credits: { warning: 400, closing: 100 } } })
-    && byAttr(tree, 'data-policy-warning', 'workbuddy|credits').props.value === '400',
-    byAttr(tree, 'data-policy-warning', 'workbuddy|credits').props.value)
+    ctx.form.value.quotaChannelThresholds === JSON.stringify({ deepseek: { balance: { warning: 400, closing: 100, currency: 'CNY' } } })
+    && byAttr(tree, 'data-policy-warning', 'deepseek|balance').props.value === '400',
+    byAttr(tree, 'data-policy-warning', 'deepseek|balance').props.value)
   check('S25b 给出"不是有效数字"的提示',
     textAll(tree).indexOf('输入的不是有效数字') !== -1, textAll(tree).slice(0, 800))
   byText(tree, '保存更改')[0].props.onClick()
   await runtimeSettle(ctx)
   check('S25c 保存后原来的 400/100 没有被清成 0',
     ctx.form.mutations.length === 0
-    || JSON.parse(ctx.form.value.quotaChannelThresholds).workbuddy.credits.warning === 400,
+    || JSON.parse(ctx.form.value.quotaChannelThresholds).deepseek.balance.warning === 400,
     { mutations: ctx.form.mutations.length, value: ctx.form.value.quotaChannelThresholds })
   ctx.client.restore()
 
@@ -793,12 +764,12 @@ const OFF = {
     value: Object.assign({}, BASE, {
       quotaPolicyEnabled: true,
       quotaTrustRouteOrder: true,
-      quotaFocusChannels: '["workbuddy"]',
-      quotaChannelThresholds: JSON.stringify({ workbuddy: { credits: { warning: 400, closing: 100 } } }),
+      quotaFocusChannels: '["deepseek"]',
+      quotaChannelThresholds: JSON.stringify({ deepseek: { balance: { warning: 400, closing: 100, currency: 'CNY' } } }),
     }),
   })
   let tree2 = await mount(ctx2)
-  byAttr(tree2, 'data-policy-warning', 'workbuddy|credits').props.onChange({
+  byAttr(tree2, 'data-policy-warning', 'deepseek|balance').props.onChange({
     target: { value: '', validity: { badInput: false } },
   })
   tree2 = await runtimeSettle(ctx2)
@@ -806,7 +777,7 @@ const OFF = {
   await runtimeSettle(ctx2)
   const saved = JSON.parse(ctx2.form.value.quotaChannelThresholds)
   check('S25d 真正的空输入仍是 0（未配置），另一档保留',
-    saved.workbuddy.credits.warning === 0 && saved.workbuddy.credits.closing === 100, saved.workbuddy)
+    saved.deepseek.balance.warning === 0 && saved.deepseek.balance.closing === 100, saved.deepseek)
   ctx2.client.restore()
 }
 
@@ -866,23 +837,23 @@ const OFF = {
     value: Object.assign({}, BASE, {
       quotaPolicyEnabled: true,
       quotaTrustRouteOrder: true,
-      quotaFocusChannels: '["codex","workbuddy"]',
+      quotaFocusChannels: '["codex","deepseek"]',
       quotaChannelThresholds: JSON.stringify({
         codex: { windows: { weekly: { warning: 20, closing: 5 } } },
-        workbuddy: { credits: { warning: 400, closing: 100 } },
+        deepseek: { balance: { warning: 400, closing: 100, currency: 'CNY' } },
       }),
     }),
     client: { quotaWindows: { codex: { status: 'ok', windows: [{ key: 'weekly', percent: 60 }], sampledAt: 1 } } },
   })
   let tree = await mount(ctx)
-  byAttr(tree, 'data-policy-warning', 'workbuddy|credits').props.onChange({ target: { value: '500' } })
+  byAttr(tree, 'data-policy-warning', 'deepseek|balance').props.onChange({ target: { value: '500' } })
   byAttr(tree, 'data-policy-warning', 'codex|weekly').props.onChange({ target: { value: '30' } })
   tree = await runtimeSettle(ctx)
   byText(tree, '保存更改')[0].props.onClick()
   await runtimeSettle(ctx)
   const p = JSON.parse(ctx.form.value.quotaChannelThresholds)
   check('S18a 两个渠道的改动都在（互不覆盖）',
-    p.workbuddy.credits.warning === 500 && p.codex.windows.weekly.warning === 30, p)
+    p.deepseek.balance.warning === 500 && p.codex.windows.weekly.warning === 30, p)
   ctx.client.restore()
 }
 
@@ -942,12 +913,12 @@ const OFF = {
       enabled: false,
       quotaPolicyEnabled: true,
       quotaTrustRouteOrder: true,
-      quotaFocusChannels: '["workbuddy"]',
-      quotaChannelThresholds: JSON.stringify({ workbuddy: { credits: { warning: 400, closing: 100 } } }),
+      quotaFocusChannels: '["deepseek"]',
+      quotaChannelThresholds: JSON.stringify({ deepseek: { balance: { warning: 400, closing: 100, currency: 'CNY' } } }),
     }),
   })
   const tree = await mount(ctx)
-  const status = attrText(tree, 'data-policy-status', 'workbuddy')
+  const status = attrText(tree, 'data-policy-status', 'deepseek')
   check('S21a 监控关闭 → 状态为未生效', status.indexOf('未生效') === 0, status)
   ctx.client.restore()
 }

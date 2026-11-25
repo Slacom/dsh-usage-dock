@@ -32,7 +32,6 @@ const byButton = (tree, text) => elementsOf(tree).find((el) => el.type === 'butt
 
 const CAPS = {
   codex: { status: 'ok', windows: [{ key: 'weekly', percent: 60 }], unit: null, currency: null, sampledAt: 1 },
-  workbuddy: { status: 'ok', windows: [], unit: 'credits', currency: null },
   deepseek: { status: 'ok', windows: [], unit: 'currency', currency: 'CNY', sampledAt: 1 },
   'custom:hidden0001': { status: 'ok', windows: [], unit: 'currency', currency: 'USD', sampledAt: 1 },
 }
@@ -107,7 +106,7 @@ const FULL = {
   const ctx = open(FULL)
   const tree = await settle(ctx)
   const blocks = allBlocks(tree).map((el) => el.props['data-policy-block'])
-  check('H3a 开启态恢复全部策略块（5 内置 + 1 自定义）', blocks.length === 6, blocks)
+  check('H3a 开启态恢复全部策略块（4 内置 + 1 自定义）', blocks.length === 5, blocks)
   check('H3b 含自定义渠道块', blocks.indexOf('custom:hidden0001') !== -1)
   check('H3c 原有 focus 与阈值显示保留',
     byAttr(tree, 'data-policy-focus', 'codex').props.checked === true
@@ -129,7 +128,7 @@ const FULL = {
   byAttr(tree, 'data-policy-master', '1').props.onChange({ target: { checked: true } })
   tree = await settle(ctx)
   check('H4c 再打开：块恢复且原 focus/阈值还在',
-    allBlocks(tree).length === 6
+    allBlocks(tree).length === 5
     && byAttr(tree, 'data-policy-focus', 'codex').props.checked === true
     && byAttr(tree, 'data-policy-warning', 'codex|weekly').props.value === '20')
   ctx.client.restore()
@@ -174,7 +173,7 @@ const FULL = {
   tree = await settle(ctx)
   byButton(tree, '放弃更改').props.onClick()
   tree = await settle(ctx)
-  check('H6a 放弃后块恢复显示', allBlocks(tree).length === 6)
+  check('H6a 放弃后块恢复显示', allBlocks(tree).length === 5)
   check('H6b 放弃不写任何字段', ctx.mutations.length === 0 && ctx.writes.length === 0)
   ctx.client.restore()
 }

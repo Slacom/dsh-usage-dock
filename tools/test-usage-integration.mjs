@@ -11,6 +11,7 @@
 import assert from 'node:assert/strict'
 import opencodeGo from '../plans/opencode-go.js'
 import deepseek from '../plans/deepseek.js'
+import mimo from '../plans/mimo.js'
 import { percentSemanticsOf } from '../plans/index.js'
 import { projectPlan, renderUsage, projectUsage } from '../plans/usage-tool.js'
 import { policyOf, policyPromptFor } from '../plans/usage-policy.js'
@@ -159,21 +160,31 @@ function cfgOf(extra) {
 }
 
 // ===========================================================================
-// I5 — WorkBuddy 真实 wire 字段（creditsTotal）
+// I5 — MiMo 真实 wire：balance = 现金 + 赠金（不含授信）
 // ===========================================================================
 {
-  // provider 的 wire 由 credits.total 映射为 creditsTotal；这里直接给真实字段名。
-  const wb = projectPlan({ id: 'workbuddy', creditsTotal: 1906 }, { semantics: 'used' })
-  check('I5a creditsTotal 被读取', wb.balance === 1906, wb)
-  check('I5b 不再落成 unknown', wb.availability === 'ok', wb.availability)
-  check('I5c 积分单位显式', wb.unit === 'credits')
+  const wire = await withStubbedFetch({
+    object: 'balance',
+    is_available: true,
+    balance_infos: [{
+      currency: 'CNY',
+      cash_balance: '100.50',
+      gift_balance: '20.00',
+      credit_available: '380.00',
+      total_available: '120.50',
+    }],
+  }, () => mimo.fetch(ctx, undefined, cfgOf({ mimoApiKey: 'sk-synthetic-mimo' })))
 
-  const out = projectUsage([{ id: 'workbuddy', creditsTotal: 1906 }], ['workbuddy'], {
-    enabled: ['workbuddy'], known: ['workbuddy'], semanticsOf: percentSemanticsOf,
+  check('I5a 真实 provider 返回 balance（现金+赠金）', wire.balance === 120.5, wire)
+  check('I5b 授信额度单独给出、不并入总额', wire.creditAvailable === 380, wire.creditAvailable)
+  check('I5c 币种来自 wire', wire.currency === 'CNY', wire.currency)
+
+  const projected = projectPlan(wire, { semantics: 'used' })
+  const out = projectUsage([wire], ['mimo'], {
+    enabled: ['mimo'], known: ['mimo'], semanticsOf: percentSemanticsOf,
   })
-  check('I5d 整体投影可用', out.channels[0].availability === 'ok', out.channels[0])
-  check('I5e 渲染含积分与数值',
-    renderUsage(out).includes('积分') && renderUsage(out).includes('1906'), renderUsage(out))
+  check('I5d 整体投影可用且保留金额', out.channels[0].availability === 'ok' && projected.balance === 120.5, out.channels[0])
+  check('I5e 渲染含数值', renderUsage(out).includes('120.5'), renderUsage(out))
 }
 
 // ===========================================================================

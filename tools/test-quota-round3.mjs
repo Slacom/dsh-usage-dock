@@ -28,7 +28,7 @@ function check(name, cond, detail) {
 
 const DISABLED = {
   opencodeGoEnabled: false, deepseekEnabled: false, codexEnabled: false,
-  mimoEnabled: false, workbuddyEnabled: false, workbuddyAiEnabled: false,
+  mimoEnabled: false, deepseekEnabled: false, workbuddyAiEnabled: false,
 }
 
 /**
@@ -98,24 +98,24 @@ const originalMimo = mimo.fetch
 // R3-01 — 身份函数不得调用不可见名字；身份变化必须真正撤销旧额度
 // ===========================================================================
 {
-  const COOKIE_A = 'uid=1; serviceToken=AAA; userId=1A'
-  const COOKIE_B = 'uid=1; serviceToken=BBB; userId=1B'
+  const KEY_A = 'sk-mimo-AAA'
+  const KEY_B = 'sk-mimo-BBB'
   mimo.fetch = async () => ({ id: 'mimo', name: 'Xiaomi MiMo', balance: 1, currency: 'CNY', unit: 'currency' })
   const app = boot({
     mimoEnabled: true,
-    mimoCookie: COOKIE_A,
+    mimoApiKey: KEY_A,
     quotaPolicyEnabled: true,
     quotaFocusChannels: '["mimo"]',
     quotaWarningBalanceThreshold: 10,
-    quotaClosingBalanceThreshold: 5,
+    quotaClosingBalanceThreshold: 5, quotaBalanceCurrency: 'CNY',
     quotaBalanceCurrency: 'CNY',
     quotaTrustRouteOrder: true,
   })
   const first = await gui(app)
   check('R3-01a 首次采集成功（身份计算未抛错）', first.ok === true, first.ok)
 
-  // 同一实例内换 Cookie 并重载 —— 这是审核要求的验证方式。
-  await app.save({ mimoCookie: COOKIE_B })
+  // 同一实例内换 API Key 并重载 —— 这是审核要求的验证方式。
+  await app.save({ mimoApiKey: KEY_B })
 
   // 换完之后还没采集：旧身份的额度必须已经失效。
   // 通过「不采集直接查 context」观察：没有路由观察本来就不投放，
@@ -126,8 +126,8 @@ const originalMimo = mimo.fetch
   // [R4-03] 无成功基线时的 T1 现在是 `pending`（不提前报失败），这是正确语义；
   // 本条用例真正要证明的是「没有沿用旧身份 A 的数值」。
   check('R3-01b 换身份后不沿用旧值（无旧数值）',
-    entry.balance === undefined && entry.creditsTotal === undefined,
-    { status: entry.effectiveStatus, credits: entry.creditsTotal, balance: entry.balance })
+    entry.balance === undefined && entry.balance === undefined,
+    { status: entry.effectiveStatus, credits: entry.balance, balance: entry.balance })
   check('R3-01c 旧身份缓存未作为新身份缓存（不是 ok/cached 且无值）',
     entry.effectiveStatus === 'pending' || entry.effectiveStatus === 'failed', entry.effectiveStatus)
   app.close()
@@ -155,7 +155,7 @@ const originalMimo = mimo.fetch
     quotaPolicyEnabled: true,
     quotaFocusChannels: '["custom:kkkk00000001"]',
     quotaWarningBalanceThreshold: 10,
-    quotaClosingBalanceThreshold: 5,
+    quotaClosingBalanceThreshold: 5, quotaBalanceCurrency: 'CNY',
     quotaBalanceCurrency: 'CNY',
     quotaTrustRouteOrder: true,
   })
@@ -208,34 +208,34 @@ const originalMimo = mimo.fetch
 // 做法：第一次调用（工具）挂起，第二次（GUI）直接返回新值。
 // ===========================================================================
 {
-  const wb = PLANS_LIST.find((p) => p.id === 'workbuddy')
-  const originalWb = wb.fetch
+  const ds = PLANS_LIST.find((p) => p.id === 'deepseek')
+  const originalDs = ds.fetch
   let releaseTool = null
   const toolGate = new Promise((resolve) => { releaseTool = resolve })
   let call = 0
-  wb.fetch = async () => {
+  ds.fetch = async () => {
     call += 1
     if (call === 1) {
       // 工具入口的采集：挂起，等测试放行
       await toolGate
-      return { id: 'workbuddy', name: 'WorkBuddy', creditsTotal: 1 }
+      return { id: 'deepseek', name: 'DeepSeek', balance: 1 }
     }
-    return { id: 'workbuddy', name: 'WorkBuddy', creditsTotal: 9000 }
+    return { id: 'deepseek', name: 'DeepSeek', balance: 9000 }
   }
 
   const app = boot({
-    workbuddyEnabled: true,
+    deepseekEnabled: true,
     quotaPolicyEnabled: true,
-    quotaFocusChannels: '["workbuddy"]',
-    quotaWarningCreditsThreshold: 1000,
-    quotaClosingCreditsThreshold: 500,
+    quotaFocusChannels: '["deepseek"]',
+    quotaWarningBalanceThreshold: 1000,
+    quotaClosingBalanceThreshold: 500, quotaBalanceCurrency: 'CNY',
     quotaTrustRouteOrder: true,
   })
 
   // 用**真实工具**发起第一次采集（会挂起在 toolGate）。
   const { registerUsageTool } = await import('../plans/usage-tool-register.js')
   const toolHolder = {}
-  const toolBoot = boot({ workbuddyEnabled: true }, {})
+  const toolBoot = boot({ deepseekEnabled: true }, {})
   void toolBoot
   void registerUsageTool
 
@@ -243,25 +243,25 @@ const originalMimo = mimo.fetch
   const pendingGui = gui(app)
   await new Promise((r) => setTimeout(r, 20))
   const second = await gui(app)
-  check('R3-02a GUI 先完成并返回 9000', second.data.plans[0].creditsTotal === 9000,
-    second.data.plans[0].creditsTotal)
+  check('R3-02a GUI 先完成并返回 9000', second.data.plans[0].balance === 9000,
+    second.data.plans[0].balance)
 
   // 放行挂起的旧请求（它拿到 1）
   if (typeof releaseTool === 'function') releaseTool()
   const first = await pendingGui
   // A 收口：公开响应与有效观察必须同源，不能保留已经拒绝的旧成功1。
-  check('R3-02b 迟到GUI响应同样采用当前有效9000', first.data.plans[0].creditsTotal === 9000,
-    first.data.plans[0].creditsTotal)
+  check('R3-02b 迟到GUI响应同样采用当前有效9000', first.data.plans[0].balance === 9000,
+    first.data.plans[0].balance)
 
   // 再发一次失败采集，检查 Host 缓存是否被旧结果覆盖
-  wb.fetch = async () => ({ id: 'workbuddy', name: 'WorkBuddy', error: 'exec', transient: true })
+  ds.fetch = async () => ({ id: 'deepseek', name: 'DeepSeek', error: 'exec', transient: true })
   const third = await gui(app)
   check('R3-02c 迟到旧结果未覆盖新结果（缓存仍是 9000）',
-    third.data.plans[0].creditsTotal === 9000,
-    { status: third.data.plans[0].effectiveStatus, credits: third.data.plans[0].creditsTotal })
+    third.data.plans[0].balance === 9000,
+    { status: third.data.plans[0].effectiveStatus, credits: third.data.plans[0].balance })
   void toolHolder
   app.close()
-  wb.fetch = originalWb
+  ds.fetch = originalDs
 }
 
 // ===========================================================================// R3-04 — 混合 GUI 只查询自定义渠道一次
@@ -294,19 +294,19 @@ const originalMimo = mimo.fetch
 // ===========================================================================
 {
   // 直接验证协议字段存在：Host 在 cached 时补齐数值并打标记。
-  const wb = PLANS_LIST.find((p) => p.id === 'workbuddy')
-  const originalWb = wb.fetch
-  wb.fetch = async () => ({ id: 'workbuddy', name: 'WorkBuddy', creditsTotal: 321 })
-  const app = boot({ workbuddyEnabled: true })
+  const ds = PLANS_LIST.find((p) => p.id === 'deepseek')
+  const originalDs = ds.fetch
+  ds.fetch = async () => ({ id: 'deepseek', name: 'DeepSeek', balance: 321 })
+  const app = boot({ deepseekEnabled: true })
   await gui(app)
-  wb.fetch = async () => ({ id: 'workbuddy', name: 'WorkBuddy', error: 'exec', transient: true })
+  ds.fetch = async () => ({ id: 'deepseek', name: 'DeepSeek', error: 'exec', transient: true })
   const cached = await gui(app)
   const entry = cached.data.plans[0]
-  check('R3-03a cached 响应带 Host 缓存值', entry.creditsTotal === 321, entry.creditsTotal)
+  check('R3-03a cached 响应带 Host 缓存值', entry.balance === 321, entry.balance)
   check('R3-03b 带 balanceFromCache 标记', entry.balanceFromCache === true, entry.balanceFromCache)
   check('R3-03c 带原采样时间', typeof entry.staleSampledAt === 'number', entry.staleSampledAt)
   app.close()
-  wb.fetch = originalWb
+  ds.fetch = originalDs
 }
 
 // ===========================================================================

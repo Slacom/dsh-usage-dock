@@ -2,9 +2,8 @@
  * dsh-usage-dock 的 Host 半：注册 `GET /api/plan-usage`（并行拉取各渠道用量/余额）。
  *
  * 架构：每个渠道的取数/归一化逻辑独立封装在 plans/ 目录的模块里
- * （opencode-go、deepseek、codex、mimo、workbuddy、workbuddy-ai，以及 0.9.0 的
- * custom-balance 动态条目），plans/index.js 是注册表。本文件只负责 Config 声明、
- * 路由与通用编排。
+ * （opencode-go、deepseek、codex、mimo，以及 0.9.0 的 custom-balance 动态条目），
+ * plans/index.js 是注册表。本文件只负责 Config 声明、路由与通用编排。
  *
  * 配置：导出 `Config`（schemastery schema）交由 DSH 托管——DSH 会据此在
  * 「设置 → 插件」里**自动生成本插件的设置页**，并把改动持久化到 profile 的
@@ -26,20 +25,7 @@
 import { randomUUID, createHash } from 'node:crypto'
 import z from '@deepseek-ai/schemastery'
 import { PLANS, planSchemaFields, percentSemanticsOf } from './plans/index.js'
-import { parseMimoBalance, hasMimoApiKey } from './plans/mimo.js'
-import {
-  MIMO_LEGACY_RECORD_KEY,
-  buildLegacyRecord,
-  parseLegacyRecord,
-  replayLegacyBalance,
-} from './plans/mimo-legacy-store.js'
 import { peakPhaseAt, peakSegments } from './plans/peak-phase.js'
-/**
- * [2026-10-25 客户端 Key 端点] WorkBuddy 只读客户端积分接口 + 账号列表（固定"不支持"元数据）。
- * 旧的 `selectedAccountsFingerprint` 已不参与观察身份（无稳定账号 ID，筛选不再生效），
- * 但仍留在 plans/workbuddy.js 里供历史测试。
- */
-import { setWebBase, listWorkbuddyAccounts, GATEWAY_CREDITS_PATH, gatewayProviderIdOf } from './plans/workbuddy.js'
 import { execError, isSentinelApiKey } from './plans/util.js'
 import {
   customSchemaFields,
@@ -58,27 +44,52 @@ import {
   providerSourceFingerprint,
   credentialFingerprint,
 } from './plans/custom-balance.js'
-// [2026-11-11 Codex 双来源] 来源归一 / 启用探测 / 运行期身份 / 只读状态路由：
+// [2026-11-11 Codex 双来源] 来源归一 / 启用探测 / 只读状态路由：
 // 全部来自 `plans/codex-sources.js`（纯观察，零 I/O），与取数层共用同一套规则。
+//
+// [2026-11-23 Codex 只保留本插件 ChatGPT 账号登录] `connect` / `subscription` 两个来源**退场**：
+// 这里不再需要「运行期身份」（`crt=`）——两个第三方服务已经不参与取数，把它们拼进身份只会让
+// 无关的服务实例变化推进 epoch。`codexSourceOf` / `normalizeCodexSource` / 来源闭集常量仍保留：
+// 旧来源 wire 与作废行的兼容字段要用（客户端忽略，且不得再影响身份或取数）。
 import {
   codexSourceOf,
-  codexRuntimeIdentityOf,
   getCodexSourceState,
   normalizeCodexSource,
+  readCodexCredentialsService,
   CODEX_SOURCE_CONNECT,
   CODEX_SOURCE_SUBSCRIPTION,
+  CODEX_SOURCE_ACCOUNT,
 } from './plans/codex-sources.js'
+/**
+ * [2026-11-22 Codex 第三来源 `account`] 本插件**自持**的 ChatGPT 账号 OAuth。
+ *
+ * 分工（避免两处各写一套）：
+ *   - `plans/codex-sources.js` 只做「宿主凭据服务是否可用」的**纯观察**（不读记录内容）；
+ *   - `plans/codex-account.js` 负责私有凭据记录（`dsh-usage-dock/codex`，v2 多账户）、额度读取、
+ *     设备码登录状态机、账户选择/移除，以及**同步无 I/O** 的身份快照
+ *     （供 `identityOfChannel` 逐次求值）。
+ *
+ * [2026-11-23 多账户] 这里只用这几个导出：状态摘要 / 登录协调器 / 身份快照（同步）/ 刷新快照（异步）/
+ * 选择账户 / 移除账户。绝不 import token、端点，也不接受客户端传入的 URL / 账号 / token。
+ */
+import {
+  codexAccountState,
+  createCodexAccountLogin,
+  codexAccountIdentitySnapshot,
+  refreshCodexAccountIdentity,
+  selectCodexAccount,
+  removeCodexAccount,
+} from './plans/codex-account.js'
 import { registerUsageTool } from './plans/usage-tool-register.js'
 // [A01] `projectUsage` 是发布观察时把 wire 投影成白名单渠道的唯一入口。
 // 漏了这个导入会让**每一次成功采集**都抛 ReferenceError，被外层 catch 吞掉，
 // 于是提示词永远只剩「暂无额度数据」。`node --check` 抓不到未绑定的运行时名字。
-import { projectUsage, mimoWireWithDisplay } from './plans/usage-tool.js'
+import { projectUsage } from './plans/usage-tool.js'
 // [dsh-go 原生 strip] 会话路由 → 渠道 → ≤24 字文本（纯函数）。
 import { applySessionRouteEvent, providerToChannel, formatStripText } from './plans/strip.js'
 // [dsh-go 原生适配] 详情卡片 → App 原生面板（panels: session.tab / features）。
 import { registerDshGoSurface } from './plans/dsh-go-native.js'
 import { quotaPolicySchemaFields, parseFocusChannels } from './plans/usage-policy.js'
-// [0.11.4] MiMo 扫码登录已下线：不再引入 plans/mimo-auth（模块与测试留待后续清理轮删除）。
 import { createQuotaObserver, promoteOwnTicket } from './plans/quota-observer.js'
 import { createRouteObserver } from './plans/quota-route.js'
 import { buildQuotaView } from './plans/quota-view.js'
@@ -94,69 +105,15 @@ export const name = 'plan-usage'
  * 因此工具缓存**不收录**它们：宁可每次重取，也不拿旧账户余额回答新账户的问题。
  * 其余渠道（OpenCode / 自定义条目）的凭据就在配置里，可以按哈希隔离缓存。
  *
- * [2026-11-12 MiMo lane 对齐] **MiMo 也归入这里**：模型的 `usage_status` 现在优先读
- * `mimo-auth` 的显示快照（与胶囊同一条 lane），而那份数值来自**控制台会话 / 记住登录**
- * （`plans/mimo-auth/session-display.js` 的 `verified` 状态），不是配置里的 Cookie 原文。
- * 会话切换、记住登录失效、控制台侧换账号，都可能**不改配置**却换掉余额 —— 若仍按配置哈希
- * 缓存 30 秒，工具会把上一账号/上一会话的余额当成当前值回答。所以：不进缓存、不共享在途
- * 结果、也不冻结凭据（身份一致性改由 `identityOfChannel()` 的 `cookie=` 指纹 + 票据校验兜住，
- * 与 deepseek 等账号型渠道同一套机制）。
+ * [2026-11-24 MiMo 只走 API Key] **`mimo` 保留在本集合里**：它现在只用配置里的
+ * `mimoApiKey`（或「设置 → 模型」里的 MiMo Key），身份已由 `identityOfChannel()` 的
+ * `key=` 指纹覆盖。这里不把它移出去，是为了**不引入缓存语义的行为变更**（原先是会话型
+ * 渠道、不进缓存；现在仍按原样每次重取），清理轮只删扫码/记住登录代码，不改缓存策略。
  */
-/** 解析不到实际 provider id 时的兜底（与桌面端默认网关 id 一致）。 */
-const GATEWAY_PROVIDER_FALLBACK = 'workbuddy'
-const ACCOUNT_BOUND_PLAN_IDS = new Set(['deepseek', 'codex', 'workbuddy', 'workbuddy-ai', 'mimo'])
+const ACCOUNT_BOUND_PLAN_IDS = new Set(['deepseek', 'codex', 'mimo'])
 
 /** [D6-G] systemPrompt 段落的排序位：排在工具说明之后、SDK 之前。 */
 const POLICY_CONTEXT_ORDER = 300
-
-/**
- * [终审 F] legacy 余额的新鲜期：只认**真实采集时间**（`fetchedAt`），5 分钟后不再当新鲜值。
- */
-const LEGACY_BALANCE_FRESH_MS = 5 * 60_000
-
-/**
- * [终审 F] legacy 余额的**选择顺序**（纯函数，便于离线守门）。
- *
- * ① `done` 快照（当前进程里扫码登录完成的余额）只有在真实 `fetchedAt` 新鲜（≤5 分钟）时
- *    才有**优先权**；
- * ② 否则看凭据记录缓存 `record`，同样只按真实 `fetchedAt` 判新鲜；
- * ③ 都没有新鲜值 ⇒ `needsReplay:true`，由调用方限频触发一次重放并返回 null（读取中/缺失）。
- *
- * **过期/缺时间戳的 done 不得短路整条路径**——否则重放成功的新余额会被过期的 done
- * 快照永久挡住（终审 F 的真实故障）。
- *
- * @param {{done?: object|null, record?: object|null, now?: number}} input
- * @returns {{value: {balance:{balance:number,currency:string}, fetchedAt:number}|null, needsReplay:boolean}}
- */
-export function pickLegacyBalanceView(input) {
-  const src = input !== null && typeof input === 'object' ? input : {}
-  const now = typeof src.now === 'number' && Number.isFinite(src.now) ? src.now : Date.now()
-  const sampledAtOf = (entry) => {
-    if (entry === null || entry === undefined || typeof entry !== 'object') return null
-    const at = entry.fetchedAt
-    return typeof at === 'number' && Number.isFinite(at) && at > 0 ? at : null
-  }
-  const fresh = (sampledAt) => sampledAt !== null && now - sampledAt <= LEGACY_BALANCE_FRESH_MS
-  const valueOf = (entry, sampledAt) => ({
-    balance: { balance: entry.balance, currency: entry.currency },
-    fetchedAt: sampledAt,
-  })
-  const done = src.done !== null && src.done !== undefined && typeof src.done === 'object' ? src.done : null
-  if (done !== null) {
-    const sampledAt = sampledAtOf(done)
-    if (fresh(sampledAt) && typeof done.balance === 'number' && Number.isFinite(done.balance)) {
-      return { value: valueOf(done, sampledAt), needsReplay: false }
-    }
-  }
-  const record = src.record !== null && src.record !== undefined && typeof src.record === 'object' ? src.record : null
-  if (record !== null) {
-    const sampledAt = sampledAtOf(record)
-    if (fresh(sampledAt) && typeof record.balance === 'number' && Number.isFinite(record.balance)) {
-      return { value: valueOf(record, sampledAt), needsReplay: false }
-    }
-  }
-  return { value: null, needsReplay: true }
-}
 
 /** 只需要 Web 服务器；账号余额通过可选的 deepseekAccount 服务读取。 */
 export const inject = ['webServer']
@@ -168,9 +125,6 @@ export const Config = z.object(Object.assign(
   // [local patch 0.8.1] 渠道显示顺序（胶囊与详情面板共用）：渠道 id 的 JSON 数组，
   // 设置页用「上移/下移」按钮维护；未列出的渠道按注册表默认顺序排在后面。
   { planOrder: z.string().default('[]').volatile() },
-  // [dsh-go/MiMo 持久化] 扫码登录成功后把平台 cookie 存进 DSH 凭据记录，
-  // 重启引擎后重放余额接口，免去重新扫码。默认开启，可在设置页关闭（关闭即清除）。
-  { mimoRememberLogin: z.boolean().default(true).volatile() },
   planSchemaFields(),
   // [0.9.0] 自定义余额渠道（公开元数据 + 分离的 secret dict）。
   customSchemaFields(),
@@ -200,8 +154,8 @@ function cfgValue(cfg, key) {
  * [local patch 0.8.1] 每次请求时重读最新配置（读不到就用 apply 时的快照兜底）。
  *
  * 背景（已知限制的修复）：Host 半的 `config` 参数是**插件加载时**的快照，设置页
- * 保存（尤其 role('secret') 的 Cookie/Key）后运行时不热重载——用户填了小米 MiMo
- * Cookie 仍报 no-key 就是这个原因。configEditor 服务能同步读出该条目「inherited +
+ * 保存（尤其 role('secret') 的 Key）后运行时不热重载——用户填了 Key 仍报 no-key
+ * 就是这个原因。configEditor 服务能同步读出该条目「inherited +
  * profile override」的合成配置（与设置页同源），这里在每次 /api/plan-usage 请求时
  * 合并进工作副本；失败静默回退快照。
  *
@@ -378,79 +332,44 @@ export function apply(ctx, config) {
   const cfg = config != null && typeof config === 'object' ? config : {}
   const liveConfig = createLiveConfig(ctx, cfg)
 
+  /**
+   * [2026-11-22 Codex 第三来源 `account`] 启动时刷新一次账号身份快照。
+   *
+   * `identityOfChannel('codex')` 是**同步纯函数**，不能在里面异步读凭据记录，所以真实
+   * 登录态必须先落到 `plans/codex-account.js` 的模块级同步快照里。这里 fire-and-forget：
+   * 读不到（无凭据服务 / 读取抛错）只会让快照停在 `unknown`，绝不阻塞 apply，
+   * 也绝不把 apply 变成失败。配置重载、登录成功、退出成功会再次刷新。
+   */
+  refreshCodexAccountIdentity(ctx).catch(() => {})
+
   // [dsh-go 原生适配] 原生面板不依赖 webServer，先注册再决定是否启动 Web 半：
   //   - 只有装了 dsh-go 桥接的主机（手机本机引擎）才会执行 ctx.inject(['dshGo'])；
   //   - 面板视图是静态骨架 + 数据绑定，数据在面板打开时由下面的 collect 拉取；
   //   - 其它主机（含 dsh-go 插件检查器的隔离宿主）上 Web 半行为完全不变。
   const nativeCollectRef = { fn: null }
 
-  /**
-   * [0.11.2] Codex Subscription「本地适配」的原生入口（dsh-go 设置页）。
-   *
-   * 为什么放在 Host 半：补丁写入只能走 `plans/codex-subscription-patch.js`（目标包目录由模块
-   * 按自身位置推导，**不接受**任何客户端传入的路径/版本），App 只负责画按钮与回显固定文案。
-   *
-   * 状态口径（与网页设置页同一套语义，五态）：
-   *   - `hidden`      → 不渲染：未安装 / 未启用 / 已适配且服务可用 / 状态不可证明（fail-closed）；
-   *   - `appliable`   → 渲染「一键适配」按钮（已装版本有匹配清单，且本机文件与 baseSha 一致）；
-   *   - `pending`     → 文件已打好、但当前进程还没重启 ⇒ 只提示重启，**不给**按钮；
-   *   - `unsupported` → 版本无匹配清单（或文件与基线不符）⇒ 只给说明，**不给**按钮（Host 同样拒绝写入）。
-   *
-   * 纯只读：不读凭据、不联网、不写任何文件。
-   */
-  const codexAdaptStatusForNative = async () => {
-    let cfgNow = null
-    try { cfgNow = unpackConfig(await liveConfig()) } catch (err) { cfgNow = null }
-    const cfgSnapshot = cfgNow !== null && typeof cfgNow === 'object' ? cfgNow : {}
-    let state = null
-    try { state = getCodexSourceState(ctx, { cfg: cfgSnapshot }) } catch (err) { return { state: 'hidden' } }
-    if (state === null || state === undefined || state.unknown === true) return { state: 'hidden' }
-    const sources = Array.isArray(state.sources) ? state.sources : []
-    const subs = sources.find((item) => item !== null && item !== undefined && item.id === 'subscription')
-    // 未安装 / 未开启：界面统一显示「未启用」，不提供适配入口。
-    if (subs === undefined || subs.enabled !== true) return { state: 'hidden' }
-    // 服务已在且合同齐备（= 已适配、能读余额）：不显示按钮。
-    if (subs.compatible === true) return { state: 'hidden' }
-    try {
-      const mod = await import('./plans/codex-subscription-patch.js')
-      const patchState = mod.readPatchState(mod.resolvePackageDir())
-      const covered = typeof mod.coveredVersions === 'function' ? mod.coveredVersions() : []
-      const version = typeof patchState.version === 'string' ? patchState.version : null
-      const manifestVersion = typeof patchState.manifestVersion === 'string' ? patchState.manifestVersion : null
-      const base = { version, covered, manifestVersion, auto: patchState.auto === true, autoFromVersion: typeof patchState.autoFromVersion === 'string' ? patchState.autoFromVersion : null }
-      if (patchState.state === 'appliable') return Object.assign({ state: 'appliable' }, base)
-      if (patchState.state === 'patched') return Object.assign({ state: 'pending' }, base)
-      if (patchState.state === 'unsupported') return Object.assign({ state: 'unsupported' }, base)
-      return { state: 'hidden' }
-    } catch (err) {
-      // 读不到清单/读数失败：不猜，也不显示一个按了必然失败的按钮。
-      return { state: 'hidden' }
-    }
-  }
-
-  /**
-   * [0.11.2] 应用本地适配（与 POST 路由、CLI **同一实现**）：`wx` 备份 → 同目录临时文件 →
-   * 读回校验 → rename → 校验新哈希，失败不留半改文件。返回 `{ ok, applied, newSha, requiresRestart, code }`。
-   */
-  const applyCodexPatchOnce = async () => {
-    const mod = await import('./plans/codex-subscription-patch.js')
-    const baseDir = process.env.TEMP || process.env.TMPDIR || '.'
-    const sep = baseDir.indexOf('\\') >= 0 ? '\\' : '/'
-    const backupRoot = baseDir + (baseDir.endsWith(sep) ? '' : sep) + 'dsh-cs-patch-backup'
-    const out = mod.applyPatch(mod.resolvePackageDir(), { backupRoot })
-    return {
-      ok: true,
-      applied: out.applied === true,
-      backup: out.backup,
-      newSha: out.newSha,
-      requiresRestart: out.requiresRestart === true,
-    }
-  }
+  // [R3 2026-11-25] 这里原有 Codex「本地适配」的两个 Host 辅助函数（原生状态五态 + 一次性写补丁）
+  // 已随运行时写入口一起删除：网页版与原生设置页都已撤掉「一键适配」，Host 也不再向原生半传
+  // 那两个适配回调（原先的 deps 键已整条移除）。只读的 `GET …/patch-state` 与
+  // `plans/codex-subscription-patch.js` 仍保留（维护/诊断与 `tools/patch-codex-subscription.mjs` 用），
+  // 但运行时**没有任何写入口**。
 
   /** [dsh-go] 原生桥接是否可用：只有这种主机才需要「策略快照后台刷新」。 */
   let dshGoBridgeSeen = false
   /** [终审 D] 插件作用域是否已卸载：后台刷新 tick 在异步前后都要检查它。 */
   let applyDisposed = false
+  /**
+   * [2026-11-24 原生设置页 ChatGPT 账户] 交给原生半的**惰性**桥接对象（设计文档 §1）。
+   *
+   * 为什么必须惰性：`ctx.inject(['dshGo'])` 的回调可能在 `apply()` 走到 codex 路由注册之前
+   * 就触发，而桥接内部要用 `codexAccountStateWireOf` / `codexLoginWireOf` / `codexLogin` /
+   * `refreshAndInvalidateCodexAccountObservations`（都在本函数后半段才定义）。
+   * 因此这里先声明为 null，等 codex 账户路由注册完再赋值；原生半每次调用时才取。
+   *
+   * 检查器环境没有 `webServer`，`apply()` 会在 `if (ctx.webServer == null) return` 处提前
+   * 返回 —— 那里的 `codexAccountApi` 永远是 null，原生半据此只显示说明文案。
+   */
+  let codexAccountApi = null
   // 原生面板注册跟随桥接的插件作用域回收（官方示例 dsh-go-example-usage / -workbench /
   // -readaloud 也不额外包 ctx.effect）：自己再包一层清理，会让官方检查器在 dispose() 之后
   // 读到空注册表、误报「quota has no view file and no panel registration」。
@@ -472,9 +391,9 @@ export function apply(ctx, config) {
       try { policyRefreshStop() } catch (err) { /* 旧宿主 */ }
     },
     strip: (scope, emit, caps) => subscribeStrip(scope, emit, caps),
-    // [0.11.2] 原生设置页的「一键适配」：状态探测（只读）+ 应用（与网页版路由同一实现）。
-    codexAdapt: () => codexAdaptStatusForNative(),
-    codexAdaptApply: () => applyCodexPatchOnce(),
+    // [R3 2026-11-25] 不再传 Codex「一键适配」的两个回调：入口已下线，原生半也不读。
+    // [2026-11-24] 原生设置页「ChatGPT 账户」：惰性取桥接（路由注册之后才赋值，可能为 null）。
+    codexAccount: () => codexAccountApi,
     sessionChannelLabel: (sessionId, localeNow) => {
       if (typeof sessionId !== 'string' || sessionId.length === 0) return ''
       try {
@@ -485,7 +404,7 @@ export function apply(ctx, config) {
         const channel = channelForRoute(route, cfgNow)
         if (channel === null) return ''
         const names = {
-          'opencode-go': 'OpenCode Go', codex: 'Codex', deepseek: 'DeepSeek', mimo: 'MiMo', workbuddy: 'WorkBuddy',
+          'opencode-go': 'OpenCode Go', codex: 'Codex', deepseek: 'DeepSeek', mimo: 'MiMo',
         }
         const name = channel.custom === true
           ? (typeof channel.name === 'string' && channel.name.length > 0 ? channel.name : '自定义余额')
@@ -519,19 +438,13 @@ export function apply(ctx, config) {
       if (typeof liveConfig.invalidate === 'function') liveConfig.invalidate()
       /**
        * [终审 A/B/C] 设置页保存**不依赖**是否收到 `app-boot/config-reload`：
-       * 立即撤销 legacy 旧值、让 strip 进入同步遮蔽并作废旧缓存/在途结果，
-       * 然后重读配置再放行 strip 重新计算。
+       * 立即让 strip 进入同步遮蔽并作废旧缓存/在途结果，然后重读配置再放行 strip 重新计算。
        */
-      invalidateLegacyMimoState()
       markStripConfigDirty()
       void Promise.resolve().then(() => refreshQuotaCfg()).finally(() => {
         stripConfigPending = false
         notifyStripSubs()
       })
-      if (patch !== null && typeof patch === 'object' && Object.prototype.hasOwnProperty.call(patch, 'mimoRememberLogin')) {
-        if (patch.mimoRememberLogin === false) clearLegacyMimoRecord()
-        else void restoreLegacyMimo(true)
-      }
     },
     // 设置面板打开时订阅配置热重载，外部（网页版）改了配置也能立即回显。
     onConfigReload: (fn) => {
@@ -547,315 +460,6 @@ export function apply(ctx, config) {
   // dsh-go 插件检查器的隔离宿主没有 webServer（它不是完整的 DSH 组合环境）。
   // 原生面板已经注册，Web 路由 / 工具 / 观察器都依赖 webServer，不再在这里启动。
   if (ctx == null || ctx.webServer == null) return
-
-  // [MiMo G1] Optional owner-only auth capability; main plugin never hard-injects connection.
-  let mimoAuthStatus = { supported: false, code: 'E_MIMO_AUTH_UNAVAILABLE' }
-  /**
-   * [remembered 2026-11-07] 「记住登录」managed 模式的**启用闸门**：
-   * `global enabled && mimoEnabled`（默认 `!== false` 视为开）。
-   * 探测时机：Host 在配置事件（boot / config-reload）时**立即**调用本回调重新探测；
-   * 另有 ≤1s 的本地 probe 兜底（本地读，不走上游网络、不解密）。检测到 false 即
-   * 撤销在途操作（不是"0ms 可观察"——这里是"配置事件即时 + ≤1s 兜底"，如实表述）。
-   * 必须用 **freshStrict**（无 2 秒成功缓存）：`liveConfig()` 在 ≤1s 窗口内可能仍返回
-   * 旧的 `true`，那会违背 fail-closed。
-   * 代码级开关 `enableRememberedAccount` 在本仓库保持默认 false（现有本地保护），
-   * 由安装 overlay 在**本调用的 options 里**显式加 `enableRememberedAccount: true`。
-   */
-  /**
-   * [0.11.4] MiMo 扫码登录已下线：不再注册本机 auth 服务、不再监听登录成功回调。
-   * 保留 `mimoAuthHost = null`，让下游旧代码在「无桥接」时安全短路。
-   */
-  const mimoAuthHost = null
-
-  /**
-   * [2026-11-12 MiMo lane 对齐 · 第二层修正] **零 IO** 的显示快照 peek（与胶囊同一条 lane）。
-   *
-   * 三层来源，缺一不可：
-   *   ① `registerMimoAuth()` 的返回值**只有** `{ bootEpoch, dispose, getHost }` —— 真正的 host 是
-   *      `ctx.inject(['connection','webServer'], …)` 里**异步**创建、只存在于闭包 `child` 的，
-   *      必须经 `getHost()` 每次现读（inject 未完成时为 `null`，之后会自动接上）；
-   *   ② host 上优先用 `routeDisplay`：它才是**路由实际使用**的那份（managed「记住登录」模式 =
-   *      `remembered.displaySnapshot()`）；`display` 是旧 legacy manager，managed 下是 `absent`；
-   *   ③ 两者都缺 ⇒ `null`（=「不适用」，回落 provider）。
-   *
-   * 任何异常/缺失都退化成 `null`；`routeDisplay.peek()` 抛错**不**偷偷回退 legacy（保持批次 D 语义）。
-   * 只读消费，绝不用于变更动作（managed 下 start/read/grant/… 固定拒绝）。
-   */
-  // ---- [MiMo legacy 登录持久化] ----
-  /**
-   * 扫码登录成功后把**平台侧 cookie** 交给 DSH 凭据记录保管（`ctx.credentials`），
-   * 重启引擎后重放余额接口即可免扫码。记录落盘在 `$DSH_HOME/.credentials.yaml`
-   * （0600、原子写），不含账号密码/账号 cookie/上游原文。
-   */
-  const legacyRecordState = { checkedAt: 0, data: null, inFlight: null }
-  const credentialsService = () => {
-    try {
-      const service = ctx.get('credentials')
-      return service !== null && service !== undefined && typeof service.modifyRecord === 'function' ? service : null
-    } catch (err) {
-      return null
-    }
-  }
-  /** [终审 A] legacy 状态代次：配置变化 / 关闭 remember 时递增，让在途结果全部作废。 */
-  let legacyEpoch = 0
-  /** 记录重放的最小重试间隔（避免每次读显示都打上游）。 */
-  const LEGACY_RESTORE_RETRY_MS = 30_000
-  /**
-   * [终审 A｜legacy 闸门] 凭据读取 / 余额重放的**唯一**开关，四层全部满足才放行：
-   *   ① 本机存在 dsh-go 原生桥接（只有手机本机引擎才有这条 lane）；
-   *   ② 插件总开关 `enabled !== false`；
-   *   ③ MiMo 渠道开关 `mimoEnabled !== false`；
-   *   ④ `mimoRememberLogin !== false`。
-   * 任何一项不满足 ⇒ 零凭据读取、零上游重放；读配置失败按 fail-closed 处理。
-   */
-  const legacyMimoGate = async () => {
-    if (dshGoBridgeSeen !== true) return false
-    try {
-      const live = unpackConfig(await liveConfig())
-      if (cfgValue(live, 'enabled') === false) return false
-      if (cfgValue(live, 'mimoEnabled') === false) return false
-      return cfgValue(live, 'mimoRememberLogin') !== false
-    } catch (err) {
-      return false
-    }
-  }
-  /** 同步版闸门（显示路径不能 await）：只信已缓存的配置快照；缺快照时仅校验桥接。 */
-  const legacyMimoGateSync = () => {
-    if (dshGoBridgeSeen !== true) return false
-    const snapshot = quotaCfg
-    if (snapshot === null || typeof snapshot !== 'object') return true
-    if (cfgValue(snapshot, 'enabled') === false) return false
-    if (cfgValue(snapshot, 'mimoEnabled') === false) return false
-    return cfgValue(snapshot, 'mimoRememberLogin') !== false
-  }
-  /**
-   * [终审 A] 配置变化 / 关闭 remember 时**立即**撤销在途与旧值：
-   * 推进代次让在途任务的结果作废，并清掉展示缓存，避免停用后旧值继续显示。
-   */
-  const invalidateLegacyMimoState = () => {
-    legacyEpoch += 1
-    legacyRecordState.checkedAt = 0
-    legacyRecordState.data = null
-    legacyRecordState.inFlight = null
-  }
-  const persistLegacyMimoLogin = (payload) => {
-    const epoch = legacyEpoch
-    const stopped = () => epoch !== legacyEpoch || dshGoBridgeSeen !== true
-    void Promise.resolve().then(async () => {
-      try {
-        if (!(await legacyMimoGate())) return
-        if (stopped()) return
-        const record = buildLegacyRecord(payload)
-        if (record === null) return
-        // 记录新鲜度只信 buildLegacyRecord 给出的真实采样时间（payload.fetchedAt 缺失才用当前时间）。
-        const credentials = credentialsService()
-        if (credentials === null) return
-        if (stopped()) return
-        await credentials.modifyRecord(MIMO_LEGACY_RECORD_KEY, async () => ({ kind: 'grant', payload: record }))
-        if (stopped()) return
-        legacyRecordState.checkedAt = Date.now()
-        legacyRecordState.data = { balance: record.balance, currency: record.currency, fetchedAt: record.fetchedAt }
-      } catch (err) { /* 持久化失败不影响登录结果 */ }
-    })
-  }
-  const clearLegacyMimoRecord = () => {
-    // [终审 A] 关闭即撤销：清展示缓存 + 作废在途任务，再尽力删除凭据记录。
-    invalidateLegacyMimoState()
-    void Promise.resolve().then(async () => {
-      try {
-        const credentials = credentialsService()
-        if (credentials !== null && typeof credentials.deleteRecord === 'function') {
-          await credentials.deleteRecord(MIMO_LEGACY_RECORD_KEY)
-        }
-      } catch (err) { /* 删除失败下次仍会尝试 */ }
-    })
-  }
-  /** 读记录 → 重放余额接口；返回 `{balance,currency,fetchedAt}` 或 null。 */
-  const restoreLegacyMimo = (force) => {
-    // [终审 A] 触发时桥接就必须已存在：apply 早期（桥接尚未注入）的调用直接不排队，
-    // 否则等微任务跑到时桥接可能已就绪，会凭空打一次凭据读取。
-    if (dshGoBridgeSeen !== true) return Promise.resolve(null)
-    if (legacyRecordState.inFlight !== null) return legacyRecordState.inFlight
-    const epoch = legacyEpoch
-    const stopped = () => epoch !== legacyEpoch || dshGoBridgeSeen !== true
-    const task = Promise.resolve().then(async () => {
-      try {
-        if (!(await legacyMimoGate())) return null
-        if (stopped()) return null
-        // 只有**真实 fetchedAt** 新鲜时才复用缓存；checkedAt 只用于限制重放频率。
-        if (force !== true && legacyRecordState.data !== null) {
-          const sampledAt = typeof legacyRecordState.data.fetchedAt === 'number'
-            && Number.isFinite(legacyRecordState.data.fetchedAt) && legacyRecordState.data.fetchedAt > 0
-            ? legacyRecordState.data.fetchedAt
-            : null
-          if (sampledAt !== null && Date.now() - sampledAt < LEGACY_BALANCE_FRESH_MS) return legacyRecordState.data
-        }
-        const credentials = credentialsService()
-        if (credentials === null || typeof credentials.readRecord !== 'function') return null
-        let record
-        try { record = await credentials.readRecord(MIMO_LEGACY_RECORD_KEY) } catch (err) { record = undefined }
-        if (stopped()) return null
-        const parsed = parseLegacyRecord(record)
-        if (parsed === null) {
-          if (record !== undefined && record !== null && typeof credentials.deleteRecord === 'function') {
-            try { await credentials.deleteRecord(MIMO_LEGACY_RECORD_KEY) } catch (err) { /* 忽略 */ }
-          }
-          if (stopped()) return null
-          legacyRecordState.checkedAt = Date.now()
-          legacyRecordState.data = null
-          return null
-        }
-        const result = await replayLegacyBalance(parsed.cookie, { parseBalance: parseMimoBalance })
-        if (stopped()) return null
-        if (result.ok === true) {
-          const data = { balance: result.balance, currency: result.currency, fetchedAt: result.fetchedAt }
-          legacyRecordState.checkedAt = Date.now()
-          legacyRecordState.data = data
-          return data
-        }
-        if (result.reason === 'unauthorized' || result.reason === 'parse') {
-          if (typeof credentials.deleteRecord === 'function') {
-            try { await credentials.deleteRecord(MIMO_LEGACY_RECORD_KEY) } catch (err) { /* 忽略 */ }
-          }
-          legacyRecordState.checkedAt = Date.now()
-          legacyRecordState.data = null
-        }
-        return null
-      } catch (err) {
-        return null
-      } finally {
-        if (legacyRecordState.inFlight === task) legacyRecordState.inFlight = null
-      }
-    })
-    legacyRecordState.inFlight = task
-    return task
-  }
-
-  /** legacy 余额：优先当前进程内的登录会话，其次凭据记录重放（重启后免扫码）。 */
-  const legacyMimoBalance = () => {
-    /**
-     * [终审 A] 无桥 / 停用 / 关 remember：既不读凭据，也不把历史余额说成新鲜。
-     * 同步闸门只能读缓存的配置快照；配置重载时 `invalidateLegacyMimoState()` 已清空旧值。
-     */
-    if (!legacyMimoGateSync()) {
-      if (legacyRecordState.data !== null) invalidateLegacyMimoState()
-      return null
-    }
-    const triggerRestore = (force) => {
-      if (legacyRecordState.checkedAt !== 0 && Date.now() - legacyRecordState.checkedAt < LEGACY_RESTORE_RETRY_MS) return
-      void restoreLegacyMimo(force)
-    }
-    // ① 当前进程内的 done 快照：只有 host 给出**真实 fetchedAt** 时才参与选择；
-    //    过期/缺时间戳**只失去优先权**，不能短路后面的记录缓存（终审 F）。
-    let done = null
-    try {
-      const h = mimoAuthHost !== null && mimoAuthHost !== undefined && typeof mimoAuthHost.getHost === 'function'
-        ? mimoAuthHost.getHost()
-        : null
-      if (h !== null && h !== undefined && typeof h.legacyDoneBalance === 'function') {
-        const hit = h.legacyDoneBalance()
-        if (hit !== null && typeof hit === 'object') done = hit
-      }
-    } catch (err) { /* 下一步走记录 */ }
-    // ②/③ 统一由纯函数决定：done 新鲜 → 用它；否则记录缓存新鲜 → 用它；都没有 → 限频重放并返回 null。
-    const decision = pickLegacyBalanceView({ done, record: legacyRecordState.data, now: Date.now() })
-    if (decision.value !== null) return decision.value
-    if (decision.needsReplay) triggerRestore(true)
-    return null
-  }
-
-  const mimoDisplayPeek = () => {
-    try {
-      const h = mimoAuthHost !== null && mimoAuthHost !== undefined && typeof mimoAuthHost.getHost === 'function'
-        ? mimoAuthHost.getHost()
-        : null
-      if (h === null || h === undefined) return null
-      // routeDisplay/display 可能返回「缺席 DTO」（非 null 但不可用），
-      // 会挡住 legacy 兜底；只有真的能投影成 wire 的才直接返回。
-      // 本地轻量判定（与 mimoDisplayWire 的可用条件一致）：避免测试/离线环境依赖额外 import。
-      const usable = (candidate) => {
-        if (candidate === null || typeof candidate !== 'object' || Array.isArray(candidate)) return null
-        if (candidate.selected !== true || candidate.state !== 'verified') return null
-        const money = candidate.balance
-        if (money === null || typeof money !== 'object' || Array.isArray(money)) return null
-        if (typeof money.balance !== 'number' || !Number.isFinite(money.balance) || money.balance < 0) return null
-        return candidate
-      }
-      if (h.routeDisplay !== null && h.routeDisplay !== undefined && typeof h.routeDisplay.peek === 'function') {
-        const direct = usable(h.routeDisplay.peek())
-        if (direct !== null) return direct
-      }
-      if (h.display !== null && h.display !== undefined && typeof h.display.peek === 'function') {
-        const direct = usable(h.display.peek())
-        if (direct !== null) return direct
-      }
-      // [local 2026-11-15] legacy 扫码登录只把余额写进会话 manager，不会生成 display 快照；
-      // 用量面板会一直 `mimo:missing`。这里把 done 会话的余额投影成 display 形状，
-      // 让面板/策略/网页胶囊都能读到（只读、不带凭据）。
-      const legacy = legacyMimoBalance()
-      if (legacy === null) return null
-      return {
-        displaySupported: true,
-        selected: true,
-        state: 'verified',
-        balance: legacy.balance,
-        currency: legacy.balance.currency,
-        freshness: 'fresh',
-        fetchedAt: legacy.fetchedAt,
-        displayId: 'legacy-session',
-        generation: 1,
-        revision: 1,
-        code: 'E_NONE',
-        identity: null,
-        awaitingBalanceMatch: false,
-        confirmedByUser: true,
-        canStop: false,
-        managed: false,
-        readFailures: 0,
-        refreshCount: 0,
-        maxAutoRefresh: 0,
-      }
-    } catch (err) {
-      return null
-    }
-  }
-  const mimoDisplaySource = { peek: mimoDisplayPeek }
-
-  /**
-   * [2026-11-18 真机] **首次打开面板就显示 MiMo 余额**。
-   *
-   * 现象：面板第一次打开时 MiMo 显示「本次没有该渠道的数据」，再点一次刷新才有值。
-   * 原因：重启引擎后登录态只存在于凭据记录里，要先重放一次余额接口才拿得到快照（异步）；
-   * 面板首屏常常赶在这次重放之前求值 `peek()` → 无快照 → 判为缺失。
-   *
-   * 这里在取 MiMo 之前**等一下恢复**（`restoreLegacyMimo` 内部 single-flight + 5 分钟缓存），
-   * 最多等 3 秒；超时/失败按缺失处理，不拖住其它渠道。
-   */
-  /**
-   * [0.11.4] MiMo 只走 API Key 通道（扫码登录已下线）：不再等待或读取任何显示快照。
-   */
-  const mimoWireReady = async (providerCall) => providerCall()
-
-  /** [终审 E] MiMo 显示快照的来源身份（非密；采样前后各取一次，用于发现会话/代次漂移）。 */
-  const mimoDisplayIdentity = () => {
-    try {
-      const h = mimoAuthHost !== null && mimoAuthHost !== undefined && typeof mimoAuthHost.getHost === 'function'
-        ? mimoAuthHost.getHost()
-        : null
-      if (h === null || h === undefined) return ''
-      const snap = h.routeDisplay !== null && h.routeDisplay !== undefined && typeof h.routeDisplay.peek === 'function'
-        ? h.routeDisplay.peek()
-        : (h.display !== null && h.display !== undefined && typeof h.display.peek === 'function' ? h.display.peek() : null)
-      if (snap === null || typeof snap !== 'object') return ''
-      const parts = []
-      if (typeof snap.displayId === 'string' && snap.displayId.length > 0) parts.push(snap.displayId)
-      if (typeof snap.generation === 'number' && Number.isFinite(snap.generation)) parts.push('g' + snap.generation)
-      if (typeof snap.revision === 'number' && Number.isFinite(snap.revision)) parts.push('r' + snap.revision)
-      return parts.length > 0 ? '|disp=' + parts.join('.') : ''
-    } catch (err) {
-      return ''
-    }
-  }
 
   /**
    * [dsh-go 原生适配] 原生面板取数：与 Web 路由共用 provider / 配置热读 / 自定义渠道路径，
@@ -874,18 +478,19 @@ export function apply(ctx, config) {
      * 现在：
      *   - 采样**之前**把共享配置缓存对齐到本次采样用的配置，并逐渠道记录 `identityBefore`；
      *   - 采样**之后**再算一次 `identityAfter`（按当时的真实缓存，**不再回写旧 cfg**）；
-     *   - 只有两者相等、且（MiMo）显示快照身份也相等时，才把 `identity` 附到该条 wire；
+     *   - 只有两者相等时，才把 `identity` 附到该条 wire；
      *     不等 ⇒ 不带 identity（原生半按「不复用旧值」处理）。
+     *
+     * [2026-11-24 MiMo 只走 API Key] MiMo 已没有「显示快照」这条 lane：它的身份就是
+     * `identityOfChannel('mimo')` 的 `key=` 指纹，因此不再需要采样前后的 display 身份复核。
      */
     try { quotaCfg = cfgSnapshot } catch (err) { /* 只读缓存 */ }
     const identityBefore = new Map()
-    const displayBefore = new Map()
     const captureIdentityBefore = (id) => {
       if (typeof id !== 'string' || id.length === 0) return
       let value = null
       try { value = identityOfChannel(id) } catch (err) { value = null }
       identityBefore.set(id, typeof value === 'string' && value.length > 0 ? value : null)
-      if (id === 'mimo') displayBefore.set(id, mimoDisplayIdentity())
     }
     const enabledPlans = PLANS.filter((plan) => cfgSnapshot[plan.fields.enabled] !== false)
     for (const plan of enabledPlans) captureIdentityBefore(plan.id)
@@ -897,9 +502,7 @@ export function apply(ctx, config) {
     let shell
     try { shell = ctx.get('shell') } catch (err) { shell = undefined }
     const builtIn = await Promise.all(enabledPlans.map((plan) => Promise.resolve()
-      .then(() => (plan.id === 'mimo'
-        ? mimoWireReady(() => plan.fetch(ctx, shell, cfgSnapshot))
-        : plan.fetch(ctx, shell, cfgSnapshot)))
+      .then(() => plan.fetch(ctx, shell, cfgSnapshot))
       .catch(() => withConfiguredCodexSource(execError(plan), cfgSnapshot))))
     let custom = []
     try {
@@ -921,10 +524,8 @@ export function apply(ctx, config) {
       let after = null
       try { after = identityOfChannel(id) } catch (err) { after = null }
       const sameChannelIdentity = typeof before === 'string' && before.length > 0 && before === after
-      const displayAfter = id === 'mimo' ? mimoDisplayIdentity() : ''
-      const sameDisplayIdentity = id !== 'mimo' || displayAfter === (displayBefore.get(id) || '')
-      if (sameChannelIdentity && sameDisplayIdentity) {
-        nativeWires.push(Object.assign({}, wire, { identity: after + displayAfter }))
+      if (sameChannelIdentity) {
+        nativeWires.push(Object.assign({}, wire, { identity: after }))
       } else {
         // 采样期间身份发生漂移：不带 identity（原生半按「不复用旧值」处理）。
         nativeWires.push(Object.assign({}, wire))
@@ -935,7 +536,6 @@ export function apply(ctx, config) {
 
   // [额度自动感知] 观察容器与路由观察器提升到 apply 作用域：
   // **GUI 路由与模型工具共用同一份状态与失败计数**（交接文档 §3.1）。
-  void restoreLegacyMimo()
 
   const quotaObserver = createQuotaObserver()
   const routeObserver = createRouteObserver({
@@ -1027,8 +627,8 @@ export function apply(ctx, config) {
    *
    * 为什么不能用全局配置摘要：`configDigestOf` 只折叠自定义条目的公开身份，
    * 用它 + id 冒充「每条渠道的身份」会导致两个方向的错误：
-   *   1. **漏失效**：改 MiMo Cookie / 内置 Key 身份不变 → 旧余额继续驱动收尾；
-   *   2. **误失效**：只改某个自定义条目的 Key，所有渠道（含 WorkBuddy）都被清空。
+   *   1. **漏失效**：改内置渠道的 Key 身份不变 → 旧余额继续驱动收尾；
+   *   2. **误失效**：只改某个自定义条目的 Key，其它渠道（含内置渠道）都被清空。
    *
    * 因此这里逐渠道取**该渠道自己的**公开配置字段，只对具备 secret 的字段取
    * 长度与首尾字符的不可逆指纹（绝不保留原文），并拼上该条目的公开修订号。
@@ -1128,8 +728,8 @@ export function apply(ctx, config) {
   }
   const operationMayProceed = (id, ticket, seq) => isCurrentOp(id, seq) || liveSourceTicket(id, ticket)
 
-  // [R6-02] 账号选择指纹来自 `plans/workbuddy.js`（纯函数，可单测）——
-  // 避免这里再写一份，两边规则漂移。
+  // [R6-02] 逐渠道观察身份：内置渠道只看启用状态与自己的凭据指纹，
+  // 特殊来源（Codex 账号快照 / 自定义条目）由下方各自的分支补齐。
   const identityOfChannel = (id) => {
     const cfgNow = quotaCfg
     if (cfgNow === null || cfgNow === undefined) return ''
@@ -1142,63 +742,21 @@ export function apply(ctx, config) {
         if (typeof plan.fields.apiKey === 'string') {
           parts.push('key=' + secretFingerprint(cfgNow[plan.fields.apiKey]))
         }
-        if (typeof plan.fields.cookie === 'string') {
-          parts.push('cookie=' + secretFingerprint(cfgNow[plan.fields.cookie]))
-        }
         /**
-         * [R6-02] 内置 WorkBuddy 的**有效来源**必须进入观察身份。
+         * [2026-11-23 Codex 只保留本插件 ChatGPT 账号登录] 身份**只**拼账号快照 `acct=`。
          *
-         * 它的 Key 不在 `plan.fields` 里，而是来自「设置 → 模型」的 provider 配置，
-         * 所以上面那两行覆盖不到。结果：换账号选择、换模型主机/引用、甚至把该
-         * provider 从模型配置里删掉，Host 观察身份都不变 → epoch 不推进 →
-         * 继续用旧积分收尾。
+         * 旧的 `csrc=`（来源枚举）/ `crt=`（两个第三方服务的实例+修订摘要）已删除：
+         * `connect` / `subscription` 退场后，取数只经过本插件自持的 ChatGPT token，
+         * 把第三方服务的实例变化拼进身份会让无关的服务重装/热重载推进 epoch。
          *
-         * 这里纳入两项（都只做**不可逆摘要**，不把账号 uid 或 Key 明文外泄）：
-         *   1. 真实有效模型来源（origin + baseURL + 引用名）；
-         *   2. 规范化后的账号选择（排序后拼接，顺序无关）。
-         *
-         * 凭据指纹**不**放进身份：它在 begin 之后才采样到，放进来会让首次采集
-         * 自废票据（与 R6-01 同一个坑）。凭据轮换改由
-         * `recordSampledCredential()` 的「已知 A → 已知 B」分支撤销投影与在途票据。
-         */
-        if (id === 'workbuddy') {
-          /**
-           * [2026-10-25 客户端 Key 端点] 端点从管理员 `/status` 换成客户端 `/v1/credits`，
-           * 并把**统计范围 cn** 显式写进身份。
-           *
-           * 不再拼 `acct=`：新端点没有稳定账号 ID，`workbuddyAccounts` 已不生效，
-           * 若继续把它放进身份，等于向观察链暗示"仍在按账号筛选"。
-           */
-          // [0.11.1] 指纹按**实际解析出的** provider id 算：手机端网关 id 是自定义来源
-          // （如 `custom-workbuddy`），写死 'workbuddy' 会让来源变化在身份里看不出来。
-          const resolvedGateway = (() => {
-            try {
-              const hit = gatewayProviderIdOf(ctx, cfgValue(cfgNow, 'workbuddyProvider'))
-              return hit !== null && hit !== undefined && hit.ok === true ? hit.provider : GATEWAY_PROVIDER_FALLBACK
-            } catch (err) {
-              return GATEWAY_PROVIDER_FALLBACK
-            }
-          })()
-          const src = providerSourceFingerprint(ctx, resolvedGateway, GATEWAY_CREDITS_PATH)
-          parts.push('src=' + src)
-          parts.push('scope=' + 'cn')
-        }
-        /**
-         * [2026-11-11 Codex 双来源] 选中来源 + **实际可用服务**的实例/修订摘要。
-         *
-         * 为什么必须进身份：codex 的两条来源读的是**完全不同的**第三方通道
-         * （旧 Connect 公开 SDK / 新的只读 service）。切来源、来源被停用（服务消失）、
-         * 服务被替换（重装/热重载）、订阅账号被切换（revision 前进）—— 这些都不改变
-         * 上面的 `on=` 开关，若不进身份，epoch 不会推进，旧来源的采样会继续驱动
-         * 胶囊与提示词（用户看到的「Connect 数值冒充 Subscription」）。
-         *
-         * 只拼**不可逆的本地摘要**（来源枚举 + `c<0|1|?>/s<实例序号@revision|0|?>`）：
-         * 不含账号 ID、不含记录路径、不含令牌；序号来自本进程的 WeakMap，
-         * 仅用于区分「还是不是同一个 service 对象」。
+         * 快照本身是**不可逆摘要**（`acct:<账号哈希>@<账户id前8位>r<修订号>` / `none` /
+         * `unknown`），**同步、零 I/O**（`identityOfChannel` 不能异步读记录），
+         * 也不含 token / 明文账号 / 记录路径。登录成功、**切换账户**、移除账户都由
+         * `plans/codex-account.js` 在写操作内部同步更新它，紧随其后的
+         * `invalidateCodexAccountObservations()` 再推进 epoch。
          */
         if (id === 'codex') {
-          parts.push('csrc=' + codexSourceOf(cfgNow))
-          parts.push('crt=' + codexRuntimeIdentityOf(ctx))
+          parts.push('acct=' + codexAccountIdentitySnapshot())
         }
       } else {
         /**
@@ -1425,7 +983,14 @@ export function apply(ctx, config) {
      * 上凭空造这个字段，也不写 `undefined`（那会污染闭集判断）。
      */
     const revokedRawSource = typeof wire.codexSource === 'string' ? wire.codexSource.trim().toLowerCase() : ''
-    if (revokedRawSource === CODEX_SOURCE_CONNECT || revokedRawSource === CODEX_SOURCE_SUBSCRIPTION) {
+    /**
+     * [2026-11-22 第三来源 `account`] 闭集必须包含 `account`。
+     *
+     * 否则 account 态下这条作废行丢掉 `codexSource` → 客户端按默认 `connect` 处理 →
+     * 与已保存来源不符而被**整行过滤**（用户看不到「本次采集已作废」，只看到整行消失）。
+     */
+    if (revokedRawSource === CODEX_SOURCE_CONNECT || revokedRawSource === CODEX_SOURCE_SUBSCRIPTION
+      || revokedRawSource === CODEX_SOURCE_ACCOUNT) {
       revoked.codexSource = normalizeCodexSource(revokedRawSource)
     }
     revokedResponses.add(revoked)
@@ -1507,7 +1072,7 @@ export function apply(ctx, config) {
             wire.windows = cachedChannel.windows
             wire.balanceFromCache = true
           }
-          // 积分类渠道（WorkBuddy）：数值经 creditsTotal 走 wire，这里补回。
+          // 积分类渠道：数值经 creditsTotal 走 wire，这里补回。
           if (wire.creditsTotal === undefined && typeof cachedChannel.balance === 'number'
             && cachedChannel.unit === 'credits') {
             wire.creditsTotal = cachedChannel.balance
@@ -1663,9 +1228,7 @@ export function apply(ctx, config) {
           ticket = quotaObserver.begin({ id: plan.id, identity: identityOfChannel(plan.id) })
           ownTicket(plan.id, ticket, opSeq)
           pendingTickets.set(plan.id, ticket)
-          const wire = await (plan.id === 'mimo'
-            ? mimoWireReady(() => plan.fetch(ctx, shell, cfgNow))
-            : plan.fetch(ctx, shell, cfgNow))
+          const wire = await plan.fetch(ctx, shell, cfgNow)
           // provider 返回后再复检：卸载 / 桥退出 / 配置停用的迟到结果不得再发布。
           if (applyDisposed || policyRefreshStopped || dshGoBridgeSeen !== true) return
           publishObservation(wire, ticket)
@@ -1951,9 +1514,7 @@ export function apply(ctx, config) {
             pendingTickets.set(id, ticket)
             stripTicket = ticket
             try {
-              wire = await (id === 'mimo'
-                ? mimoWireReady(() => plan.fetch(ctx, shell, cfgNow))
-                : plan.fetch(ctx, shell, cfgNow))
+              wire = await plan.fetch(ctx, shell, cfgNow)
             } catch (err) {
               wire = withConfiguredCodexSource(execError(plan), cfgNow)
             }
@@ -2123,6 +1684,75 @@ export function apply(ctx, config) {
     }
   } catch (err) { /* 旧宿主没有事件总线：strip 靠 backfill + 定时重算 */ }
 
+  /**
+   * [2026-11-22 Codex 第三来源 `account`] 登录 / 退出 / **切换账户** / **移除账户** 后的观察作废。
+   *
+   * 为什么必须显式作废：account 的额度来自本插件自持的 ChatGPT token。换账号（同一账号
+   * 重登录也会换新 `credentialId`）、切换 active 账户、移除账户、退出、过期后重登
+   * **都不修改配置文件**，因此不会触发 `app-boot/config-reload`。若不作废，旧账号的额度会
+   * 继续驱动胶囊 / 提示词 / strip / 原生面板。
+   *
+   * @param {{snapshotFresh?:boolean}} [options]
+   *   `snapshotFresh:true` = 调用方**刚刚**在模块里做过写操作（登录落库 / 选择 / 移除 / 刷新），
+   *   模块内的 `setIdentityFrom()` 已经把同步快照更新成新账户，因此这里不必再异步读一次记录。
+   *   缺省（启动 / 配置重载等「只是可能变了」的场景）走 fire-and-forget 刷新。
+   *
+   * 边界：只动 `codex` 一个渠道 —— 不删任何记录、不清别的渠道、不碰 DSH 或第三方凭据。
+   */
+  const invalidateCodexAccountObservations = (options) => {
+    const opts = options !== null && options !== undefined && typeof options === 'object' ? options : {}
+    // 先刷新同步快照：身份字符串里的 `acct=` 必须**立刻**变成新账号（否则 epoch 推了也没用）。
+    if (opts.snapshotFresh !== true) refreshCodexAccountIdentity(ctx).catch(() => {})
+    // 推进 epoch：在途结果即使回来也会被身份/epoch 校验拒绝，写不回投影。
+    try { quotaObserver.bumpEpoch('codex') } catch (err) { /* 观察器可能已清理 */ }
+    try { channelProjection.delete('codex') } catch (err) { /* 同上 */ }
+    try { channelMeta.delete('codex') } catch (err) { /* 同上 */ }
+    try { channelIdentity.delete('codex') } catch (err) { /* 同上 */ }
+    /**
+     * strip 缓存键是 `渠道id|身份`：只清 `codex|` 前缀。
+     * 不用 `invalidateStripCaches()`（那会 +stripEpoch 并清空**所有**渠道的 30 秒缓存）。
+     */
+    try {
+      for (const key of Array.from(stripCache.keys())) {
+        if (typeof key === 'string' && key.startsWith('codex|')) stripCache.delete(key)
+      }
+    } catch (err) { /* 缓存表已不可用 */ }
+  }
+
+  /**
+   * [2026-11-23 多账户] 先 **await** 刷新身份快照，再作废观察。
+   *
+   * 用在路由里：选择/移除账户成功后，epoch 推进的那一刻身份必须已经是新账户 —— 否则
+   * 在 `refreshCodexAccountIdentity()` 的异步读记录落地之前，任何在途结果都可能被当成
+   * 「同一身份」而写回投影。读失败（记录被并发删掉 / 无凭据服务）只会让快照停在
+   * `unknown`，仍然要作废旧观察。
+   */
+  const refreshAndInvalidateCodexAccountObservations = async () => {
+    try { await refreshCodexAccountIdentity(ctx) } catch (err) { /* 快照停在 unknown，继续作废 */ }
+    invalidateCodexAccountObservations({ snapshotFresh: true })
+  }
+
+  /**
+   * Codex 设备码登录协调器（每个 apply 一个实例，随插件卸载 dispose）。
+   *
+   * 放在这里的原因：它要用 `quotaObserver` / `channelProjection` / `channelMeta` /
+   * `channelIdentity` / `stripCache` / `identityOfChannel` —— 这些都已定义。
+   * 端点、client id、轮询节奏、记录格式全部固化在 `plans/codex-account.js` 内，
+   * 这里**不传**任何 URL / 账号 / token，也不把设备码或 token 写进日志。
+   */
+  const codexLogin = createCodexAccountLogin(ctx, {
+    /**
+     * 回调里只有可展示信息（账号标签 / 到期时间 / 修订号），不含 token。
+     *
+     * [2026-11-23 多账户] 登录落库是模块内的写操作，`defaultSaveCredential()` 已经把同步身份
+     * 快照更新成**新登录的账户**（它会成为新的 active），所以这里只需推进 epoch。
+     */
+    onAuthorized: () => { invalidateCodexAccountObservations({ snapshotFresh: true }) },
+  })
+  try {
+    ctx.effect(() => () => { try { codexLogin.dispose() } catch (err) { /* 已清理 */ } })
+  } catch (err) { /* 无 effect 能力时退化为进程生命周期 */ }
+
   // ---- 动态 context：每次请求（含同 step 重试）重新求值 ----
   let quotaContextDispose = null
   /**
@@ -2209,16 +1839,24 @@ export function apply(ctx, config) {
       ctx.on('app-boot/config-reload', () => {
         if (typeof liveConfig.invalidate === 'function') liveConfig.invalidate()
         /**
-         * [终审 A/B/C] 配置一变：legacy 立即失效（不把停用前的余额说成新鲜），
-         * strip 进入同步遮蔽并作废旧缓存/在途结果；配置重读完成后再放行重新计算。
+         * [终审 A/B/C] 配置一变：strip 进入同步遮蔽并作废旧缓存/在途结果；
+         * 配置重读完成后再放行重新计算。
          */
-        invalidateLegacyMimoState()
         markStripConfigDirty()
-        if (dshGoBridgeSeen) void restoreLegacyMimo(true)
-        void Promise.resolve().then(() => refreshQuotaCfg()).finally(() => {
-          stripConfigPending = false
-          notifyStripSubs()
-        })
+        /**
+         * [2026-11-22 Codex 第三来源 `account`] 重载时先刷新账号身份快照，再重算策略快照。
+         *
+         * 顺序是有意的：`reconcileIdentities()` 比较的是 `identityOfChannel()` 的**同步**
+         * 结果，若快照还没刷新就先重算，会拿旧 `acct=` 与旧配置做比较，
+         * 换来源/换账号要等到下一次路由入口才生效。两步都失败也继续（保持上一份）。
+         */
+        void Promise.resolve()
+          .then(() => refreshCodexAccountIdentity(ctx).catch(() => {}))
+          .then(() => refreshQuotaCfg())
+          .finally(() => {
+            stripConfigPending = false
+            notifyStripSubs()
+          })
       })
     }
   } catch (err) { /* 旧宿主没有事件总线 */ }
@@ -2241,18 +1879,6 @@ export function apply(ctx, config) {
       })
     }
   } catch (err) { /* 无 effect 能力时退化为进程生命周期 */ }
-
-  // [local patch 0.8.1] WorkBuddy 渠道借用 dsh-workbuddy-connect 的同源 status
-  // 端点（仅回环请求可信），把本插件 web 服务的回环地址注入给它。
-  // webServer.port 是官方公开属性（端口 0 时为 OS 分配后的实际监听端口）。
-  try {
-    const port = ctx.webServer != null ? ctx.webServer.port : undefined
-    if (typeof port === 'number' && port > 0) {
-      setWebBase('http://127.0.0.1:' + String(port))
-    }
-  } catch (err) {
-    // 注入失败时 WorkBuddy 渠道会在取数时给出可读错误，不影响其他渠道。
-  }
 
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
@@ -2345,7 +1971,7 @@ export function apply(ctx, config) {
         customOnly = customOnly.map(guiObservationWire)
         // [A04] 仅自定义分支同样要附统一状态（与主分支一致）。
         attachEffectiveStatus(customOnly)
-        json(res, 200, { ok: true, data: { plans: customOnly, cfg: proof, mimoAuth: mimoAuthStatus, quotaContext: quotaContextView() } })
+        json(res, 200, { ok: true, data: { plans: customOnly, cfg: proof, quotaContext: quotaContextView() } })
         return
       }
       // shell 服务只用于 Python/curl 兜底后端；原生 fetch 后端（0.6.2 起首选）
@@ -2367,14 +1993,8 @@ export function apply(ctx, config) {
         ownTicket(plan.id, ticket, opSeq)
         pendingTickets.set(plan.id, ticket)
         return Promise.resolve()
-          /**
-           * [0.10.0 N1] GUI 路由与 `usage_status` 用**同一套** MiMo 分流：
-           * 显示快照适用（routeDisplay/display 给得出值）时零请求、直接用快照；
-           * 不适用时回落 provider。复用同一个 helper，不复制分支、不加新请求。
-           */
-          .then(() => (plan.id === 'mimo'
-            ? mimoWireReady(() => plan.fetch(ctx, shell, cfgNow))
-            : plan.fetch(ctx, shell, cfgNow)))
+          // MiMo 与其它内置渠道一样走普通 provider wire（只认 API Key，无显示快照分流）。
+          .then(() => plan.fetch(ctx, shell, cfgNow))
           .then((wire) => ({ wire, ticket }))
           .catch(() => ({ wire: withConfiguredCodexSource(execError(plan), cfgNow), ticket }))
       }))
@@ -2386,7 +2006,7 @@ export function apply(ctx, config) {
        * [顺序修复 2026-10-20 第三次] **全局混排**：内置与自定义共用同一 `planOrder`。
        *
        * 审核指出 `builtIn.concat(orderedCustom)` 从设计上就禁止跨组移动：
-       * 用户要求 OpenRouter 能移到 Codex / WorkBuddy 之前，分组 concat 做不到。
+       * 用户要求 OpenRouter 这类自定义渠道能排到内置渠道之前，分组 concat 做不到。
        *
        * 现在按 `planOrder` 对**完整列表**排序，未列入的按原相对顺序追加。
        */
@@ -2402,6 +2022,38 @@ export function apply(ctx, config) {
         try { publishObservation(wire, ticket) } catch (err) { /* 观察失败不影响路由 */ }
       }
       plans = plans.map(guiObservationWire)
+      /**
+       * [R2 代次] 给 Codex 条目附**与本批采集票据匹配**的脱敏代次。
+       *
+       * 目的：让客户端能区分「这是最新一次采集的结果」与「上一次账户/配置的代次」，
+       * 从而在账户切换后立即作废旧显示、缓存回退与**迟到响应**（迟到 A 不能覆盖 B）。
+       *
+       * 规则：
+       *   - `codexGeneration` = sha256(`codex-gen|<ticket.identity>|<ticket.epoch>`) 前 16 位，
+       *     只做不透明标识，**不是**账号 id、不渲染、不写日志；
+       *   - `codexGenerationOrder` = `ticket.epoch`（**不是** `ticket.seq`：seq 每轮都变，
+       *     用它会让「同一代次内的短期失败」也被判成换代而无法灰显缓存）；
+       *   - 必须用**该 plan 采集时**那张票：迟到 A 的响应保留 A 的旧 order，
+       *     客户端据此忽略它。绝不用响应时的当前身份重签。
+       *   - 没有票据（旧路径 / 非内置批次）就不加字段，客户端按老行为处理。
+       */
+      const codexTicketOfBatch = (() => {
+        for (const pair of builtInPairs) {
+          if (pair === null || pair === undefined) continue
+          if (pair.ticket !== null && pair.ticket !== undefined && pair.ticket.id === 'codex') return pair.ticket
+        }
+        return null
+      })()
+      if (codexTicketOfBatch !== null && typeof codexTicketOfBatch.epoch === 'number'
+        && Number.isFinite(codexTicketOfBatch.epoch)) {
+        for (const plan of plans) {
+          if (plan === null || plan === undefined || typeof plan !== 'object' || plan.id !== 'codex') continue
+          plan.codexGeneration = createHash('sha256')
+            .update('codex-gen|' + codexTicketOfBatch.identity + '|' + String(codexTicketOfBatch.epoch))
+            .digest('hex').slice(0, 16)
+          plan.codexGenerationOrder = codexTicketOfBatch.epoch
+        }
+      }
       // [A04] 把 Host 的统一状态附到每个条目上，客户端**只消费**、不再自己计数。
       attachEffectiveStatus(plans)
       // [local patch 0.8.0/0.8.1] DeepSeek 峰谷计价相位与段序列（时间条渲染用）。
@@ -2424,7 +2076,7 @@ export function apply(ctx, config) {
           if (segs !== null && segs.length > 0) plan.peakSegs = segs
         }
       }
-      json(res, 200, { ok: true, data: { plans, cfg: proof, mimoAuth: mimoAuthStatus, quotaContext: quotaContextView() } })
+      json(res, 200, { ok: true, data: { plans, cfg: proof, quotaContext: quotaContextView() } })
     },
   }), 'plan-usage: usage route')
 
@@ -2484,31 +2136,6 @@ export function apply(ctx, config) {
   }), 'plan-usage: custom status route')
 
   /**
-   * [2026-10-25 客户端 Key 端点] WorkBuddy 账号列表路由：**保留兼容，但已不支持筛选**。
-   *
-   * 新客户端接口没有稳定账号 ID，`listWorkbuddyAccounts` 现在只返回固定元数据
-   * （`supported:false` + 说明），**零凭据解析、零网关请求、零缓存**；
-   * 设置页也已不再调用本路由（避免旧 404/401 反复探测）。
-   */
-  ctx.effect(() => ctx.webServer.register({
-    kind: 'exact',
-    path: '/api/plan-usage/workbuddy-accounts',
-    handler: async (req, res) => {
-      if (req.method !== 'GET') {
-        json(res, 405, { ok: false, error: 'method', message: 'method not allowed' })
-        return
-      }
-      try {
-        const result = await listWorkbuddyAccounts(ctx)
-        json(res, 200, { ok: true, data: result })
-      } catch (err) {
-        json(res, 200, { ok: false, error: 'status', message: '无法读取 WorkBuddy 账号列表' })
-      }
-    },
-  }), 'plan-usage: workbuddy accounts route')
-
-
-  /**
    * [2026-11-11 Codex 双来源] 只读的**来源状态**查询（设置页两行来源用）。
    *
    * 合同（闭集，客户端按此渲染，多一个字段都不给）：
@@ -2527,18 +2154,20 @@ export function apply(ctx, config) {
    *   - GET-only，只读，不落任何状态。
    */
   /**
-   * [0.10.2] Codex Subscription「一键应用本地适配」。
+   * [0.10.2 / R3 2026-11-25] Codex Subscription 补丁状态（**只剩只读**）。
    *
-   * 两条路由都**不接受任何参数**：目标包目录由 `plans/codex-subscription-patch.js` 按自身位置推导，
-   * 客户端无法指定路径 / URL / 版本。只读路由不读凭据、不联网；动作路由走与 CLI 同一套实现
-   * （`wx` 备份 → 同目录 `wx` 临时文件 → 读回校验 → rename → 校验新哈希），失败不留半改文件。
+   * 路由**不接受任何参数**：目标包目录由 `plans/codex-subscription-patch.js` 按自身位置推导，
+   * 客户端无法指定路径 / URL / 版本；本路由只 `readPatchState()`，不读凭据、不联网、不写文件。
    *
-   * [0.10.6] 只读路由的响应字段（闭集，仍全部是只读 metadata）：
+   * **R3 删除了写入口**：同一路径下的 `POST` 应用接口（以及原生设置页的两个适配回调）已整体删除，
+   * 运行时不再有任何「打/撤补丁」的 HTTP 入口。补丁模块与 `plans/patches/**` 清单保留，
+   * 写操作只走仓库内的 `tools/patch-codex-subscription.mjs`（离线维护，不经插件运行时）。
+   *
+   * [0.10.6] 响应字段（闭集，仍全部是只读 metadata）：
    *   `{ ok:true, data:{ installed, version, state, serviceAvailable, manifestVersion, covered } }`
    *   - `manifestVersion`：与**已装版本**精确匹配的清单版本（继承链已展开；无匹配 ⇒ `null`）；
    *   - `covered`：本包清单目录里所有**合法**清单的版本号数组（纯版本号、升序、不含路径）——
    *     只用于界面提示「本包支持哪些版本」，**不**表示已装版本一定在其中。
-   *   `apply-patch` 路由的行为与响应字段不变。
    */
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
@@ -2576,33 +2205,6 @@ export function apply(ctx, config) {
 
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
-    path: '/api/plan-usage/codex-subscription/apply-patch',
-    handler: async (req, res) => {
-      if (req.method !== 'POST') {
-        json(res, 405, { ok: false, error: 'method', message: 'method not allowed' })
-        return
-      }
-      // 请求体必须为空：任何多余字段都拒绝（固定码，不解释细节）
-      const len = Number(req.headers && req.headers['content-length'] ? req.headers['content-length'] : 0)
-      if (len > 0) {
-        json(res, 400, { ok: false, error: 'E_CS_PATCH_ARGS' })
-        return
-      }
-      try {
-        // [0.11.2] 与原生设置页的「一键适配」共用同一实现，避免两条路径写出不同结果。
-        const out = await applyCodexPatchOnce()
-        json(res, 200, {
-          ok: true,
-          data: { applied: out.applied, backup: out.backup, newSha: out.newSha, requiresRestart: out.requiresRestart },
-        })
-      } catch (err) {
-        const code = err && typeof err.code === 'string' && err.code.startsWith('E_CS_PATCH_') ? err.code : 'E_CS_PATCH_IO'
-        json(res, 200, { ok: false, error: code })
-      }
-    },
-  }))
-  ctx.effect(() => ctx.webServer.register({
-    kind: 'exact',
     path: '/api/plan-usage/codex-sources',
     handler: async (req, res) => {
       if (req.method !== 'GET') {
@@ -2631,6 +2233,410 @@ export function apply(ctx, config) {
       }
     },
   }), 'plan-usage: codex sources route')
+
+
+  // -------------------------------------------------------------------------
+  // [2026-11-22 Codex 第三来源 `account`] 本插件私有 ChatGPT 账号登录的六条路由
+  // [2026-11-23 多账户] connect / subscription 来源退场，`account` 成为唯一取数通道，
+  // 因此新增「选择账户」并让「退出」支持按 id 移除单个账户。
+  // -------------------------------------------------------------------------
+  /**
+   * 固定契约（客户端 `client.js#CodexAccountBlock` 逐字段白名单解析）：
+   *
+   *   GET  …/codex-account/state        → `{ok:true, data:{configured, canLogin, activeAccountId?, account?, accounts?, expiresAt?, revision?, reason?}}`
+   *   POST …/codex-account/login        → `{ok:true, data:{phase, state, userCode?, verificationUri?, verificationUrl?, expiresAt?, expiresInSeconds?, intervalSeconds?}}`
+   *   GET  …/codex-account/login/status → 同上快照形状（没有进行中的登录 ⇒ `phase:'idle'`）
+   *   POST …/codex-account/login/cancel → `{ok:true, data:{cancelled:true}}`（幂等）
+   *   POST …/codex-account/select?id=   → `{ok:true, data:<state wire>}`（切换 active 账户）
+   *   POST …/codex-account/logout[?id=] → `{ok:true, data:{configured, activeAccountId?}}`
+   *                                       （**仅当**记录确实已删除/账户确实已移除）
+   *
+   * 硬边界（都在这一层兑现）：
+   *   - **不接受**客户端传入的任何 URL / token / 账号参数；账户 id **只从 URL query** 读，
+   *     请求 body 一律忽略；
+   *   - 响应里**绝不**出现 access / refresh / id_token、明文账号 ID、记录路径或上游正文；
+   *     `plans/codex-account.js` 的 `message` 全是**固定中文安全文案**，可以原样返回；
+   *   - 失败统一闭集 `{ok:false,error:'unavailable'|'busy'|'status'|'method'|'select'|'logout',message:<固定中文>}`
+   *     （`busy` 目前不可达：`start()` 在已有进行中的会话时**原样返回当前快照**，不拒绝；
+   *     保留该码是为了让客户端侧的闭集判断与文档一致。`select` = 选择账户失败（含 id 形状不对 /
+   *     id 不存在）；`logout` = 移除/删除/复核没通过 —— 这两种情况**都不作废**任何观察，
+   *     记录仍在磁盘上，旧身份与旧额度保持原样）；
+   *   - 只操作**本插件私有**的记录 `dsh-usage-dock/codex`，绝不触碰 DSH / 第三方凭据。
+   */
+  const CODEX_ACCOUNT_MESSAGES = Object.freeze({
+    unavailable: '本部署没有可用的凭据服务，无法使用 ChatGPT 账号登录',
+    method: '该接口不接受这个请求方法',
+    status: '无法读取 ChatGPT 账号登录状态',
+    select: '无法切换 ChatGPT 账号',
+    logout: '无法退出 ChatGPT 账号登录',
+  })
+
+  /**
+   * [2026-11-23 多账户] 账户 id 的**唯一**形状：`[A-Za-z0-9-]{1,100}`（UUID 满足）。
+   *
+   * 同一条正则既用于「query 参数校验」也用于「wire 投影」，避免两处各写一套。
+   */
+  const CODEX_ACCOUNT_ID_PATTERN = /^[A-Za-z0-9-]{1,100}$/u
+  /** wire 里最多列出 8 个账户（与模块的账户上限一致）。 */
+  const MAX_CODEX_ACCOUNTS_WIRE = 8
+
+  /** 取一个合法的账户 id；形状不对/缺失一律 `null`（调用方按固定失败处理）。 */
+  const codexAccountIdOf = (raw) => (typeof raw === 'string' && CODEX_ACCOUNT_ID_PATTERN.test(raw) ? raw : null)
+
+  /**
+   * 从 URL query 取一个参数（**不读请求 body**）。
+   *
+   * 选择/移除账户的 id 只走 query：body 一律忽略，这样客户端即使塞了 JSON 也影响不到
+   * Host 的写入目标。`req.url` 缺失或解析失败都返回 `null`（= 视为没给）。
+   */
+  const queryParamOf = (req, name) => {
+    if (req === null || req === undefined || typeof req !== 'object') return null
+    const raw = typeof req.url === 'string' ? req.url : ''
+    const index = raw.indexOf('?')
+    if (index < 0) return null
+    try {
+      const value = new URLSearchParams(raw.slice(index + 1)).get(name)
+      return typeof value === 'string' ? value : null
+    } catch (err) {
+      return null
+    }
+  }
+
+  /**
+   * 账号展示字段的**白名单**投影（`label` / `planType` / `maskedId`）。
+   *
+   * 即使上游模块以后多给字段（比如把 token 片段塞进 account），也不会被透传到浏览器。
+   */
+  const codexAccountViewOf = (raw) => {
+    if (raw === null || raw === undefined || typeof raw !== 'object') return null
+    const out = {}
+    if (typeof raw.label === 'string' && raw.label.length > 0) out.label = raw.label.slice(0, 320)
+    if (typeof raw.planType === 'string' && raw.planType.length > 0) out.planType = raw.planType.slice(0, 64)
+    if (typeof raw.maskedId === 'string' && raw.maskedId.length > 0) out.maskedId = raw.maskedId.slice(0, 40)
+    return Object.keys(out).length > 0 ? out : null
+  }
+
+  /**
+   * 账户列表里的**单条**投影：`{id?, label, planType?, maskedId?, active}`。
+   *
+   * 硬边界：
+   *   - `id` 必须满足 `CODEX_ACCOUNT_ID_PATTERN`，否则**不输出该字段**（客户端不能拿它来 select）；
+   *   - 只输出展示字段，**绝不含** token / `accountId` 明文 / 记录路径；
+   *   - `active` 由 `view.active === true` **或** `id === activeAccountId` 判定（两条来源任一成立即真，
+   *     避免模块给/不给 `active` 时 UI 出现「一个都不高亮」）。
+   */
+  const codexAccountEntryOf = (raw, activeAccountId) => {
+    if (raw === null || raw === undefined || typeof raw !== 'object') return null
+    const view = codexAccountViewOf(raw)
+    if (view === null) return null
+    const id = codexAccountIdOf(raw.id)
+    const entry = {}
+    if (id !== null) entry.id = id
+    entry.label = typeof view.label === 'string' ? view.label : 'ChatGPT 账号'
+    if (view.planType !== undefined) entry.planType = view.planType
+    if (view.maskedId !== undefined) entry.maskedId = view.maskedId
+    entry.active = raw.active === true || (id !== null && id === activeAccountId)
+    return entry
+  }
+
+  /**
+   * `codexAccountState()` 的投影。
+   *
+   * 白名单字段：`configured` / `canLogin` / `activeAccountId?` / `account?` /
+   * `accounts?:[{id?,label,planType?,maskedId?,active}]`（≤8 条）/ `expiresAt?` / `revision?` / `reason?`。
+   * `expiresAt` / `revision` 是**当前 active 账户**的（模块口径）。
+   */
+  const codexAccountStateWireOf = (view) => {
+    const source = view !== null && view !== undefined && typeof view === 'object' ? view : {}
+    const wire = { configured: source.configured === true, canLogin: source.canLogin === true }
+    const activeAccountId = codexAccountIdOf(source.activeAccountId)
+    if (activeAccountId !== null) wire.activeAccountId = activeAccountId
+    const account = codexAccountViewOf(source.account)
+    if (account !== null) wire.account = account
+    if (Array.isArray(source.accounts)) {
+      const rows = []
+      for (const raw of source.accounts) {
+        if (rows.length >= MAX_CODEX_ACCOUNTS_WIRE) break
+        const entry = codexAccountEntryOf(raw, activeAccountId)
+        if (entry !== null) rows.push(entry)
+      }
+      wire.accounts = rows
+    }
+    if (typeof source.expiresAt === 'number' && Number.isFinite(source.expiresAt) && source.expiresAt > 0) {
+      wire.expiresAt = source.expiresAt
+    }
+    if (typeof source.revision === 'number' && Number.isSafeInteger(source.revision) && source.revision > 0) {
+      wire.revision = source.revision
+    }
+    if (typeof source.reason === 'string' && source.reason.length > 0) wire.reason = source.reason.slice(0, 64)
+    return wire
+  }
+
+  /**
+   * 登录快照 → 客户端 wire。
+   *
+   * `createCodexAccountLogin().status()` 的**真实**字段是
+   * `{state, userCode?, verificationUrl?, intervalMs?, expiresAt?(ms), account?, revision?, message?}`
+   * —— 名字与客户端契约不同，因此这里做一次显式映射（**不整份透传**）：
+   *   `state` → `phase` + `state`（客户端两个都认）；
+   *   `verificationUrl` → `verificationUri` + `verificationUrl`（同上）；
+   *   毫秒 `expiresAt` 原样给出，同时换算 `expiresInSeconds` / `expiresInSec`；
+   *   `intervalMs` → 向上取整的 `intervalSeconds`（客户端只需展示节奏）。
+   */
+  const codexLoginWireOf = (snap, nowMs) => {
+    const source = snap !== null && snap !== undefined && typeof snap === 'object' ? snap : {}
+    const phase = typeof source.state === 'string' && source.state.length > 0 ? source.state : 'idle'
+    const wire = { phase, state: phase }
+    if (typeof source.userCode === 'string' && source.userCode.length > 0) wire.userCode = source.userCode
+    if (typeof source.verificationUrl === 'string' && source.verificationUrl.length > 0) {
+      wire.verificationUri = source.verificationUrl
+      wire.verificationUrl = source.verificationUrl
+    }
+    if (typeof source.expiresAt === 'number' && Number.isFinite(source.expiresAt) && source.expiresAt > 0) {
+      wire.expiresAt = source.expiresAt
+      const left = Math.max(0, Math.round((source.expiresAt - nowMs) / 1000))
+      wire.expiresInSeconds = left
+      wire.expiresInSec = left
+    }
+    if (typeof source.intervalMs === 'number' && Number.isFinite(source.intervalMs) && source.intervalMs > 0) {
+      // 原样给出模块的毫秒间隔，并补一个秒数形态（客户端只展示节奏，两个都无害）。
+      wire.intervalMs = source.intervalMs
+      wire.intervalSeconds = Math.max(1, Math.round(source.intervalMs / 1000))
+    }
+    const account = codexAccountViewOf(source.account)
+    if (account !== null) wire.account = account
+    if (typeof source.revision === 'number' && Number.isSafeInteger(source.revision) && source.revision > 0) {
+      wire.revision = source.revision
+    }
+    if (typeof source.message === 'string' && source.message.length > 0) wire.message = source.message
+    return wire
+  }
+
+  /** 登录态（`GET …/codex-account/state`）：只读、GET-only，**绝不让异常变成 5xx**。 */
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/api/plan-usage/codex-account/state',
+    handler: async (req, res) => {
+      if (req.method !== 'GET') {
+        json(res, 405, { ok: false, error: 'method', message: CODEX_ACCOUNT_MESSAGES.method })
+        return
+      }
+      try {
+        /**
+         * 没有凭据服务时给出**可判定**的结论（`canLogin:false` + 固定 reason），
+         * 而不是让下游 throw 变成 500：客户端只解析 200 的 JSON 信封。
+         */
+        const credentials = readCodexCredentialsService(ctx)
+        if (credentials.state !== 'ok') {
+          json(res, 200, {
+            ok: true,
+            data: {
+              configured: false,
+              canLogin: false,
+              reason: credentials.state === 'unknown' ? 'unavailable' : 'no-credentials',
+            },
+          })
+          return
+        }
+        json(res, 200, { ok: true, data: codexAccountStateWireOf(await codexAccountState(ctx)) })
+      } catch (err) {
+        json(res, 200, { ok: false, error: 'status', message: CODEX_ACCOUNT_MESSAGES.status })
+      }
+    },
+  }), 'plan-usage: codex account state route')
+
+  /**
+   * 开始设备码登录（`POST …/codex-account/login`）。
+   *
+   * 已经在等待时 `start()` 会原样返回**当前快照**（不会重复申请设备码），
+   * 所以这里不需要另做并发闸门；客户端拿到的 `phase` 会直接是 `waiting`。
+   */
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/api/plan-usage/codex-account/login',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        json(res, 405, { ok: false, error: 'method', message: CODEX_ACCOUNT_MESSAGES.method })
+        return
+      }
+      try {
+        const credentials = readCodexCredentialsService(ctx)
+        if (credentials.state !== 'ok') {
+          json(res, 200, { ok: false, error: 'unavailable', message: CODEX_ACCOUNT_MESSAGES.unavailable })
+          return
+        }
+        const snap = await codexLogin.start()
+        json(res, 200, { ok: true, data: codexLoginWireOf(snap, Date.now()) })
+      } catch (err) {
+        json(res, 200, { ok: false, error: 'status', message: CODEX_ACCOUNT_MESSAGES.status })
+      }
+    },
+  }), 'plan-usage: codex account login route')
+
+  /** 轮询登录状态（`GET …/codex-account/login/status`）：只返回快照，没有副作用。 */
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/api/plan-usage/codex-account/login/status',
+    handler: async (req, res) => {
+      if (req.method !== 'GET') {
+        json(res, 405, { ok: false, error: 'method', message: CODEX_ACCOUNT_MESSAGES.method })
+        return
+      }
+      try {
+        json(res, 200, { ok: true, data: codexLoginWireOf(codexLogin.status(), Date.now()) })
+      } catch (err) {
+        json(res, 200, { ok: false, error: 'status', message: CODEX_ACCOUNT_MESSAGES.status })
+      }
+    },
+  }), 'plan-usage: codex account login status route')
+
+  /** 取消登录（`POST …/codex-account/login/cancel`）：没有进行中的尝试也返回成功（幂等）。 */
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/api/plan-usage/codex-account/login/cancel',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        json(res, 405, { ok: false, error: 'method', message: CODEX_ACCOUNT_MESSAGES.method })
+        return
+      }
+      try {
+        codexLogin.cancel()
+        json(res, 200, { ok: true, data: { cancelled: true } })
+      } catch (err) {
+        json(res, 200, { ok: false, error: 'status', message: CODEX_ACCOUNT_MESSAGES.status })
+      }
+    },
+  }), 'plan-usage: codex account login cancel route')
+
+  /**
+   * 切换 active 账户（`POST …/codex-account/select?id=<账户 id>`）。
+   *
+   * [2026-11-23 多账户] 账户 id **只从 URL query 取**，请求 body 一律忽略：客户端即使塞了
+   * JSON（`{id}` / 甚至 token）也影响不到写入目标。形状不对/缺失 ⇒ 固定 `error:'select'`，
+   * 不把原文回显；不存在/记录不可用 ⇒ 同样固定 `error:'select'`（模块的 `reason` 只做内部判断，
+   * 不外泄）。
+   *
+   * 成功后：先刷新同步身份快照，再**推进 epoch 并作废 codex 观察**，最后回整份 state wire
+   * （客户端据此直接重画账户列表与「当前使用」标记，不需要再发一次 state 请求）。
+   */
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/api/plan-usage/codex-account/select',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        json(res, 405, { ok: false, error: 'method', message: CODEX_ACCOUNT_MESSAGES.method })
+        return
+      }
+      const requested = codexAccountIdOf(queryParamOf(req, 'id'))
+      if (requested === null) {
+        json(res, 200, { ok: false, error: 'select', message: CODEX_ACCOUNT_MESSAGES.select })
+        return
+      }
+      try {
+        const picked = await selectCodexAccount(ctx, requested)
+        if (picked === null || picked === undefined || typeof picked !== 'object' || picked.ok !== true) {
+          // 绝不自作主张切到别的账户，也绝不谎报成功（旧 active 与旧观察保持不变）。
+          json(res, 200, { ok: false, error: 'select', message: CODEX_ACCOUNT_MESSAGES.select })
+          return
+        }
+        await refreshAndInvalidateCodexAccountObservations()
+        json(res, 200, { ok: true, data: codexAccountStateWireOf(await codexAccountState(ctx)) })
+      } catch (err) {
+        // 走到这里说明「选择本身可能已成功，但状态读不出来」：给可判定的 status 失败码，
+        // 不回显异常正文，也不假装切换失败（下一次 state 请求会给出真相）。
+        json(res, 200, { ok: false, error: 'status', message: CODEX_ACCOUNT_MESSAGES.status })
+      }
+    },
+  }), 'plan-usage: codex account select route')
+
+  /**
+   * 退出 / 移除账户（`POST …/codex-account/logout[?id=<账户 id>]`）。
+   *
+   * [2026-11-23 多账户] 语义分两种：
+   *   - 带 `id` ⇒ 只移除**那一个**账户（再按模块规则决定新的 active）；
+   *   - 不带 `id` ⇒ 由模块决定默认目标（= 移除当前 active 账户）。
+   *
+   * 成功口径由 `removeCodexAccount()` 保证：`{ok:true}` 只在「写入成功 **且** 重读确认」时给出
+   * （移除最后一个账户时整条记录被删掉，`activeAccountId` 缺失 ⇒ `configured:false`）。
+   *
+   * 失败（记录不可用 / id 不存在 / 删除失败 / 复核失败）**不做任何作废**：磁盘上的记录还在，
+   * 若先把观察清成「已登出」，下一次取数又会「自己回来了」（GUI 上表现为退出后余额复活）。
+   */
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/api/plan-usage/codex-account/logout',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        json(res, 405, { ok: false, error: 'method', message: CODEX_ACCOUNT_MESSAGES.method })
+        return
+      }
+      const rawId = queryParamOf(req, 'id')
+      // 给了 id 就必须是合法形状：否则不猜目标（更不退回「删 active」），直接固定失败。
+      if (rawId !== null && codexAccountIdOf(rawId) === null) {
+        json(res, 200, { ok: false, error: 'logout', message: CODEX_ACCOUNT_MESSAGES.logout })
+        return
+      }
+      try {
+        // 先取消可能在等待的登录：否则用户「退出」后设备码授权仍会把账号登回来。
+        try { codexLogin.cancel() } catch (err) { /* 没有进行中的尝试 */ }
+        const removed = await removeCodexAccount(ctx, rawId === null ? undefined : rawId)
+        if (removed === null || removed === undefined || typeof removed !== 'object' || removed.ok !== true) {
+          // 绝不谎报成功，也不作废观察（记录还在）：固定中文文案，不回显 reason 之外的信息。
+          json(res, 200, { ok: false, error: 'logout', message: CODEX_ACCOUNT_MESSAGES.logout })
+          return
+        }
+        await refreshAndInvalidateCodexAccountObservations()
+        /**
+         * 以**重读后的状态**判定「还有没有账户」：`configured` 只看事实，不看模块返回值里的
+         * 字段有没有出现。读不到状态时才退回模块给的 `activeAccountId`（不猜、不夸大）。
+         */
+        let wire = null
+        try { wire = codexAccountStateWireOf(await codexAccountState(ctx)) } catch (err) { wire = null }
+        if (wire !== null) {
+          const data = { configured: wire.configured === true }
+          if (typeof wire.activeAccountId === 'string') data.activeAccountId = wire.activeAccountId
+          json(res, 200, { ok: true, data })
+          return
+        }
+        const remaining = codexAccountIdOf(removed.activeAccountId)
+        const data = { configured: remaining !== null }
+        if (remaining !== null) data.activeAccountId = remaining
+        json(res, 200, { ok: true, data })
+      } catch (err) {
+        json(res, 200, { ok: false, error: 'status', message: CODEX_ACCOUNT_MESSAGES.logout })
+      }
+    },
+  }), 'plan-usage: codex account logout route')
+
+  /**
+   * [2026-11-24 原生设置页 ChatGPT 账户] 账户桥接：dsh-go 原生半**直接调用模块函数**
+   * （不新开 HTTP 路由），形状见设计文档 §1。
+   *
+   * 用户定稿：原生页**只做「查看 + 选择」**——添加账户 / 退出账号 / 重新登录全部保留在
+   * 网页版设置页。因此这里只暴露两个方法：`state()`（白名单投影）与 `select(id)`。
+   *
+   * 为什么放在这里：必须等 codex 路由都注册完（`codexAccountStateWireOf` /
+   * `refreshAndInvalidateCodexAccountObservations` 都已定义），并且只有真的走到这段
+   * （有 webServer 的宿主）才赋值 —— 检查器里 `apply()` 提前返回，原生半拿到 null。
+   *
+   * 安全边界：
+   *   - `state()` 只回 `codexAccountStateWireOf()` 的白名单投影（不含 token / 明文账号 id）；
+   *   - `select()` 的模块返回值 `{ok:true, credential}` **含 token**，这里只保留 `{ ok }`；
+   *   - 账户 id 形状（`/^[A-Za-z0-9-]{1,100}$/`，即 `codexAccountIdOf`）在这里再验一次。
+   */
+  codexAccountApi = {
+    state: async () => codexAccountStateWireOf(await codexAccountState(ctx)),
+    select: async (id) => {
+      const target = codexAccountIdOf(id)
+      if (target === null) return { ok: false }
+      const out = await selectCodexAccount(ctx, target)
+      const ok = out !== null && out !== undefined && typeof out === 'object' && out.ok === true
+      if (ok) {
+        try { await refreshAndInvalidateCodexAccountObservations() } catch (err) { /* 快照停在 unknown，仍算成功 */ }
+      }
+      return { ok }
+    },
+  }
 
 
   /**
@@ -2914,7 +2920,7 @@ export function apply(ctx, config) {
         const source = plan.source !== null && plan.source !== undefined ? plan.source : {}
         const refs = Array.isArray(source.refs) ? source.refs.filter((ref) => typeof ref === 'string' && ref.length > 0) : []
         const pieces = [plan.id]
-        // 1) 显式 Key / Cookie：与原 provider 完全相同的优先级与哨兵规则。
+        // 1) 显式 Key：与原 provider 完全相同的优先级与哨兵规则。
         const explicit = {}
         let hasExplicit = false
         for (const key of Object.values(plan.fields || {})) {
@@ -2922,7 +2928,7 @@ export function apply(ctx, config) {
           if (typeof raw !== 'string' || raw.length === 0) continue
           pieces.push(key + ':' + shortHash(raw))
           if (key === plan.fields.apiKey && isSentinelApiKey(raw)) continue
-          if (key === plan.fields.apiKey || key === plan.fields.cookie) {
+          if (key === plan.fields.apiKey) {
             explicit[key] = raw
             hasExplicit = true
           }
@@ -3248,14 +3254,7 @@ export function apply(ctx, config) {
             const fetchOnce = () => plan.fetch(ctx, shell, cfgNow, planOptions)
             const wire = await withinDeadline(
               Promise.resolve()
-                /**
-                 * [2026-11-12 MiMo lane 对齐] MiMo 先看**显示快照**（与胶囊同一条 lane）：
-                 * 快照适用时连 provider 都不进（零 import、零构造、零请求）；不适用
-                 * （未选中 / 读不到）才走原来的 `plans/mimo.js` 路径，行为完全不变。
-                 */
-                .then(() => (plan.id === 'mimo'
-                  ? mimoWireReady(fetchOnce)
-                  : fetchOnce()))
+                .then(() => fetchOnce())
                 .catch(() => withConfiguredCodexSource(execError(plan), cfgNow)),
               deadline,
             )
@@ -3347,7 +3346,6 @@ export function apply(ctx, config) {
           await refreshQuotaCfg()
         }).catch(() => {})
         if (dshGoBridgeSeen) void Promise.resolve().then(policyRefreshTick).catch(() => {})
-        void restoreLegacyMimo(true)
       }
 
       // 订阅宿主公开的配置重载事件（`dsh-settings` 自己也用同一个事件名）。

@@ -305,17 +305,14 @@ export function loadClient(runtime, options) {
      * 需要特定样本的测试用 `opts.quotaWindows` 注入，`opts.quotaWindowsError` 可模拟失败。
      */
     /**
-     * [0.11.2 Codex 本地适配] 只读补丁状态 / 一次性应用。
-     * 都是 opt-in：不注入时（`patchState === undefined`）返回 `opts.payload`，
+     * [0.11.2 Codex 本地适配] 只读补丁状态。
+     * opt-in：不注入时（`patchState === undefined`）返回 `opts.payload`，
      * 客户端解析失败后走原兜底（显示按钮），既有用例行为不变。
+     * [R3 2026-11-25] 写入口分支（原 apply-patch）已随运行时写路由删除：没有任何测试消费它。
      */
     if (String(url).includes('codex-subscription/patch-state')) {
       if (opts.patchStateError === true) throw new Error('patch-state unreachable')
       return { status: 200, json: async () => (opts.patchState !== undefined ? opts.patchState : opts.payload) }
-    }
-    if (String(url).includes('codex-subscription/apply-patch')) {
-      if (opts.patchApplyError === true) throw new Error('apply-patch unreachable')
-      return { status: 200, json: async () => (opts.patchApply !== undefined ? opts.patchApply : { ok: true }) }
     }
     if (String(url).includes('quota-windows')) {
       if (opts.quotaWindowsError === true) throw new Error('quota-windows unreachable')

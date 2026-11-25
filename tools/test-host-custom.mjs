@@ -77,10 +77,10 @@ const disabledAll = Object.fromEntries(PLANS.map((p) => [p.fields.enabled, false
   check('H1a 注册表不再包含三个退场 id',
     !PLANS.some((p) => p.id === 'kimi-code' || p.id === 'glm-zhipu' || p.id === 'glm-zai'),
     PLANS.map((p) => p.id))
-  // [2026-10-21] workbuddy-ai 已退场（全部改走国内网关），退场清单为 4 个。
-  check('H1b 退场 id 清单与注册表一致', RETIRED_PLAN_IDS.length === 4
+  // [2026-11-23] workbuddy 也已退场：退场清单为 5 个。
+  check('H1b 退场 id 清单与注册表一致', RETIRED_PLAN_IDS.length === 5
     && RETIRED_PLAN_IDS.every((id) => isRetiredPlanId(id) && !PLANS.some((p) => p.id === id)))
-  check('H1c 保留渠道仍在注册表', ['opencode-go', 'deepseek', 'codex', 'mimo', 'workbuddy']
+  check('H1c 保留渠道仍在注册表', ['opencode-go', 'deepseek', 'codex', 'mimo']
     .every((id) => PLANS.some((p) => p.id === id)))
 
   // 旧配置：三个退场渠道全启用 + DeepSeek 启用。

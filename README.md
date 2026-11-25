@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/dsh-usage-dock.svg)](https://www.npmjs.com/package/dsh-usage-dock)
 [![license](https://img.shields.io/npm/l/dsh-usage-dock.svg)](https://github.com/Slacom/dsh-usage-dock/blob/main/LICENSE)
 
-DeepSeek Harness（DSH）的侧栏套餐用量插件：在左侧栏底部显示余额、积分和剩余额度，点击展开详情。
+DeepSeek Harness（DSH）的侧栏套餐用量插件：在左侧栏底部显示余额和剩余额度，点击展开详情。
 
 ![侧栏余额与额度预览](https://raw.githubusercontent.com/Slacom/dsh-usage-dock/main/preview.png)
 
@@ -13,18 +13,41 @@ DeepSeek Harness（DSH）的侧栏套餐用量插件：在左侧栏底部显示�
 | --- | --- | --- |
 | OpenCode Go | OpenCode usage API（Bearer） | 5 小时 / 周 / 月窗口（按账户实际返回） |
 | DeepSeek | DSH 账号余额优先，开放平台 API Key 回退 | 余额（含赠金）；账号模式附峰谷时间条 |
-| OpenAI Codex | 已安装的 `dsh-codex-connect` | 5 小时 / 周（账户实际返回的窗口） |
-| Xiaomi MiMo | 开放平台控制台 Cookie | 总余额、现金及赠送余额 |
-| WorkBuddy | 「设置 → 模型」里的 WorkBuddy2API 网关（复用该来源的 Bearer Key，走客户端接口 `/v1/credits`） | 国内（cn）积分合计，附「其中最早到期部分」摘要 |
+| OpenAI Codex | 本插件内登录 ChatGPT 账号（设备码；可保存多个账户并切换，0.12.0 开发中） | 5 小时 / 周（账户实际返回的窗口） |
+| Xiaomi MiMo | 开放平台 API Key（`mimoApiKey`，或「设置 → 模型」里的 MiMo Key） | 总余额、现金及赠送余额 |
 | **自定义余额渠道** | 你选择的模型来源 + 该来源下的余额接口路径 | 该接口返回的余额（币种来自条目或可信采样） |
 
 - 每 **30 秒**刷新；展开面板、窗口聚焦、页面重新可见时立即刷新。
 - 短暂网络失败保留旧值（灰化显示），持续失败后才报告错误；未登录、缺凭据、鉴权失败等错误立即显示。
   是否算"持续失败"以 Host 给出的统一状态为准。
+- OpenAI Codex 自 0.12.0 起改为**只用本插件自己的 ChatGPT 账号登录**（设备码）：在
+  「设置 → 内置插件 → Usage Dock → OpenAI Codex」点「添加账户」完成授权即可读取额度，
+  **不需要**再安装 `dsh-codex-connect`，也不需要维护 `dsh-codex-subscription` 的本地补丁
+  （旧的 Connect / Subscription 来源已退场，设置页与原生页都不再提供来源选择）。
+  可以保存**多个账户**（最多 8 个）并切换：胶囊与详情只显示当前选中账户的数字，
+  切换/移除都只动本插件自己的凭据记录，不写配置、不读写其它插件的登录状态，
+  令牌也不会回显到页面。该方式读取的是 Codex 客户端使用的额度接口，属**非官方支持**用法，
+  上游改版时可能失效。**0.12.0 仍在开发中、未发布**，属实验性功能；登录与切换入口只在
+  **桌面网页版设置页**，手机端原生设置页只能看结果、不能完成登录或切换账户。
+- 小米 MiMo 自 **0.12.0** 起**只用 API Key** 查余额：在「设置 → 内置插件 → Usage Dock →
+  Xiaomi MiMo」填 `mimoApiKey`，或在「设置 → 模型」里配置 `XIAOMI_API_KEY`
+  （provider 名含 mimo/xiaomi 时也可自动取用）。没有 Key 时固定显示「未配置 API Key」；
+  **不再有**扫码登录、记住登录、控制台 Cookie 或「登录态过期」这一类入口与状态。
 - 胶囊独占侧栏底部一行，位于其他底部插件上方；侧栏折叠时只显示圆点，不可点击。
 - 设置页可开关渠道、配置凭据、设置余额告警阈值与显示顺序（内置与自定义渠道在同一列表里混排）。
 - 余额向下取整到分。DeepSeek / MiMo 的「侧栏显示告警额度」默认 10 元，填 0 不告警。
   这个告警只影响侧栏胶囊状态灯，和下面的「额度策略」是两套东西。
+
+### 已退场渠道：WorkBuddy（0.12.0）
+
+WorkBuddy 自 **0.12.0** 起**不再作为本插件的原生 / 内置渠道**（用户不再使用反代渠道）：
+
+- 没有 WorkBuddy 专用开关、积分口径、账号筛选，原生额度面板里也没有 WorkBuddy 分组；
+  旧配置里的 WorkBuddy 字段保留但不生效，`workbuddy` / `workbuddy-ai` 两个 id 都属退场渠道
+  （不取数、不复活）。
+- **如仍需要，请用「自定义余额渠道」添加**：在「设置 → 模型」里选已有的 WorkBuddy2API 来源，
+  再填该来源下的余额接口路径（例如 `/v1/credits`）与结果 JSON 键路径，见下一节。
+- 历史发布说明（≤ 0.11.3）里的 WorkBuddy 记录只作沿革，不代表当前版本。
 
 ## 自定义余额渠道
 
@@ -62,7 +85,7 @@ DeepSeek Harness（DSH）的侧栏套餐用量插件：在左侧栏底部显示�
 - 查询范围：**给了 `ids`** → 只查「点名 ∩ 已启用 ∩ 受支持」的渠道；**省略 `ids` 或传空数组** →
   查询当前**全部已启用且受支持**的渠道。停用或已退场的渠道不取数、不发凭据。
 - 不继承「额度策略」的关注名单——关注名单只影响自动提示，和主动查询是两件事。
-- 输出是脱敏投影：渠道状态、余额/积分与币种、各窗口剩余百分比、采样时间；不含 URL、账号、
+- 输出是脱敏投影：渠道状态、余额与币种、各窗口剩余百分比、采样时间；不含 URL、账号、
   Key、Cookie、上游原文或内部指纹。
 - 结果有短暂成功缓存与请求合并；超时只标「本次没有」而不报错，失败可立即重试。
 - 缺少工具服务时静默跳过，不影响胶囊与设置页。
@@ -79,6 +102,8 @@ dsh plugin --profile web add dsh-usage-dock
 桌面端按实际 profile 使用 `--profile desktop`；也可在「设置 → 插件」添加包名。
 安装后重启 DSH / 安卓引擎，再刷新网页或重新打开 WebView。
 
+DSH Go 真机试装未发布版本：见 [Wi‑Fi ADB 传包与测试指南](docs/dsh-go-wireless-adb-testing.md)。
+
 ## 安卓 / DSHA 兼容性
 
 - 取数在 **Host 的 Node 原生 fetch** 中执行，不需要手机安装 Python、curl 或桌面应用。
@@ -89,14 +114,6 @@ dsh plugin --profile web add dsh-usage-dock
 - 已通过无 shell / 无账号服务 / 无配置编辑服务模拟、窄侧栏折叠守卫、请求竞态回归。
   **代码及接口契约检查不代表所有 Android 机型均已真机测试。**
 - 设置页的长说明与「连接与凭据」默认折叠，展开不影响已填内容；窄屏下策略窗口表按行换行。
-
-WorkBuddy 渠道读取的是「设置 → 模型」中的 WorkBuddy2API 网关，走该网关**客户端 Key 可用**的
-积分接口 `GET <origin>/v1/credits`（`baseURL` 自带 `/v1` 也不会重复拼接），复用该来源的 Bearer Key，
-不读取、复制或解密任何认证文件。它**只统计国内（cn）账号**的积分：根响应里的 `total_credits`
-是跨区合计（含 global），插件不会拿它当国内余额。
-该接口没有稳定的账号 ID、也没有积分包明细，因此**不支持按账号筛选**（旧版保存的勾选原样保留但不再生效），
-详情保留「最近到期」及不重复的明细，省略与大号总积分相同的普通汇总行；有效到期时间按本地日期显示为 YYYY-MM-DD，无日期时不编造。国际版 `workbuddy-ai` 已退场，
-其旧配置与共享凭据保留在 profile 中但不再取数、不再显示。
 
 ## 设置
 
@@ -109,9 +126,8 @@ Host 存在 `configEditor` 时读取最新配置（2 秒内复用）；缺少该
 | --- | --- |
 | OpenCode Go | `apiKey`，留空回退模型凭据库 `OPENCODE_GO_API_KEY` |
 | DeepSeek | `deepseekApiKey`；账号服务可用时无需 Key；`deepseekWarnThreshold` |
-| OpenAI Codex | 在 Codex Connect 中登录，无需在本插件填 Key |
-| Xiaomi MiMo | `mimoCookie`（含 userId / serviceToken）、`mimoWarnThreshold` |
-| WorkBuddy | 网关位于「设置 → 模型」；只统计国内 cn，不支持按账号筛选（`workbuddyAccounts` 为旧字段，保留但不生效） |
+| OpenAI Codex | 在本插件内「添加账户」完成 ChatGPT 设备码登录（最多 8 个账户，单选生效）；无需在本插件填 Key |
+| Xiaomi MiMo | `mimoApiKey`（**唯一凭据**；也可用「设置 → 模型」里的 `XIAOMI_API_KEY`）、`mimoWarnThreshold` |
 | 自定义余额 | `customBalances`（来源 + 路径 + 币种等公开元数据）；凭据用该来源在「设置 → 模型」里已有的配置，本插件不另存（`customKeys` 仅旧条目兼容保留） |
 
 保存会先校验再一次性提交，只写真正改动的字段；凭据沿用 DSH 的 secret 路径写入，
@@ -131,7 +147,7 @@ Host 存在 `configEditor` 时读取最新配置（2 秒内复用）；缺少该
    未关注 / 未知 / 歧义路由不注入任何额度事实与规则。
 
 注意区分两件事：**在总开关已启用、本次已观察到路由并确定匹配该已关注渠道、且来源与采样有效性检查
-通过**的前提下，额度快照（余额/积分/各窗口剩余）才会作为事实呈现，阶段为 `normal` 时也照常显示；
+通过**的前提下，额度快照（余额 / 各窗口剩余）才会作为事实呈现，阶段为 `normal` 时也照常显示；
 总开关关闭时，额度事实与预警/收尾规则都不注入。而**预警 / 收尾**这类规则额外要求配置了有效阈值、
 且该指标越过阈值才会附加——没有有效阈值 = 只给事实，不给任何预警/收尾建议。
 
@@ -150,7 +166,6 @@ Host 存在 `configEditor` 时读取最新配置（2 秒内复用）；缺少该
 
 - **金额型**（DeepSeek / MiMo / 自定义余额）：填两个该渠道**实际币种**的数值；币种未知时
   输入框禁用，插件不会猜成 CNY。
-- **积分型**（WorkBuddy）：填两个积分数值，永不与金额阈值混比。
 - **订阅型**（Codex / OpenCode Go）：按**实际采样到的窗口**分别填两档剩余百分比；
   本次采样没有出现的窗口不显示输入框（已保存的配置会保留、但暂不参与判定）。
 - 各窗口独立判定、渠道整体取最严重（收尾 > 预警），提示里会写明是哪个窗口、当前多少触发。

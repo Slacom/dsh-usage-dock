@@ -15,12 +15,10 @@ import { apply } from '../index.js'
 import {
   PANEL_ID,
   SETTINGS_PANEL_ID,
-  MIMO_PANEL_ID,
   buildNativeView,
   buildNativeData,
   buildSettingsView,
   buildSettingsData,
-  buildMimoLoginView,
   barToneOf,
   parsePlanOrder,
   parseSettingsInput,
@@ -96,7 +94,7 @@ function bindingPaths(view) {
 function mockHost(options = {}) {
   const withBridge = options.withBridge !== false
   const withSettings = options.withSettings !== false
-  const recorded = { panels: new Map(), strips: new Map(), routes: 0, saves: [] }
+  const recorded = { panels: new Map(), strips: new Map(), routes: 0, routePaths: [], saves: [] }
   const dshGo = {
     panel(id, def) {
       recorded.panels.set(id, def)
@@ -128,7 +126,12 @@ function mockHost(options = {}) {
     },
     webServer: {
       port: 0,
-      register() { recorded.routes += 1; return () => {} },
+      register(spec) {
+        recorded.routes += 1
+        // [R3 2026-11-25] 记录注册路径：用来断言运行时到底暴露了哪些路由（不启动服务）。
+        if (spec !== null && typeof spec === 'object' && typeof spec.path === 'string') recorded.routePaths.push(spec.path)
+        return () => {}
+      },
     },
   }
   return { ctx, recorded }
@@ -142,17 +145,14 @@ function settingsEvent(overrides = {}) {
     'data.form.deepseekEnabled': true,
     'data.form.deepseekWarnThreshold': 10,
     'data.form.codexEnabled': true,
-    'data.form.codexSource': 'connect',
     'data.form.mimoEnabled': true,
     'data.form.mimoWarnThreshold': 10,
-    'data.form.workbuddyEnabled': true,
     'data.form.quotaPolicyEnabled': false,
     'data.form.quotaTrustRouteOrder': false,
     'data.form.policyOpencodeFocus': false,
     'data.form.policyDeepseekFocus': false,
     'data.form.policyCodexFocus': false,
     'data.form.policyMimoFocus': false,
-    'data.form.policyWorkbuddyFocus': false,
   }, overrides)
   return {
     surface: 'panel',
@@ -177,6 +177,13 @@ function groupOf(view, heading) {
   return form.children.find((node) => node.type === 'stack' && node.children.some((child) => child.text === heading))
 }
 
+/** [2026-11-24] 渠道分组不再渲染标题：按该渠道启用开关的绑定找 stack。 */
+function channelGroupOf(view, enabledBind) {
+  const form = nodesOf(view).find((node) => node.type === 'form')
+  return form.children.find((node) => node.type === 'stack'
+    && node.children.some((child) => child.bind === enabledBind))
+}
+
 function fakeWires(now) {
   // [0.11.0 整改] 每条 wire 都带 `identity`（来源身份）：原生面板的 carry 只允许在同一身份内复用。
   return [
@@ -190,14 +197,13 @@ function fakeWires(now) {
     },
     {
       id: 'codex',
-      identity: 'codex-connect-1',
+      identity: 'codex-account-1',
       fetchedAt: now,
       rollingUsage: { percent: 55, resetsAt: new Date(now + 2 * 3600_000).toISOString() },
       weeklyUsage: { percent: 72 },
     },
     { id: 'deepseek', identity: 'deepseek-1', fetchedAt: now, balance: 18.03, currency: 'CNY', via: 'account' },
     { id: 'mimo', identity: 'mimo-1', fetchedAt: now, balance: 9.5, currency: 'CNY' },
-    { id: 'workbuddy', identity: 'wb-1', fetchedAt: now, creditsTotal: 6017 },
     {
       id: 'custom:test01',
       custom: true,
@@ -260,18 +266,17 @@ const plans = [
   { id: 'deepseek', fields: { enabled: 'deepseekEnabled' }, name: 'DeepSeek' },
   { id: 'codex', fields: { enabled: 'codexEnabled' }, name: 'Codex' },
   { id: 'mimo', fields: { enabled: 'mimoEnabled' }, name: 'MiMo' },
-  { id: 'workbuddy', fields: { enabled: 'workbuddyEnabled' }, name: 'WorkBuddy' },
 ]
 
-check('中文视图：5 个内置渠道分块 + 刷新/设置按钮', () => {
+check('中文视图：4 个内置渠道分块 + 刷新/设置按钮', () => {
   const view = buildNativeView({ cfg: {}, plans, locale: 'zh-CN', hasCustomChannels: false })
   assert.equal(view.type, 'stack')
   assert.equal(view.title, '额度')
   const nodes = nodesOf(view)
-  assert.equal(nodes.filter((node) => node.type === 'stack').length, 6) // 根 + 5 渠道
+  assert.equal(nodes.filter((node) => node.type === 'stack').length, 5) // 根 + 4 渠道
   // [0.11.4] Codex 只渲染 5 小时 + 周两个窗口：opencode 3 + codex 2 = 5 条进度条。
   assert.equal(nodes.filter((node) => node.type === 'progress').length, 5)
-  assert.equal(nodes.filter((node) => node.type === 'keyValue').length, 3)
+  assert.equal(nodes.filter((node) => node.type === 'keyValue').length, 2)
   const actions = nodes.find((node) => node.type === 'actions')
   assert.deepEqual(actions.items.map((item) => item.action), ['refresh', 'settings'])
   assert.equal(actions.items.filter((item) => item.style === 'primary').length, 1)
@@ -398,7 +403,7 @@ check('重置时间：与网页版一致的两段式倒计时（天/时、时/�
   assert.equal(cEn.data.channels.opencodeGo.cWeek.includes('3d 12h'), true)
 })
 
-check('余额/积分渠道：金额格式与单位', () => {
+check('余额渠道：金额格式与单位', () => {
   const built = buildNativeData({
     cfg: {},
     plans,
@@ -410,15 +415,14 @@ check('余额/积分渠道：金额格式与单位', () => {
   })
   assert.equal(built.data.channels.deepseek.amount, '¥18.03')
   assert.equal(built.data.channels.mimo.amount, '¥9.5')
-  assert.equal(built.data.channels.workbuddy.amount, '6017')
   assert.equal(built.data.channels.deepseek.note, '')
 })
 
 check('[alpha.8] 更新时间只出现在顶部：渠道行不再带「更新」；瞬时失败前 4 次静默灰化', () => {
   const now = 1_700_000_000_000
   const wires = fakeWires(now)
-  // 让 WorkBuddy 变成「暂时失败」：区分「去掉时间」与「保留错误说明」
-  const failed = wires.map((wire) => (wire.id === 'workbuddy'
+  // 让 MiMo 变成「暂时失败」：区分「去掉时间」与「保留错误说明」
+  const failed = wires.map((wire) => (wire.id === 'mimo'
     ? { ...wire, error: 'server' }
     : wire))
   const built = buildNativeData({
@@ -436,7 +440,7 @@ check('[alpha.8] 更新时间只出现在顶部：渠道行不再带「更新」
     assert.equal(built.data.channels[key].note, '', key + ' 不应再显示更新时间')
   }
   // [alpha.8] 首次瞬时失败进入宽限期：不输出文案（第 5 次才报错，见后文宽限用例）。
-  assert.equal(built.data.channels.workbuddy.note, '')
+  assert.equal(built.data.channels.mimo.note, '')
 })
 
 check('渠道块不再渲染独立的状态/更新时间文本行（避免空行）', () => {
@@ -460,7 +464,6 @@ check('渠道块不再渲染独立的状态/更新时间文本行（避免空行
     for (const item of node.items) valueBindings.push(bindingText(item.value))
   })
   assert.equal(valueBindings.includes('data.channels.deepseek.value'), true)
-  assert.equal(valueBindings.includes('data.channels.workbuddy.value'), true)
   assert.equal(valueBindings.includes('data.channels.mimo.value'), true)
 })
 
@@ -572,20 +575,20 @@ check('[0.11.0 整改] carry 按来源身份隔离：同身份暂时失败保留
     cfg: {},
     plans,
     semanticsOf: () => 'used',
-    wires: codexOn('codex-connect-1'),
+    wires: codexOn('codex-account-1'),
     customEntries: [],
     locale: 'zh-CN',
     now,
   })
   assert.equal(first.data.channels.codex.week, 28) // 72「已用」→ 28 剩余（与其它用例同一口径）
-  assert.deepEqual(Object.keys(first.snapshot.previous), ['codex|codex-connect-1'])
+  assert.deepEqual(Object.keys(first.snapshot.previous), ['codex|codex-account-1'])
 
   // 同一身份下的暂时失败 ⇒ 保留旧值并标注
   const sameIdentity = buildNativeData({
     cfg: {},
     plans,
     semanticsOf: () => 'used',
-    wires: [{ id: 'codex', identity: 'codex-connect-1', error: 'network', transient: true }],
+    wires: [{ id: 'codex', identity: 'codex-account-1', error: 'network', transient: true }],
     customEntries: [],
     locale: 'zh-CN',
     now: now + 60_000,
@@ -595,12 +598,12 @@ check('[0.11.0 整改] carry 按来源身份隔离：同身份暂时失败保留
   assert.equal(sameIdentity.data.channels.codex.tone, 'warn')
   assert.equal(sameIdentity.data.channels.codex.note, '') // [alpha.8] 静默灰化
 
-  // 身份变化（Connect → Subscription）⇒ 丢弃该渠道 carry，不把旧 72% 当新来源
+  // 身份变化（切换 ChatGPT 账号 ⇒ Host 给的 identity 变）⇒ 丢弃该渠道 carry，不把旧 72% 当新账号
   const otherIdentity = buildNativeData({
     cfg: {},
     plans,
     semanticsOf: () => 'used',
-    wires: [{ id: 'codex', identity: 'codex-subscription-1', error: 'network', transient: true }],
+    wires: [{ id: 'codex', identity: 'codex-account-2', error: 'network', transient: true }],
     customEntries: [],
     locale: 'zh-CN',
     now: now + 60_000,
@@ -609,8 +612,8 @@ check('[0.11.0 整改] carry 按来源身份隔离：同身份暂时失败保留
   assert.equal(otherIdentity.data.channels.codex.week, null)
   assert.equal(otherIdentity.data.channels.codex.tone, 'warn') // [alpha.8] 无缓存时 pending = warn
   // 旧身份的 carry 键不被继承（新快照只保留本次身份）
-  assert.deepEqual(Object.keys(otherIdentity.snapshot.previous), ['codex|codex-subscription-1'])
-  assert.equal(otherIdentity.snapshot.previous['codex|codex-subscription-1'].hasValues, false)
+  assert.deepEqual(Object.keys(otherIdentity.snapshot.previous), ['codex|codex-account-2'])
+  assert.equal(otherIdentity.snapshot.previous['codex|codex-account-2'].hasValues, false)
 
   // 身份缺失（旧 Host）⇒ 不复用 carry（fail-closed，不猜）
   const noIdentity = buildNativeData({
@@ -631,7 +634,7 @@ check('[0.11.0 整改] carry 按来源身份隔离：同身份暂时失败保留
     cfg: {},
     plans,
     semanticsOf: () => 'used',
-    wires: [{ id: 'codex', identity: 'codex-connect-1', error: 'auth', transient: false }],
+    wires: [{ id: 'codex', identity: 'codex-account-1', error: 'auth', transient: false }],
     customEntries: [],
     locale: 'zh-CN',
     now: now + 60_000,
@@ -643,7 +646,7 @@ check('[0.11.0 整改] carry 按来源身份隔离：同身份暂时失败保留
     cfg: {},
     plans,
     semanticsOf: () => 'used',
-    wires: [{ id: 'codex', identity: 'codex-connect-1', error: 'network', transient: true }],
+    wires: [{ id: 'codex', identity: 'codex-account-1', error: 'network', transient: true }],
     customEntries: [],
     locale: 'zh-CN',
     now: now + 120_000,
@@ -666,13 +669,20 @@ check('设置视图：按渠道分组；策略输入默认隐藏（关注开关�
   assert.equal(view.title, '设置')
   const form = nodesOf(view).find((node) => node.type === 'form')
   assert.equal(form.submit, 'save')
-  assert.equal(form.children.length, 6) // 6 个分组 stack
-  // [0.11.4 用户要求] 渠道顺序：DeepSeek → MiMo → WorkBuddy → Codex → OpenCode Go。
-  for (const heading of ['**通用**', '**DeepSeek**', '**MiMo**', '**WorkBuddy**', '**Codex**', '**OpenCode Go**']) {
-    assert.notEqual(groupOf(view, heading), undefined, heading)
+  assert.equal(form.children.length, 5) // 5 个分组 stack
+  // [2026-11-24] 渠道分组不再单独渲染标题（开关 label 就是渠道名），只有「通用」保留标题。
+  assert.notEqual(groupOf(view, '**通用**'), undefined)
+  const textNodes = nodesOf(view).filter((node) => node.type === 'text').map((node) => String(node.text))
+  for (const heading of ['**DeepSeek**', '**MiMo**', '**Codex**', '**OpenCode Go**']) {
+    assert.equal(textNodes.includes(heading), false, heading)
   }
   const controls = inputControlsOf(view)
   const binds = controls.map((node) => node.bind)
+  // [2026-11-23] 渠道顺序：DeepSeek → MiMo → Codex → OpenCode Go（以开关绑定顺序为准）。
+  assert.deepEqual(
+    binds.filter((bind) => ['data.form.deepseekEnabled', 'data.form.mimoEnabled', 'data.form.codexEnabled', 'data.form.opencodeGoEnabled'].includes(bind)),
+    ['data.form.deepseekEnabled', 'data.form.mimoEnabled', 'data.form.codexEnabled', 'data.form.opencodeGoEnabled'],
+  )
   // 默认没有策略阈值输入框，也没有「允许路由观察」（策略总开关关闭时隐藏）。
   assert.equal(binds.includes('data.form.quotaTrustRouteOrder'), false)
   assert.equal(binds.some((bind) => bind.includes('policyOpencodeWarn')), false)
@@ -680,24 +690,26 @@ check('设置视图：按渠道分组；策略输入默认隐藏（关注开关�
   for (const control of controls) {
     assert.equal(/^data\.form\.[A-Za-z][A-Za-z0-9]*$/.test(control.bind), true, control.bind)
   }
-  // [0.11.4 用户要求] MiMo 分组不再有扫码按钮，也不再单独加说明（与其它渠道一致）。
-  const mimo = groupOf(view, '**MiMo**')
+  // [0.11.4 用户要求] MiMo 分组只有开关 + 关注开关，没有扫码/登录/按钮，也不单独加说明。
+  const mimo = form.children[2]
+  assert.equal(mimo.children[0].bind, 'data.form.mimoEnabled')
   assert.equal(mimo.children.some((node) => node.type === 'actions'), false)
-  assert.equal(JSON.stringify(mimo).includes('mimoLogin'), false)
-  assert.equal(JSON.stringify(mimo).includes('XIAOMI_API_KEY'), false)
-  assert.equal(JSON.stringify(mimo).includes('无需扫码登录'), false)
+  const mimoJson = JSON.stringify(mimo)
+  assert.equal(mimoJson.includes('mimoLogin'), false)
+  assert.equal(mimoJson.includes('XIAOMI_API_KEY'), false)
+  assert.equal(mimoJson.includes('无需扫码登录'), false)
   const text = JSON.stringify(view)
-  for (const forbidden of ['apiKey', 'ApiKey', 'mimoCookie', 'secret', 'customBalances', 'customKeys']) {
+  for (const forbidden of ['apiKey', 'ApiKey', 'secret', 'customBalances', 'customKeys']) {
     assert.equal(text.includes(forbidden), false, forbidden)
   }
 })
 
-check('[0.11.0 整改] 策略开关节点带 onChange（总开关 + 5 个关注开关），其余控件不带', () => {
+check('[0.11.0 整改] 策略开关节点带 onChange（总开关 + 4 个关注开关），其余控件不带', () => {
   const view = buildSettingsView({ caps: V2_CAPS, locale: 'zh-CN', cfg: { quotaPolicyEnabled: true } })
   const controls = inputControlsOf(view)
   const policy = controls.filter((node) => node.bind === 'data.form.quotaPolicyEnabled'
     || /^data\.form\.policy[A-Za-z]+Focus$/.test(node.bind))
-  assert.equal(policy.length, 6)
+  assert.equal(policy.length, 5)
   for (const node of policy) {
     assert.equal(node.type, 'toggle', node.bind)
     assert.equal(node.onChange, 'policyToggle', node.bind)
@@ -717,7 +729,7 @@ check('[0.11.0 整改] 策略开关节点带 onChange（总开关 + 5 个关注�
 check('策略开关打开：OpenCode Go 三个窗口各一行两框；其它渠道出现对应输入', () => {
   const cfg = {
     quotaPolicyEnabled: true,
-    quotaFocusChannels: '["opencode-go","deepseek","codex","mimo","workbuddy"]',
+    quotaFocusChannels: '["opencode-go","deepseek","codex","mimo"]',
     quotaChannelThresholds: JSON.stringify({
       'opencode-go': { windows: { weekly: { warning: 20, closing: 5 } } },
     }),
@@ -728,7 +740,7 @@ check('策略开关打开：OpenCode Go 三个窗口各一行两框；其它渠�
   // 全局策略总开关打开 → 允许路由观察出现。
   assert.equal(binds.includes('data.form.quotaTrustRouteOrder'), true)
   // OpenCode Go：2 行 × 2 框（5 小时 / 周；月窗口已按用户要求移除）。
-  const opencode = groupOf(view, '**OpenCode Go**')
+  const opencode = channelGroupOf(view, 'data.form.opencodeGoEnabled')
   const rows = opencode.children.filter((node) => node.type === 'grid')
   assert.equal(rows.length, 2)
   for (const row of rows) {
@@ -742,7 +754,6 @@ check('策略开关打开：OpenCode Go 三个窗口各一行两框；其它渠�
   assert.equal(binds.includes('data.form.policyDeepseekWarn'), true)
   assert.equal(binds.includes('data.form.policyDeepseekCurrency'), false) // [0.11.4] DeepSeek 固定 CNY，无币种选择
   assert.equal(binds.includes('data.form.policyMimoClose'), true)
-  assert.equal(binds.includes('data.form.policyWorkbuddyWarn'), true)
   // [0.11.4 用户要求] Codex 也要能就地配置两档阈值（只有 5 小时 / 周两个真实窗口）。
   assert.equal(binds.includes('data.form.policyCodexWarnWeek'), true)
   assert.equal(binds.includes('data.form.policyCodexClose5h'), true)
@@ -753,13 +764,12 @@ check('策略开关打开：OpenCode Go 三个窗口各一行两框；其它渠�
   const data = buildSettingsData(cfg, {})
   assert.equal(data.form.policyOpencodeWarnWeek, 20)
   assert.equal(data.form.policyOpencodeCloseWeek, 5)
-  assert.equal(data.form.policyWorkbuddyWarn, 0)
 })
 
 check('视图预算：分组后仍 ≤32 KiB / ≤120 节点 / 每组 ≤32 子节点', () => {
   const cfg = {
     quotaPolicyEnabled: true,
-    quotaFocusChannels: '["opencode-go","deepseek","codex","mimo","workbuddy"]',
+    quotaFocusChannels: '["opencode-go","deepseek","codex","mimo"]',
   }
   const view = buildSettingsView({ caps: V2_CAPS, locale: 'zh-CN', cfg })
   assert.equal(Buffer.byteLength(JSON.stringify(view), 'utf8') <= 32 * 1024, true)
@@ -776,6 +786,32 @@ check('设置视图在面板预算内（≤32 KiB / ≤120 节点）', () => {
   assert.equal(nodesOf(view).length <= 120, true)
 })
 
+// [2026-11-23 Codex 来源退场] 原生设置页**不再**提供「额度来源」下拉，也没有
+// Subscription「一键适配」入口：Codex 分组只剩开关 + 一行静态说明（登录/切换都在网页版设置页）。
+check('设置视图：不再有 codexSource 下拉 / Subscription 适配按钮，Codex 分组只剩开关 + 网页版说明', () => {
+  const view = buildSettingsView({ caps: V2_CAPS, locale: 'zh-CN' })
+  const nodes = nodesOf(view)
+  // 现在设置页只剩开关与数字：没有任何 select（更不会有绑定 codexSource 的下拉）。
+  assert.equal(nodes.some((node) => node.type === 'select'), false)
+  assert.equal(JSON.stringify(view).includes('codexSource'), false)
+  // 没有任何动作按钮（「一键适配」已下线），也不出现 Subscription / 版本号 / 重启提示。
+  const actionItems = nodes
+    .filter((node) => node.type === 'actions' && Array.isArray(node.items))
+    .flatMap((node) => node.items)
+  assert.deepEqual(actionItems, [])
+  const text = JSON.stringify(view)
+  for (const forbidden of ['codexAdapt', 'Subscription', 'subscription', '一键适配', '3.2.']) {
+    assert.equal(text.includes(forbidden), false, forbidden)
+  }
+  // Codex 分组按当前结构：标题 + 启用开关 + 关注开关 + 一行「网页版设置登录/切换」说明。
+  const codex = channelGroupOf(view, 'data.form.codexEnabled')
+  assert.equal(codex.children.some((node) => node.type === 'toggle' && node.bind === 'data.form.codexEnabled'), true)
+  assert.equal(codex.children.some((node) => node.type === 'actions'), false)
+  const codexTexts = codex.children.filter((node) => node.type === 'text').map((node) => node.text)
+  assert.equal(codexTexts.some((line) => line.includes('网页版设置登录/切换')), true)
+  assert.equal(JSON.stringify(codex).includes('登录按钮'), false)
+})
+
 check('老 App 没有 v2 组件：设置视图降级为说明（仍是合法 v1 视图）', () => {
   const view = buildSettingsView({ caps: { components: ['stack', 'text', 'callout'] }, locale: 'zh-CN' })
   assert.equal(view.v, undefined)
@@ -790,23 +826,20 @@ check('设置数据：读当前配置 / 关注开关 / 策略阈值回显', () =
     enabled: false,
     deepseekEnabled: false,
     deepseekWarnThreshold: 0,
-    codexSource: 'subscription',
     mimoWarnThreshold: 5,
-    workbuddyEnabled: false,
     quotaPolicyEnabled: true,
     quotaFocusChannels: '["codex","mimo"]',
     quotaChannelThresholds: JSON.stringify({
       deepseek: { balance: { warning: 10, closing: 3, currency: 'USD' } },
       'opencode-go': { windows: { 'rolling-5h': { warning: 25, closing: 10 } } },
     }),
-  }, { mimoStatus: 'MiMo 登录：可用' })
+  }, {})
   assert.equal(data.form.enabled, false)
   assert.equal(data.form.deepseekEnabled, false)
   assert.equal(data.form.opencodeGoEnabled, true) // 缺省 true
   assert.equal(data.form.deepseekWarnThreshold, 0)
-  assert.equal(data.form.codexSource, 'subscription')
+  assert.equal('codexSource' in data.form, false) // [2026-11-23] 来源字段已退场，数据里不再有它
   assert.equal(data.form.mimoWarnThreshold, 5)
-  assert.equal(data.form.workbuddyEnabled, false)
   assert.equal(data.form.quotaPolicyEnabled, true)
   assert.equal(data.form.policyCodexFocus, true)
   assert.equal(data.form.policyMimoFocus, true)
@@ -815,11 +848,19 @@ check('设置数据：读当前配置 / 关注开关 / 策略阈值回显', () =
   assert.equal(data.form.policyDeepseekClose, 3)
   assert.equal(data.form.policyDeepseekCurrency, 'USD')
   assert.equal(data.form.policyOpencodeWarn5h, 25)
-  assert.equal(data.form.mimoStatus, 'MiMo 登录：可用')
   const fallback = buildSettingsData(null)
-  assert.equal(fallback.form.codexSource, 'connect')
+  assert.equal('codexSource' in fallback.form, false)
   assert.equal(fallback.form.mimoWarnThreshold, 10)
   assert.equal(fallback.form.policyDeepseekCurrency, 'CNY')
+})
+
+check('设置数据：旧配置里的 codexSource 不被读取/回显（来源字段已退场）', () => {
+  // 旧 profile 里可能还留着 codexSource；本页既不显示也不归一/回写它。
+  for (const legacy of ['account', 'connect', 'subscription', ' Account ', 42, undefined,
+    { get: () => 'account' }]) {
+    const form = buildSettingsData({ codexSource: legacy }).form
+    assert.equal('codexSource' in form, false, JSON.stringify(legacy))
+  }
 })
 
 check('设置提交校验：隐藏字段不写入、策略 JSON 合并、收尾<预警', () => {
@@ -827,9 +868,9 @@ check('设置提交校验：隐藏字段不写入、策略 JSON 合并、收尾<
   const base = parseSettingsInput(settingsEvent(), 'zh-CN', {})
   assert.equal(base.ok, true)
   assert.deepEqual(Object.keys(base.patch).sort(), [
-    'codexEnabled', 'codexSource', 'deepseekEnabled', 'deepseekWarnThreshold', 'enabled',
+    'codexEnabled', 'deepseekEnabled', 'deepseekWarnThreshold', 'enabled',
     'mimoEnabled', 'mimoWarnThreshold', 'opencodeGoEnabled',
-    'quotaFocusChannels', 'quotaPolicyEnabled', 'quotaTrustRouteOrder', 'workbuddyEnabled',
+    'quotaFocusChannels', 'quotaPolicyEnabled', 'quotaTrustRouteOrder',
   ])
   assert.equal(base.patch.quotaFocusChannels, '[]')
   assert.equal(base.patch.quotaChannelThresholds, undefined) // 策略输入没渲染 → 不动原 JSON
@@ -872,10 +913,22 @@ check('设置提交校验：隐藏字段不写入、策略 JSON 合并、收尾<
     'data.form.policyOpencodeWarnWeek': 101,
   }), 'zh-CN', {})
   assert.equal(badPolicyRange.ok, false)
-  const badOption = parseSettingsInput(settingsEvent({ 'data.form.codexSource': 'nope' }), 'zh-CN', {})
-  assert.equal(badOption.ok, false)
+  const staleSource = parseSettingsInput(settingsEvent({ 'data.form.codexSource': 'nope' }), 'zh-CN', {})
+  // [2026-11-23] 来源字段已退场：旧客户端提交它既不校验也不写回（不误报错误）。
+  assert.equal(staleSource.ok, true)
+  assert.equal('codexSource' in staleSource.patch, false)
   const badToggle = parseSettingsInput(settingsEvent({ 'data.form.enabled': 'yes' }), 'zh-CN', {})
   assert.equal(badToggle.ok, false)
+})
+
+// [2026-11-23] codexSource 已退场：旧客户端再传也**不写回配置**、也不误报错误。
+check('设置提交：旧 codexSource 字段被忽略（不进 patch/form，不改配置）', () => {
+  for (const stale of ['account', 'connect', 'subscription', 'nope', '']) {
+    const seen = parseSettingsInput(settingsEvent({ 'data.form.codexSource': stale }), 'zh-CN', {})
+    assert.equal(seen.ok, true, 'should ignore: ' + JSON.stringify(stale))
+    assert.equal('codexSource' in seen.patch, false, 'patch: ' + JSON.stringify(stale))
+    assert.equal('codexSource' in seen.form, false, 'form: ' + JSON.stringify(stale))
+  }
 })
 
 check('占位数据不显示任何数字（避免暴露上一次的旧值）', () => {
@@ -934,7 +987,7 @@ await checkAsync('data feed：首帧占位 → 取数后推送完整数据并自
   assert.equal(typeof latest.updated, 'string')
   // 无凭据环境下每个渠道都应是「有状态无密钥」的错误/缺失，而不是抛异常。
   const keys = Object.keys(latest.channels)
-  assert.equal(keys.length >= 5, true, 'channels ' + keys.join(','))
+  assert.equal(keys.length >= 4, true, 'channels ' + keys.join(','))
   for (const key of keys) {
     assert.equal(typeof latest.channels[key].note, 'string')
     assert.equal(typeof latest.channels[key].note, 'string')
@@ -989,7 +1042,7 @@ await checkAsync('[0.11.0 整改] policyToggle 只增删目标渠道，保留 co
     ['codex', 'mimo', 'custom:abcdef', 'legacy-unknown'])
 
   // 关闭一个本来就不在名单里的关注项 ⇒ 名单原样（不误删其它条目）
-  await settings.actions.policyToggle({}, event('data.form.policyWorkbuddyFocus', false))
+  await settings.actions.policyToggle({}, event('data.form.policyDeepseekFocus', false))
   assert.deepEqual(JSON.parse(recorded.saves[2].patch.quotaFocusChannels),
     ['codex', 'mimo', 'custom:abcdef', 'legacy-unknown'])
 })
@@ -1002,8 +1055,6 @@ await checkAsync('设置保存：submit 走 settings 服务写回，只写非密
   const settings = recorded.panels.get(SETTINGS_PANEL_ID)
   const result = settings.actions.save({}, settingsEvent({
     'data.form.deepseekEnabled': false,
-    'data.form.workbuddyEnabled': false,
-    'data.form.codexSource': 'subscription',
     'data.form.quotaPolicyEnabled': true,
     'data.form.policyOpencodeFocus': true,
     'data.form.policyOpencodeWarnWeek': 20,
@@ -1021,15 +1072,28 @@ await checkAsync('设置保存：submit 走 settings 服务写回，只写非密
     deepseekEnabled: false,
     deepseekWarnThreshold: 10,
     codexEnabled: true,
-    codexSource: 'subscription',
     mimoEnabled: true,
     mimoWarnThreshold: 10,
-    workbuddyEnabled: false,
     quotaPolicyEnabled: true,
     quotaTrustRouteOrder: false,
     quotaFocusChannels: '["opencode-go"]',
     quotaChannelThresholds: '{"opencode-go":{"windows":{"weekly":{"warning":20,"closing":5}}}}',
   })
+})
+
+// [2026-11-23] 端到端：旧客户端仍提交 codexSource 时，patch 里绝不出现该字段（不改旧配置）。
+await checkAsync('设置保存：旧 codexSource 不会被写回 settings 服务', async () => {
+  const { ctx, recorded } = mockHost({ withBridge: true })
+  apply(ctx, {})
+  const settings = recorded.panels.get(SETTINGS_PANEL_ID)
+  const result = settings.actions.save({}, settingsEvent({ 'data.form.codexSource': 'account' }))
+  assert.equal(typeof result.pending, 'object')
+  const settled = await result.result(new AbortController().signal)
+  assert.equal(settled.toast, '已保存')
+  assert.equal(recorded.saves.length, 1)
+  assert.equal('codexSource' in recorded.saves[0].patch, false)
+  // 回读：设置数据也不会把这个旧字段显示出来。
+  assert.equal('codexSource' in buildSettingsData(recorded.saves[0].patch).form, false)
 })
 
 await checkAsync('设置保存：宿主没有 settings 服务时给可读提示、不抛错', async () => {
@@ -1049,6 +1113,33 @@ await checkAsync('没有 dsh-go 桥接的主机：不注册原生面板，Web �
   assert.equal(recorded.routes > 0, true)
 })
 
+// ── R3 2026-11-25：运行时撤掉 Codex 补丁写入口 ────────────────────────────
+// 网页版与原生设置页都已撤销「一键适配」，所以 Host 也不该再暴露写入路由/适配回调。
+// 这里用 mock 注册器只记录路径，**不启动服务**，也不执行任何写补丁动作。
+
+await checkAsync('真实 Host：不再注册 Codex 补丁写路由（只读 patch-state 仍在）', async () => {
+  const { ctx, recorded } = mockHost()
+  apply(ctx, {})
+  const paths = recorded.routePaths
+  assert.equal(paths.some((path) => path.includes('apply-patch')), false, JSON.stringify(paths))
+  assert.equal(paths.some((path) => path.includes('codexAdapt')), false, JSON.stringify(paths))
+  // 只读状态路由必须保留（维护/诊断仍可用，且无写风险）。
+  assert.equal(paths.includes('/api/plan-usage/codex-subscription/patch-state'), true, JSON.stringify(paths))
+})
+
+check('index.js 源码：registerDshGoSurface 的 deps 不再暴露两个适配回调', () => {
+  const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  // registerDshGoSurface({ ... }) 的 deps 对象里不该再有这两个键。
+  for (const key of ['codexAdapt:', 'codexAdaptApply']) {
+    assert.equal(source.includes(key), false, key)
+  }
+  // 写路由的路径字面量与一次性写补丁的辅助函数整体消失（只读 patch-state 见下一条）。
+  for (const gone of ['apply-patch', 'applyCodexPatchOnce', 'codexAdaptStatusForNative']) {
+    assert.equal(source.includes(gone), false, gone)
+  }
+  assert.equal(source.includes('/api/plan-usage/codex-subscription/patch-state'), true)
+})
+
 
 // ── 0.11.2：Codex 本地适配入口 + Codex 只保留两个窗口 ──────────────────────
 
@@ -1061,67 +1152,46 @@ check('Codex 只渲染 5 小时 + 周两个窗口（不再有月行）', () => {
   assert.equal(texts.includes('周'), true)
 })
 
-check('原生设置页：codexAdapt=appliable ⇒ 出现「一键适配」动作与已装版本号', () => {
-  const view = buildSettingsView({
-    caps: V2_CAPS,
-    locale: 'zh-CN',
-    cfg: {},
-    codexAdapt: { state: 'appliable', version: '3.2.23', manifestVersion: '3.2.23', covered: ['3.2.23'] },
-  })
-  const items = []
-  const texts = []
-  walkNodes(view, (node) => {
-    if (node === null || typeof node !== 'object') return
-    if (node.type === 'actions' && Array.isArray(node.items)) items.push(...node.items)
-    if (typeof node.text === 'string') texts.push(node.text)
-  })
-  assert.equal(items.some((item) => item.action === 'codexAdapt'), true)
-  assert.equal(texts.join(' ').includes('3.2.23'), true)
-  assert.equal(texts.join(' ').includes('重启引擎'), true)
-})
-
-check('原生设置页：pending ⇒ 只提示重启，不给按钮；unsupported ⇒ 列出已收录版本；hidden ⇒ 不渲染', () => {
-  const collect = (adapt) => {
+// [2026-11-23 / R3 2026-11-25] Subscription 来源退场后「一键适配」入口已下线，且 Host 现在
+// **根本不传**那两个 deps 回调（见下面「真实 Host」两条断言）。本用例只守兼容性：
+// 万一旧版 Host / 其它部署多传了未知 dep，视图也不得出现按钮、已装版本号、重启提示或「暂无适配清单」。
+check('原生设置页：Subscription「一键适配」已下线（传 codexAdapt 也不渲染）', () => {
+  const adapts = [
+    { state: 'appliable', version: '3.2.23', manifestVersion: '3.2.23', covered: ['3.2.23'] },
+    { state: 'pending', version: '3.2.23' },
+    { state: 'unsupported', version: '3.2.23', manifestVersion: null, covered: ['3.2.6', '3.2.17'] },
+    { state: 'hidden' },
+  ]
+  for (const adapt of adapts) {
     const view = buildSettingsView({ caps: V2_CAPS, locale: 'zh-CN', cfg: {}, codexAdapt: adapt })
-    const items = []
-    const texts = []
-    walkNodes(view, (node) => {
-      if (node === null || typeof node !== 'object') return
-      if (node.type === 'actions' && Array.isArray(node.items)) items.push(...node.items)
-      if (typeof node.text === 'string') texts.push(node.text)
-    })
-    return { hasAdapt: items.some((item) => item.action === 'codexAdapt'), text: texts.join(' ') }
+    const nodes = nodesOf(view)
+    const actionItems = nodes
+      .filter((node) => node.type === 'actions' && Array.isArray(node.items))
+      .flatMap((node) => node.items)
+    assert.deepEqual(actionItems, [], adapt.state)
+    const text = JSON.stringify(view)
+    for (const forbidden of ['codexAdapt', '3.2.23', '3.2.6', '重启引擎', '暂无适配清单', '适配']) {
+      assert.equal(text.includes(forbidden), false, adapt.state + ': ' + forbidden)
+    }
   }
-  const pending = collect({ state: 'pending', version: '3.2.23' })
-  assert.equal(pending.hasAdapt, false)
-  assert.equal(pending.text.includes('重启引擎'), true)
-  const unsupported = collect({ state: 'unsupported', version: '3.2.23', manifestVersion: null, covered: ['3.2.6', '3.2.17'] })
-  assert.equal(unsupported.hasAdapt, false)
-  assert.equal(unsupported.text.includes('暂无适配清单'), true)
-  assert.equal(unsupported.text.includes('3.2.6'), true)
-  const hidden = collect({ state: 'hidden' })
-  assert.equal(hidden.hasAdapt, false)
-  assert.equal(hidden.text.includes('适配'), false)
 })
 
-check('[0.11.4] 额度面板渠道顺序与设置页一致（DeepSeek → MiMo → WorkBuddy → Codex → OpenCode Go）', () => {
+check('[0.11.4] 额度面板渠道顺序与设置页一致（DeepSeek → MiMo → Codex → OpenCode Go）', () => {
   const now5 = Date.now()
   const plans5 = [
     { id: 'opencode-go', fields: { enabled: 'opencodeGoEnabled' }, name: 'OpenCode Go' },
     { id: 'deepseek', fields: { enabled: 'deepseekEnabled' }, name: 'DeepSeek' },
     { id: 'codex', fields: { enabled: 'codexEnabled' }, name: 'Codex' },
     { id: 'mimo', fields: { enabled: 'mimoEnabled' }, name: 'MiMo' },
-    { id: 'workbuddy', fields: { enabled: 'workbuddyEnabled' }, name: 'WorkBuddy' },
   ]
   const wires5 = [
     { id: 'opencode-go', identity: 'a', fetchedAt: now5 },
     { id: 'deepseek', identity: 'b', fetchedAt: now5, balance: 9.41, currency: 'CNY', via: 'account' },
     { id: 'codex', identity: 'c', fetchedAt: now5 },
     { id: 'mimo', identity: 'd', fetchedAt: now5, balance: 14.56, currency: 'CNY', via: 'api-key' },
-    { id: 'workbuddy', identity: 'e', fetchedAt: now5, creditsTotal: 530 },
   ]
   const builtOrder = buildNativeData({ cfg: { enabled: true }, plans: plans5, wires: wires5, customEntries: [], locale: 'zh-CN', previous: null, now: now5 })
-  assert.deepEqual(Object.keys(builtOrder.data.channels), ['deepseek', 'mimo', 'workbuddy', 'codex', 'opencodeGo'])
+  assert.deepEqual(Object.keys(builtOrder.data.channels), ['deepseek', 'mimo', 'codex', 'opencodeGo'])
 })
 
 // ── 3.5 [alpha.6–alpha.8] 顺序 / 宽度宽限 / 颜色 守卫 ─────────────────────
@@ -1145,8 +1215,8 @@ function buildGo (wires, extra) {
   }, extra || {}))
 }
 
-check('[alpha.6] planOrder 兜底：缺省 / 空数组 / 坏 JSON / 非数组 ⇒ 固定顺序 DeepSeek→MiMo→WorkBuddy→Codex→OpenCode Go', () => {
-  const expected = ['deepseek', 'mimo', 'workbuddy', 'codex', 'opencodeGo']
+check('[alpha.6] planOrder 兜底：缺省 / 空数组 / 坏 JSON / 非数组 ⇒ 固定顺序 DeepSeek→MiMo→Codex→OpenCode Go', () => {
+  const expected = ['deepseek', 'mimo', 'codex', 'opencodeGo']
   for (const planOrder of [undefined, '[]', '', '{bad', '"not-array"']) {
     const cfg = planOrder === undefined ? {} : { planOrder }
     const built = buildNativeData({
@@ -1164,8 +1234,8 @@ check('[alpha.6] planOrder 兜底：缺省 / 空数组 / 坏 JSON / 非数组 �
   }
   walk(view)
   assert.deepEqual(
-    headings.filter((h) => ['**DeepSeek**', '**MiMo**', '**WorkBuddy**', '**Codex**', '**OpenCode Go**'].includes(h)),
-    ['**DeepSeek**', '**MiMo**', '**WorkBuddy**', '**Codex**', '**OpenCode Go**'],
+    headings.filter((h) => ['**DeepSeek**', '**MiMo**', '**Codex**', '**OpenCode Go**'].includes(h)),
+    ['**DeepSeek**', '**MiMo**', '**Codex**', '**OpenCode Go**'],
   )
 })
 
@@ -1173,8 +1243,8 @@ check('[alpha.6] 已保存 planOrder（JSON 字符串）优先；数组形式兼
   const keysOf = (planOrder) => Object.keys(buildNativeData({
     cfg: { planOrder }, plans, semanticsOf: () => 'used', wires: fakeWires(NATIVE_NOW), customEntries: [], locale: 'zh-CN', now: NATIVE_NOW,
   }).data.channels)
-  assert.deepEqual(keysOf('["mimo","deepseek"]'), ['mimo', 'deepseek', 'workbuddy', 'codex', 'opencodeGo'])
-  assert.deepEqual(keysOf(['codex', 'deepseek']), ['codex', 'deepseek', 'mimo', 'workbuddy', 'opencodeGo'])
+  assert.deepEqual(keysOf('["mimo","deepseek"]'), ['mimo', 'deepseek', 'codex', 'opencodeGo'])
+  assert.deepEqual(keysOf(['codex', 'deepseek']), ['codex', 'deepseek', 'mimo', 'opencodeGo'])
   // 坏元素被过滤、重复项去重（先出现者优先）
   assert.deepEqual(parsePlanOrder('["mimo", 3, "mimo", "deepseek"]'), ['mimo', 'deepseek'])
 })
@@ -1264,7 +1334,7 @@ check('[alpha.8] 视图协议字段：进度条绑 barTone、余额行绑 valueT
   walk(view)
   assert.equal(bindings.includes('data.channels.codex.barTone'), true)
   assert.equal(bindings.includes('data.channels.deepseek.valueTone'), true)
-  assert.equal(items.length, 3)
+  assert.equal(items.length, 2)
   for (const list of items) {
     for (const item of list) {
       assert.equal(Array.isArray(item), false, 'keyValue items 必须是对象')

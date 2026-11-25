@@ -34,8 +34,8 @@ check('路由事件：model/selection', () => {
 })
 check('路由事件：request/header 取实际 route', () => {
   assert.deepEqual(
-    routeFromSessionEvent({ type: 'request/header', data: { header: { config: { provider: 'workbuddy', model: 'x' } } } }),
-    { provider: 'workbuddy', model: 'x' },
+    routeFromSessionEvent({ type: 'request/header', data: { header: { config: { provider: 'codex', model: 'x' } } } }),
+    { provider: 'codex', model: 'x' },
   )
 })
 check('路由事件：assistant/message 取 message.source', () => {
@@ -59,13 +59,13 @@ check('latest wins：后到事件覆盖，同值不重复通知', () => {
 check('会话隔离：不同 session 各自保存', () => {
   const map = new Map()
   applySessionRouteEvent(map, 'a', { type: 'model/selection', data: { provider: 'opencode-go', model: 'm' } })
-  applySessionRouteEvent(map, 'b', { type: 'model/selection', data: { provider: 'workbuddy', model: 'm' } })
+  applySessionRouteEvent(map, 'b', { type: 'model/selection', data: { provider: 'codex', model: 'm' } })
   assert.equal(map.get('a').provider, 'opencode-go')
-  assert.equal(map.get('b').provider, 'workbuddy')
+  assert.equal(map.get('b').provider, 'codex')
 })
 
 const resolveRoute = (provider) => (provider === 'opencode-go' ? { channelId: 'opencode-go', source: null }
-  : provider === 'workbuddy' ? { channelId: 'workbuddy', source: null }
+  : provider === 'codex' ? { channelId: 'codex', source: null }
   : null)
 check('provider→渠道：内置映射精确匹配', () => {
   assert.deepEqual(providerToChannel('opencode-go', { resolveRoute }), { channelId: 'opencode-go', custom: false, name: null, source: null })
@@ -120,9 +120,6 @@ check('strip 百分比：低额度 tone=warn/bad', () => {
 check('strip 余额：DeepSeek/MiMo 带币种符号', () => {
   assert.equal(formatStripText({ channelId: 'deepseek', custom: false }, { availability: 'ok', balance: 12.34, currency: 'CNY' }, { locale: 'zh-CN' }).text, 'DeepSeek ¥12.34')
   assert.equal(formatStripText({ channelId: 'mimo', custom: false }, { availability: 'ok', balance: 8.5, currency: 'CNY' }, { locale: 'zh-CN' }).text, 'MiMo ¥8.50')
-})
-check('strip 积分：WorkBuddy 显示分，不与金额混比', () => {
-  assert.equal(formatStripText({ channelId: 'workbuddy', custom: false }, { availability: 'ok', balance: 3200, currency: null }, { locale: 'zh-CN' }).text, 'WorkBuddy 3,200 分')
 })
 check('strip 自定义：名称截断且数字可见', () => {
   const out = formatStripText({ channelId: 'custom:abcdefghijklmnopqrstuvwxyz', custom: true, name: '一个非常非常长的自定义渠道名称' }, { availability: 'ok', balance: 5, currency: 'USD' }, { locale: 'zh-CN' })

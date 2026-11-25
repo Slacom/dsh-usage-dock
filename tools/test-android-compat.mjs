@@ -62,17 +62,16 @@ try {
       })
     } finally {first.fetch=originalA;second.fetch=originalB}
   }
-  // 这里改 mock：模拟安卓端未安装可选的 WorkBuddy Connect。
+  // [2026-11-23] WorkBuddy 已退场：用仍在内置注册表里的 MiMo 覆盖「安卓端无
+  // shell / 无账号 / 无 configEditor 时也不崩」的同一降级路径。MiMo 没有可用
+  // 登录/凭据时应当给出可读的缺失态，而不是抛异常。
   globalThis.fetch=async()=>({status:404,json:async()=>({})})
-  // [2026-10-21] 国内版改读 WorkBuddy2API 网关（来自模型配置），**不再依赖** Connect 是否安装；
-  // 国际版仍走 Connect 端点，未安装时仍是 not-installed。
-  // [2026-10-21] workbuddy-ai 已退场：现在只剩一个国内渠道。
-  const missing=await request(handlerFor({...disabled,workbuddyEnabled:true}))
-  check('国内版按模型网关状态取数（不再依赖 Connect）',()=>{
+  const missing=await request(handlerFor({...disabled,mimoEnabled:true}))
+  check('安卓端无凭据的 MiMo 仍返回受控缺失态（不依赖 shell/账号）',()=>{
     assert.equal(missing.body.data.plans.length,1)
-    assert.equal(missing.body.data.plans[0].id,'workbuddy')
-    // 国内版：该宿主没有模型目录 → 能力不可用（不再是 not-installed）。
-    assert.equal(missing.body.data.plans[0].error,'unavailable')
+    assert.equal(missing.body.data.plans[0].id,'mimo')
+    assert.ok(['no-key','no-credential','unavailable','not-installed'].includes(missing.body.data.plans[0].error),
+      '实际错误：'+JSON.stringify(missing.body.data.plans[0]))
   })
   const post=await request(handler,'POST')
   check('方法限制仍为405',()=>assert.equal(post.status,405))

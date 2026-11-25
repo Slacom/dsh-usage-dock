@@ -44,11 +44,14 @@ export const FIXED_RULES = Object.freeze({
 /**
  * 路由（provider route id）→ 额度渠道的候选映射。
  *
- * **按实际计费路径判断，不看模型展示名**：用 `workbuddy` 路由跑 DeepSeek 模型时，
- * 消耗的是 WorkBuddy 的积分，评估的必须是 `workbuddy` 渠道。
+ * **按实际计费路径判断，不看模型展示名**：用 `opencode-go` 路由跑别家模型时，
+ * 消耗的是 OpenCode Go 的额度，评估的必须是 `opencode-go` 渠道。
  *
  * 表内容来自已核验的连接契约（`docs/research-quota-route-binding-20261019.md` §5）。
  * 没有映射的 route 一律返回 null —— **不猜、不拿无关渠道触发收尾**。
+ * 已退场的 `workbuddy` / `workbuddy-ai` 不在此表里：WorkBuddy 改由用户在
+ * 「自定义余额渠道」里自建，条目按 provider 精确匹配（见 strip.js 的 providerToChannel），
+ * 不会经由这张内置路由表复活。
  *
  * [A12] **精确键**：LLM registry 用的是精确 Map 键，`OPENAI-CODEX` 与 `openai-codex`
  * 是两个不同路由。这里**不做 trim/lowercase 猜测**，别名必须由用户显式绑定。
@@ -61,8 +64,6 @@ export const FIXED_RULES = Object.freeze({
  */
 const ROUTE_TABLE = Object.freeze({
   'openai-codex': { channelId: 'codex' },
-  workbuddy: { channelId: 'workbuddy' },
-  'workbuddy-ai': { channelId: 'workbuddy-ai' },
   /**
    * [0.10.5] OpenCode Go 的 provider route id 就是 `opencode-go`。
    *
@@ -84,7 +85,7 @@ const ROUTE_TABLE = Object.freeze({
 const RESERVE_MODEL_PREFIX = 'gpt-reserve'
 
 /**
- * 路由 id 分词：按非字母数字切分（`custom-workbuddy` → `['custom','workbuddy']`）。
+ * 路由 id 分词：按非字母数字切分（`custom-openai-codex` → `['custom','openai','codex']`）。
  *
  * **不转小写**：provider id 是配置里的精确字符串，大小写变体不该被当成同一个渠道
  * （沿用既有 A12「不做大小写/空白归一化」的约定）。
@@ -113,15 +114,18 @@ const ROUTE_KEY_TOKENS = Object.freeze(Object.keys(ROUTE_TABLE).map((key) => ({ 
  * 把 route id 解析成渠道候选。
  *
  * [2026-11-17 真机] **不再只做精确匹配**：provider id 由用户在「设置 → 模型」里命名，
- * 同一套服务在不同设备上会叫 `workbuddy` / `custom-workbuddy` / `my-workbuddy`。
- * 只认精确 id 时，手机端用 `custom-workbuddy` 聊天 → 路由 unmapped → 额度策略不注入、
+ * 同一套服务在不同设备上会叫 `openai-codex` / `custom-openai-codex` / `my-openai-codex`。
+ * 只认精确 id 时，手机端用 `custom-openai-codex` 聊天 → 路由 unmapped → 额度策略不注入、
  * 胶囊也不显示该渠道。
  *
  * 现在的匹配顺序：
- *   1. 精确 id（`workbuddy`、`workbuddy-ai`、`opencode-go` …）；
+ *   1. 精确 id（`openai-codex`、`opencode-go`、`deepseek-account` …）；
  *   2. **词元连续包含**：provider 分词后包含某个表 key 的完整词元序列，取**最长**的那个
- *      （`custom-workbuddy` → `workbuddy`；`custom-workbuddy-ai` → `workbuddy-ai`）；
+ *      （`custom-openai-codex` → `openai-codex`；`my-opencode-go` → `opencode-go`）；
  *   3. 等长多命中 ⇒ 视为歧义，返回 null（不猜）。
+ *
+ * 表里没有的 id（含已退场的 `workbuddy` / `workbuddy-ai`）不会被词元匹配硬套到
+ * 别的内置渠道上；它们由自定义余额条目的 provider 精确匹配处理。
  *
  * @param {string} provider 本次请求实际使用的 provider route id
  * @returns {{ channelId: string, source: string|null }|null}

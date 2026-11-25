@@ -2,6 +2,142 @@
 
 供本项目后续会话、接手主代理及子代理恢复协作规则；以用户最新明确指令和[项目规范](AGENTS.md)为准。这里不保存凭据、金额、认证URL或临时许可。
 
+> **现行 MiMo 口径（2026-11-24 起）**：MiMo **只保留 API Key 余额**（`mimoApiKey` 或
+> 「设置 → 模型」里的 MiMo Key）；无 Key 固定 `no-key`。扫码登录 / 记住登录 / 控制台 Cookie /
+> `mimoCookie` / `mimo-login` 面板**已彻底删除**，下方 2026-11-24 之前的 MiMo 条目只作历史记录。
+
+## 2026-11-24：**MiMo 扫码登录 / 记住登录彻底删除**（0.12.0 开发中，未发布）
+
+- **用户要求**：彻底删除 MiMo 扫码登录 / 记住登录相关内容，只保留 API Key 余额；本轮只改文档，
+  代码/测试/`package.json` 由其他代理负责（`package.json` 的 description/version 不动）。
+- **代码事实（实现侧已完成）**：
+  - 删除 `plans/mimo-auth/**` **15 个文件**（host / routes / session-display / remembered-session /
+    console-* / vendor / windows-dpapi 等）与 `plans/mimo-legacy-store.js`；
+  - 删除 client 侧扫码 / 记住登录 UI（`MimoDisplayPanel`、`mimoDisplay*`、登录态/二维码/审批等）；
+  - 删除 Host 侧 legacy 凭据记录、`routeDisplay`/display 覆盖与 `mimoWireReady` 显示快照；
+  - 删除 `dshGo.contributes.panels` 里的 `mimo-login` 面板，原生面板只剩 **quota / settings 2 个**；
+  - `plans/mimo.js` 只认 `mimoApiKey`（或「设置 → 模型」的 MiMo Key，含 `XIAOMI_API_KEY` 与
+    provider 名含 mimo/xiaomi 的自动匹配），请求 `GET https://api.xiaomimimo.com/v1/platform/balance`
+    （`api-key` 头）；**没有 Cookie 回退、扫码、remembered、登录态过期**，无 Key 固定 `no-key`（零请求）。
+- **测试**：除 `test-mimo-api-key.mjs`（**17 项**）外，**36 个 `test-mimo*` 套件已删除**
+  （auth / console / display / remembered / legacy-store / footer-refresh / usage-lane / parse 等）。
+  **最终回归（2026-11-25 收口）**：关键 **13 套件共 785 项全绿**——
+  `test-dsh-go-boundaries` 29 / `test-usage-recheck-f1f2` 17 / `test-mimo-api-key` 17 /
+  `test-dsh-go-native` 53 / `test-degrade-refresh` 41 / `test-settings` 17 /
+  `test-settings-layout-20261024` 30 / `test-config-unwrap` 22 / `test-usage-tool` 103 /
+  `test-codex-account` 242 / `-host` 46 / `-ui` 100 / `test-line-endings` 68；
+  另有 `test-review-fixes` **40** 项通过。**全部 WorkBuddy / MiMo 相关改动套件通过**。
+  2026-11-23 的「102 套件 / 94 通过、8 个失败」是 MiMo 清理前的旧结果，已过期不可引用。
+  **0.12 未发布、未真机验收。**
+- **文档口径（本轮已改）**：README 的 MiMo 行与设置字段改为 `mimoApiKey`（或「设置 → 模型」的
+  XIAOMI_API_KEY），删掉 `mimoCookie` / F12 / Cookie / 扫码 / 记住登录 / 登录态过期表述；
+  AGENTS 的架构、测试清单、§7、§12 标为已删除/仅历史；backlog 的 MiMo 登录条目关闭；
+  0.12.0 发布草稿与 dsh-go-native-panel 增加删除说明；codex-account 文档只在渠道清单处同步。
+- **保留**：历史 MiMo 文档（`docs/mimo-*.md`、旧发布说明）不删除，但明确标「已退场/仅历史」，
+  **不声称已发布**；`mimoCookie` 至多作为历史字段出现，不再写成可用输入。
+- **状态**：**未部署、未重启、未提交、未发布、未真机验收**；0.12.0 仍只是草稿。
+
+
+## 2026-11-23：**WorkBuddy 退场**（0.12.0 开发中）—— 原生渠道收敛为 4 个
+
+- **用户决定**：**WorkBuddy 不再作为插件原生 / 内置渠道**；以后要用只通过「自定义余额渠道」添加。
+  原生/内置渠道只保留 **OpenCode Go、DeepSeek、OpenAI Codex、小米 MiMo** 4 个。
+- **代码事实（实现侧已完成）**：`plans/workbuddy.js` 已删除；`workbuddy` 与 `workbuddy-ai`
+  都进 `RETIRED_PLAN_IDS`（不取数、不复活），旧配置字段保留但不生效；
+  `plans/dsh-go-native.js#NATIVE_CHANNEL_ORDER` = `['deepseek','mimo','codex','opencode-go']`
+  （原生面板默认 DeepSeek → MiMo → Codex → OpenCode Go，已保存的 `planOrder` 仍优先），
+  原生分组 / 开关 / 额度策略里的 WorkBuddy 字段已删除。
+- **随渠道退场删除的专用测试（6 个，不要再列为待跑）**：`test-workbuddy-contract`、
+  `test-workbuddy-expiry-label`、`test-workbuddy-legacy-selection`、`test-workbuddy-round8`、
+  `test-workbuddy-client-credits`、`test-workbuddy-gateway`。
+- **文档口径**：README / AGENTS.md / backlog / 0.12.0 发布草稿的「现行渠道」段只列 4 个原生渠道
+  + 自定义余额渠道；WorkBuddy 标为**已退场**（0.12.0，用户不再使用反代渠道）并写明「如仍需要，
+  请用自定义余额渠道添加」；历史记录不删除、不伪造，当前版本也不声称已发布 / 已真机验收。
+- **本轮回归（2026-11-23 实跑，WorkBuddy 退场后）**：**102 套件 / 94 通过**。现役核心：
+  `codex-account` 242 / `codex-account-host` 46 / `codex-account-ui` 100 / `dsh-go-native` 53 /
+  `dsh-go-boundaries` 50 / `dsh-go-strip` 16 / `usage-tool` 103 / `usage-tool-register` 70 /
+  `usage-tool-host` 41 / `capsule-pending` 23 / `degrade-refresh` 37 / `custom-settings` 49 /
+  `line-endings` 68。**8 个失败全部是既有的非 WorkBuddy 问题**（MiMo / Codex 旧适配，
+  属历史已知欠账），**不计入本次回归**、也不是本轮引入：`test-codex-auto-adapt` 3/9、
+  `test-fetch-backends` 1/13、`test-mimo-display-client` 7、`test-mimo-display-e2e` 16、
+  `test-mimo-footer-refresh` 1、`test-mimo-remembered-client-e2e` 52、`test-mimo-remembered-tree` 1、
+  `test-usage-recheck-f1f2`（崩溃）。
+  > **2026-11-25 最终收口**：上述 5 个 MiMo 套件已随扫码/记住登录代码删除；关键 **13 套件共 785 项
+  > 全绿**（清单见顶部 2026-11-24 条目），另有 `test-review-fixes` **40** 项通过，
+  > **全部 WorkBuddy / MiMo 相关改动套件通过**。102/94 与旧失败名单只作历史，不再引用；
+  > **0.12 未发布、未真机验收**。
+- **删除清单**：`plans/workbuddy.js` + 6 个 WorkBuddy 套件 + 1 个 WorkBuddy debug 脚本；
+  文档（AGENTS.md / 0.12.0 发布草稿 / backlog）已同步；**最终测试数字见顶部 2026-11-24 条目
+  （2026-11-25 收口：关键 13 套件 785 项全绿）**。
+- **状态**：0.12.0 仍**未部署、未提交、未发布、未真机验收**；`package.json` 仍是 **0.11.3**
+  （只改了 `description`：删去 WorkBuddy，改为四渠道 + 自定义余额渠道）。
+
+## 2026-11-23：Codex 只保留本插件登录 + **多账户**（0.12.0 开发中，未发布）
+
+- **用户决定**：`connect` / `subscription` 两个来源**退场** —— Codex 只用本插件自己的 ChatGPT 账号
+  （设备码），并支持**多账户**。网页设置页不再有来源单选 / 摘要 / 说明 / Subscription 适配块；
+  DSH Go 原生设置页删除 `codexSource` 下拉与「一键适配」入口（相关代码保留为死代码，
+  活动取数 `plans/codex.js#fetchPlan` 恒走 account）。
+- **记录 v2**：`dsh-usage-dock/codex` payload = `{version:2, activeAccountId, accounts:[…]}`，
+  **1..8 个账户**、单选生效；credential 字段 `type` / `access` / `refresh` / `expires` / `accountId` /
+  `credentialId` / `revision` / `savedAt` + 可选 `planType` / `email`；`credentialId` / `accountId`
+  各自唯一，白名单外 key / 重复 id / 超限 / active 未命中一律 `incompatible`。旧 v1 单账户
+  **读兼容、任何写操作后落 v2**（无迁移脚本、用户无感）。
+- **账户语义**：添加 = 新 `credentialId`（randomUUID）追加 + 设为 active；同 `accountId` 重登 =
+  **upsert**（保留 `credentialId`、`revision + 1`、active 跟随）；select = 只改 `activeAccountId`；
+  remove = 只删指定 id，移除最后一个删整条记录回到未登录；满 8 个返回 `limit`、不写。
+- **UI（用户定稿）**：账户列表**上方**整行「添加账户」（无账户时也在）；每行 radio +「账号名 · Plus」
+  （账号名 14px primary/500、计划 13px secondary）；**仅选中行**在同一行最右侧显示
+  「重新登录 / 退出登录」；长账号名省略不换行；到期时间不显示。
+- **身份**：`identityOfChannel('codex')` 只拼 `acct=<快照>`；快照 =
+  `acct:<accountId sha256 前 8>@<credentialId 前 8>r<revision>`（或 `none` / `unknown`）；
+  **不再含** `codexSource`，也不再含第三方 service 的实例/revision（旧 `csrc` / `crt` 已删）。
+  切换 / 登录 / 移除 / 刷新后更新；刷新 token 不改 `revision`。
+- **测试（当前工作区，2026-11-23 实跑）**：`test-codex-account` **242** / `test-codex-account-host` **46** /
+  `test-codex-account-ui` **100** / `test-dsh-go-native` **53** / `test-dsh-go-boundaries` **50**
+  （含账号切换身份隔离 C1b/C1c/E1b）。
+  已删除的退场测试：`test-codex-sources`、`test-codex-source-ui`、`test-codex-patch-ui`、
+  `test-codex-adapt-ui`（不要再列为待跑）。
+- **状态**：**未部署、未重启、未提交、未发布、未真机验证多账户**；`package.json` 仍是 **0.11.3**，
+  0.12.0 只是草稿；真实账号只成功登录过**一个**账户一次（用户 2026-11-23 反馈）。
+- **文档**：主文档 [docs/codex-account-oauth-20261122.md](docs/codex-account-oauth-20261122.md)
+  （已改为「仅本插件账号 + 多账户」，含 v2 记录 / 迁移 / 上限 8 / select-remove 语义 / UI 布局 /
+  `acct=…r<revision>`）；发布草稿 [docs/release-notes-v0.12.0.md](docs/release-notes-v0.12.0.md)；
+  backlog §5 已按退场后的现实重写。
+
+## 2026-11-22：Codex 独立登录（0.12.0 开发中，未发布）
+
+> 2026-11-23 更新：来源选择已整体退场（`connect` / `subscription` 不再出现在设置页 / 原生页），
+> 改为「仅本插件账号 + 多账户」，见上方 2026-11-23 条目；本节保留为当时的决策记录。
+
+- **决策**：官方 `openai/sign-in-with-chatgpt-devkit`（SIWC）**解决不了**这件事 —— `packages/local`
+  只到 OAuth / 凭据存储 / 账号资料 / 模型目录 / Responses 流，**没有额度读取 API**；
+  `CHATGPT_USAGE_URL` 只是网页链接；用其 access token 调 `/backend-api/wham/usage` 实测返回
+  401 `no_matching_rule`，OpenAI 在 issue #3 回复「暂不支持」；且许可证是 Sign-in with ChatGPT DevKit
+  **Noncommercial License v1.0**、`@siwc/local` 未发布 npm ⇒ **不集成其代码**。
+  改用 **Codex OAuth 设备码（Codex CLI 同款公开流程）+ `GET https://chatgpt.com/backend-api/wham/usage`**，
+  凭据只进**插件私有记录** `dsh-usage-dock/codex`（kind `grant`；payload 白名单
+  `type:'oauth'` / access / refresh / expires / accountId / credentialId / revision / savedAt，
+  可选 planType / email），**令牌不出 Host**、不写配置、不回显浏览器。
+- **来源**：`codexSource:'account'`（界面「ChatGPT 账号（本插件登录）」，来源闭集第三个值）；
+  **默认仍是 `connect`**，不自动迁移、失败不 fallback 到 connect/subscription，胶囊/详情仍是一行 Codex。
+  刷新只在 `ctx.credentials.modifyRecord` 独占写里按 **`credentialId` + `expires`** 二次检查 ——
+  只防本插件内部并发覆盖，**不防**其它客户端（Codex CLI / pi-ai / Codex Connect）轮换同一账号的 refresh token。
+- **改动文件**：新增 `plans/codex-account.js`（设备码 / 兑换 / 刷新 / 额度 / 登录协调器 + 同步身份快照）；
+  `plans/codex.js`（第三来源分派）、`plans/codex-sources.js`（闭集与标签）、
+  `plans/custom-balance.js`（配置摘要加来源片段）、`plans/dsh-go-native.js`（原生来源选项）、
+  `index.js`（5 条路由：`codex-account/state`、`login`、`login/status`、`login/cancel`、`logout`）、
+  `client.js`（Codex 登录卡片六相位 + 来源白名单三值）；新增三份测试
+  `tools/test-codex-account.mjs` / `tools/test-codex-account-host.mjs` / `tools/test-codex-account-ui.mjs`
+  （并更新 `test-codex-sources` / `test-codex-source-ui` / `test-dsh-go-native`）。
+- **验证**：account **170** / host **40** / UI **132** / sources **104** / source-ui **91** / native **54**；
+  Max 终审 **PASS WITH NON-BLOCKING**（6 项已修，定向复核中）。
+  **未部署、未重启、未提交、未发布、未真机 / 真实账号验证**；`package.json` 仍是 **0.11.3**。
+- **已知限制**：`/wham/usage` 是 Codex 客户端在用的**内部接口、非官方支持**，上游可能改版失效；
+  移动端原生设置页只能选来源，**需在桌面网页版设置页完成登录**；
+  启动时身份快照是 fire-and-forget，首个采集可能**短暂**显示「本次采集已作废，等待最新额度」，下一轮自愈。
+  协议、边界与合规说明见 [docs/codex-account-oauth-20261122.md](docs/codex-account-oauth-20261122.md)。
+
 ## 2026-11-19：**0.11.3 正式版已发布**（用户验收后授权）
 
 - **npm**：`dsh-usage-dock@0.11.3`，shasum `b5e3427541da134de53a1790b4e4863b9d73360f`；
@@ -11,8 +147,9 @@
 - 内容：MiMo 改 API Key 取余额并下线扫码登录 + DSH Go 原生面板（渠道顺序 / 5 次宽限 / barTone /
   缓存优先 / Codex 一键适配含锚点自动匹配）+ 网页设置页 grid 对齐 / 预警-收尾改名 / OpenCode 去月窗口。
 - 0.11.2 与其 alpha 线**保持预发布**状态；正式版号从 0.11.3 起（0.11.2 npm 版本号已占用不可复用）。
-- **遗留测试债**：7 组 MiMo 扫码相关旧测试 + 3 组依赖真机状态的旧用例仍需下一轮清理；
-  核心套件（原生 50 / 边界 47 / usage_status 108 / 策略 89 / 布局 30+22 等）全绿。
+- **遗留测试债（2026-11-24 已清理）**：7 组 MiMo 扫码相关旧测试 + 3 组依赖真机状态的旧用例
+  **已随扫码/记住登录代码整体删除**，不再需要下一轮清理；见顶部 2026-11-24 条目。
+  当时核心套件（原生 50 / 边界 47 / usage_status 108 / 策略 89 / 布局 30+22 等）全绿。
 - 发布后本机 desktop profile 已是 `0.11.3`，本地包 `dist/dsh-usage-dock-0.11.3.tgz`（不入库）。
 ## 2026-11-19：0.11.2-alpha.8 —— DSH Go 移动端修复并入仓库
 
@@ -52,7 +189,7 @@
 3. 测试：`test-mimo-api-key` **17 项**；`test-dsh-go-native` 46 项（MiMo 分组断言改写）。
 4. 发布：0.11.3 = **pre-release**（0.11.1 仍是 latest）；发布事实见下表补记。
 5. 未做：`plans/mimo-auth/**`、`mimo-legacy-store.js`、`mimo-login` 面板代码仍在（界面无入口、有 Key
-   时不读取），彻底删除留作单独清理。
+   时不读取），彻底删除留作单独清理。**→ 2026-11-24 已完成彻底删除，见顶部条目。**
 
 ## 2026-11-18：0.11.2 —— MiMo API Key 余额 + DSH Go Codex 一键适配
 
@@ -114,7 +251,7 @@
    余额/积分改绑 `.value`；配额渠道无窗口时状态文案进第一窗口说明；正常态 note 为空串。
 5. 测试（主代理实跑）：`test-workbuddy-gateway` 39/39、`test-workbuddy-client-credits` 50/50、
    `test-route-normalize` 7/7、`test-dsh-go-native` 43/43、`test-dsh-go-strip` 17/17、
-   `test-dsh-go-boundaries` 47/47、`test-mimo-legacy-store` 12/12、`test-usage-tool` 108/108、
+   `test-dsh-go-boundaries` 50/50、`test-mimo-legacy-store` 12/12、`test-usage-tool` 108/108、
    `test-usage-tool-register` 70/70、`test-footer-row` 12/12、`test-degrade-refresh` 44/44、
    `test-codex-patch-ui` 35/35、`test-codex-source-ui` 91/91、`test-settings` 17/17、
    `test-android-compat` 14/14、`test-line-endings` 71/71。
@@ -251,10 +388,10 @@
      与 F（`pickLegacyBalanceView` 顺序、过期 done 不短路）两项阻断均已闭合，未发现新阻断；
      复审还额外验证「身份稳定后能自愈（29% 再 carry）」「记录缓存再次过期会重新重放」
      「恰好 5 分钟仍新鲜、+1ms 重放」。**验收边界：离线代码与定向行为复审通过，不等同手机真机、
-     原生视觉或发布验收。** 守门测试 `tools/test-dsh-go-boundaries.mjs` 已扩到 **47** 项
-     （首轮问题 + E1–E3 + F1–F9）。
+     原生视觉或发布验收。** 守门测试 `tools/test-dsh-go-boundaries.mjs` 已扩到 **50** 项
+     （首轮问题 + E1–E3 + F1–F9 + 0.12.0 账号切换身份隔离 C1b/C1c/E1b）。
 10. **整改后测试（主代理实跑全绿）**：`test-dsh-go-native` **40/40**、
-    `test-dsh-go-boundaries` **47/47**（整改新增，含 E/F 段）、`test-dsh-go-strip` **17/17**、
+    `test-dsh-go-boundaries` **50/50**（整改新增，含 E/F 段与账号切换身份隔离 C1b/C1c/E1b）、`test-dsh-go-strip` **17/17**、
     `test-mimo-legacy-store` **12/12**；回归 `test-patch-codex-subscription` 49/0、
     `test-codex-patch-ui` 35、`test-codex-source-ui` 91、`test-android-compat` 14、
     `test-usage-tool` 108、`test-footer-row` 12、`test-line-endings` 71。

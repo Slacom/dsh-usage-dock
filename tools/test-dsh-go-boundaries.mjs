@@ -1,20 +1,21 @@
 /**
  * [0.11.0 终审边界] DSH Go 原生半的四组边界（离线、mock ctx，不联网 / 不读真实凭据）：
  *
- *   A. legacy（MiMo 记住登录）闸门：无桥 / 停用 / 关 remember 时**零凭据读取、零余额请求**；
- *      配置变化立即失效旧值；超过 5 分钟不再把历史余额当新鲜（会触发重放，不伪造时间戳）。
  *   B. strip 启用闸门：总开关或渠道开关关闭时**零 provider 调用**、不显示旧值。
- *   C. strip 缓存/在途按来源身份隔离：Codex Connect → Subscription 切换后，
- *      新来源永久失败时不得继续显示旧来源的百分比。
+ *   C. strip 缓存/在途按**账号身份**隔离：切换 ChatGPT active 账户后，
+ *      新账号永久失败时不得继续显示旧账号的百分比，且必须重新取数。
  *   D. 策略刷新定时器：有桥 + 有 systemPrompt 但**没有 tools** 时，dispose 后 interval 必须清零。
+ *   E. 原生 collect：采样期间切换 ChatGPT active 账户（身份漂移）时该条 wire 不带 identity，
+ *      下一轮同身份暂时失败也不得 carry 旧百分比。
+ *
+ * 0.12.0 已删除 MiMo 的扫码登录 / 记住登录 / legacy 记录通道，原先的 A 段（legacy 闸门）
+ * 与 F 段（legacy 选择顺序 / legacyRecordDisplay）随之整体移除；本文件不再断言这些功能。
  *
  * 用法：node tools/test-dsh-go-boundaries.mjs
  */
-import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { apply, pickLegacyBalanceView } from '../index.js'
+import { apply } from '../index.js'
 import { PLANS } from '../plans/index.js'
-import { buildLegacyRecord, MIMO_LEGACY_RECORD_KEY } from '../plans/mimo-legacy-store.js'
+import { CODEX_ACCOUNT_RECORD_KEY, codexAccountIdentitySnapshot, selectCodexAccount } from '../plans/codex-account.js'
 
 let passCount = 0
 let failCount = 0
@@ -29,15 +30,10 @@ function check(name, cond, detail) {
 }
 
 // ---------------------------------------------------------------------------
-// 全局替身：离线 fetch 计数 + 假 interval（只记录，不真正定时）
+// 全局替身：离线 fetch（任何真实出网都直接失败）+ 假 interval（只记录，不真正定时）
 // ---------------------------------------------------------------------------
 const realFetch = globalThis.fetch
-let balanceFetchCalls = 0
-let balanceFetchImpl = async () => { throw new TypeError('offline') }
-globalThis.fetch = (url, init) => {
-  balanceFetchCalls += 1
-  return balanceFetchImpl(url, init)
-}
+globalThis.fetch = async () => { throw new TypeError('offline') }
 
 const realSetInterval = globalThis.setInterval
 const realClearInterval = globalThis.clearInterval
@@ -97,19 +93,57 @@ function fakeSystemPrompt() {
   }
 }
 
-function fakeCredentials(record) {
-  const calls = { read: 0, delete: 0, modify: 0 }
+/**
+ * [2026-11-23 多账户] Codex 私有凭据替身：一条 v2 记录（`activeAccountId` + `accounts`），
+ * 可被**真实** `selectCodexAccount()` 通过 `modifyRecord()` 改写。只伪造本插件自己的记录。
+ */
+function fakeAccountCredentials(initialRecord) {
+  const records = new Map([[CODEX_ACCOUNT_RECORD_KEY, initialRecord]])
+  const calls = { read: 0, modify: 0, delete: 0 }
   return {
+    records,
     calls,
     async readRecord(key) {
-      if (key !== MIMO_LEGACY_RECORD_KEY) return undefined
       calls.read += 1
-      return record
+      return records.get(key)
     },
-    async deleteRecord() { calls.delete += 1 },
-    async modifyRecord(key, fn) { calls.modify += 1; return fn() },
+    async modifyRecord(key, mutate) {
+      calls.modify += 1
+      const next = await mutate(records.get(key))
+      if (next !== undefined) records.set(key, next)
+      return records.get(key)
+    },
+    async deleteRecord(key) {
+      calls.delete += 1
+      records.delete(key)
+    },
   }
 }
+
+/**
+ * 两账户 v2 记录：账号 id 与 credential id **各自不同** ⇒
+ * `codexAccountIdentitySnapshot()` 在切换前后必然不同（`acct:<hash>@<id8>r<rev>`）。
+ */
+function codexAccountRecord(activeId, ids) {
+  const accounts = ids.map((credentialId, index) => ({
+    type: 'oauth',
+    access: 'SYNTHETIC-ACCESS-' + index,
+    refresh: 'SYNTHETIC-REFRESH-' + index,
+    expires: Date.now() + 60 * 60 * 1000,
+    accountId: 'acct-synthetic-' + String(index + 1).padStart(16, '0'),
+    credentialId,
+    revision: 1,
+    savedAt: new Date().toISOString(),
+    planType: 'plus',
+    email: 'user' + (index + 1) + '@example.test',
+  }))
+  return { kind: 'grant', payload: { version: 2, activeAccountId: activeId, accounts } }
+}
+
+/** 给 `selectCodexAccount()` 的最小 ctx（只暴露凭据服务，与生产读法一致）。 */
+const credentialsCtxOf = (credentials) => ({
+  get(name) { return name === 'credentials' ? credentials : undefined },
+})
 
 function fakeSessions(eventsBySession) {
   return {
@@ -234,110 +268,6 @@ const providerEvent = (provider) => ({
 })
 
 // ---------------------------------------------------------------------------
-// A. legacy 闸门
-// ---------------------------------------------------------------------------
-const LEGACY_COOKIE = 'api-platform_serviceToken=tok-123; userId=42; api-platform_slh=syn; api-platform_ph=ph1'
-
-function validLegacyRecord(fetchedAt) {
-  const payload = buildLegacyRecord({
-    platformCookie: LEGACY_COOKIE,
-    balance: 12.5,
-    currency: 'CNY',
-    fetchedAt: typeof fetchedAt === 'number' ? fetchedAt : Date.now(),
-  })
-  assert.ok(payload !== null, '测试用的 legacy 记录必须合法')
-  return { kind: 'grant', payload }
-}
-
-async function legacyCase(label, opts) {
-  const credentials = fakeCredentials(validLegacyRecord())
-  const dshGo = fakeDshGo()
-  const boom = boot({
-    state: { config: Object.assign({ enabled: true, mimoEnabled: true, mimoRememberLogin: true }, opts.config || {}) },
-    credentials,
-    dshGo: opts.bridge === true ? dshGo : null,
-  })
-  await flush(6)
-  balanceFetchCalls = 0
-  // 配置重载是「桥接出现后」会触发 legacy 检查的事件（apply 里唯一的自动入口）。
-  boom.fire('app-boot/config-reload')
-  await flush(8)
-  check(
-    label,
-    credentials.calls.read === opts.expectReads && balanceFetchCalls === opts.expectFetches,
-    { read: credentials.calls.read, fetch: balanceFetchCalls, errors: boom.errors.map((e) => String(e && e.message)) },
-  )
-  boom.disposeAll()
-  await flush(2)
-}
-
-async function legacyGateTests() {
-  await legacyCase('A1 无 dshGo 桥：零凭据读取、零余额请求', {
-    bridge: false, expectReads: 0, expectFetches: 0,
-  })
-  await legacyCase('A2 有桥但插件总开关关闭：零凭据读取、零余额请求', {
-    bridge: true, config: { enabled: false }, expectReads: 0, expectFetches: 0,
-  })
-  await legacyCase('A3 有桥但 MiMo 渠道关闭：零凭据读取、零余额请求', {
-    bridge: true, config: { mimoEnabled: false }, expectReads: 0, expectFetches: 0,
-  })
-  await legacyCase('A4 有桥但关闭 remember login：零凭据读取、零余额请求', {
-    bridge: true, config: { mimoRememberLogin: false }, expectReads: 0, expectFetches: 0,
-  })
-  await legacyCase('A5 有桥且三项全开：读取凭据并重放余额（各 1 次）', {
-    bridge: true, expectReads: 1, expectFetches: 1,
-  })
-}
-
-/**
- * A6：只有桥 + 全开时才重放；没有可达的 MiMo host 时不得伪造 legacy 余额；
- * 同时用源码结构守住「新鲜度只认 fetchedAt，不用 checkedAt 冒充」这条契约
- * （这两点在 mock 宿主里不可达，因为真实 legacy 显示依赖 mimo-auth host 的 routeDisplay）。
- */
-async function legacyFreshnessTest() {
-  const disabled = allPlansDisabled()
-  const state = {
-    config: Object.assign({ enabled: true, mimoRememberLogin: true }, disabled, {
-      [enabledFieldOf('mimo')]: true,
-    }),
-  }
-  balanceFetchImpl = async () => ({
-    status: 200,
-    async json() { return { code: 0, data: { balance: 12.5, currency: 'CNY' } } },
-  })
-  balanceFetchCalls = 0
-  const credentials = fakeCredentials(validLegacyRecord(Date.now() - 60_000))
-  const dshGo = fakeDshGo()
-  const boom = boot({ state, credentials, dshGo })
-  await flush(8)
-  boom.fire('app-boot/config-reload')
-  await flush(10)
-  check('A6a 有桥全开时只重放一次（余额请求 1 次）', balanceFetchCalls === 1, { fetch: balanceFetchCalls })
-
-  const surface = boom.panels.get('quota')
-  check('A6b 原生额度面板已注册 data feed', surface !== undefined && typeof surface.data === 'function')
-  if (surface === undefined || typeof surface.data !== 'function') { boom.disposeAll(); return }
-  const emitted = []
-  const stop = surface.data({ sessionId: 's1' }, (payload) => emitted.push(payload))
-  await flush(15)
-  const panelText = JSON.stringify(emitted)
-  check('A6c 没有可达 MiMo host 时不伪造 legacy 余额（面板显示缺失）',
-    !panelText.includes('12.50') && !panelText.includes('12.5'), panelText.slice(0, 300))
-  check('A6d 只读展示不重复请求上游', balanceFetchCalls === 1, { fetch: balanceFetchCalls })
-  stop()
-  boom.disposeAll()
-  await flush(2)
-
-  const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
-  check('A6e 新鲜度用真实 fetchedAt（5 分钟常量存在）', source.includes('LEGACY_BALANCE_FRESH_MS'))
-  check('A6f 展示路径统一按真实 fetchedAt 判新鲜（不拿 checkedAt 冒充采集时间）',
-    source.includes('pickLegacyBalanceView') && !source.includes('Date.now() - legacyRecordState.checkedAt < 5 * 60_000'))
-  check('A6g 触发时桥接未就绪就不排队重放',
-    source.includes('if (dshGoBridgeSeen !== true) return Promise.resolve(null)'))
-  balanceFetchImpl = async () => { throw new TypeError('offline') }
-}
-
-// ---------------------------------------------------------------------------
 // B. strip 启用闸门
 // ---------------------------------------------------------------------------
 async function subscribeStripFor(boom, sessionId) {
@@ -412,40 +342,55 @@ async function stripGateTests() {
 }
 
 // ---------------------------------------------------------------------------
-// C. strip 来源身份隔离 + 永久失败
+// C. strip 账号身份隔离 + 永久失败
+// [2026-11-23] 来源（connect/subscription）已退场：身份漂移改由**切换 ChatGPT active 账户**
+// 驱动（记录中的 active credential 变化 ⇒ `acct=` 快照变化），不再改 `codexSource`。
 // ---------------------------------------------------------------------------
-async function codexSourceSwitchTests() {
+async function codexAccountSwitchTests() {
   const codexField = enabledFieldOf('codex')
   let fetchCalls = 0
-  let mode = 'connect'
+  let mode = 'a'
   stubPlanFetch('codex', async () => {
     fetchCalls += 1
-    if (mode === 'connect') return { id: 'codex', name: 'Codex', rollingUsage: { percent: 72 } }
-    // Subscription 新来源：永久失败（transient !== true），不得沿用 Connect 的 72%。
+    if (mode === 'a') return { id: 'codex', name: 'Codex', rollingUsage: { percent: 72 } }
+    // 新 active 账号：永久失败（transient !== true），不得沿用旧账号的 72%。
     return { id: 'codex', name: 'Codex', error: 'api', transient: false }
   })
   try {
-    const state = { config: { enabled: true, [codexField]: true, codexSource: 'connect' } }
+    const credentials = fakeAccountCredentials(codexAccountRecord('cred-a', ['cred-a', 'cred-b']))
+    const state = { config: { enabled: true, [codexField]: true } }
     const sessions = fakeSessions({ s2: [providerEvent('openai-codex')] })
-    const boom = boot({ state, sessions, dshGo: fakeDshGo() })
+    const boom = boot({ state, sessions, dshGo: fakeDshGo(), credentials })
     fetchCalls = 0
     const sub = await subscribeStripFor(boom, 's2')
     await flush(10)
     const first = sub.emitted[sub.emitted.length - 1]
-    check('C1 Connect 来源显示 Codex 72%', first !== null && first !== undefined
+    check('C1 ChatGPT 账号 A 显示 Codex 72%', first !== null && first !== undefined
       && String(first.text).includes('Codex') && String(first.text).includes('72%'), first)
 
-    // 切来源 → 新来源永久失败
+    // 切账号 → 新账号永久失败
     const beforeSwitch = sub.emitted.length
-    mode = 'subscription'
-    state.config.codexSource = 'subscription'
+    const identityBeforeSwitch = codexAccountIdentitySnapshot()
+    // **真实**切换 active 账户：写记录 + 同步刷新身份快照（等价于 select 路由的内部写操作）。
+    const switched = await selectCodexAccount(credentialsCtxOf(credentials), 'cred-b')
+    check('C1b selectCodexAccount 切换 active 账号成功（记录指向 B）',
+      switched.ok === true
+      && credentials.records.get(CODEX_ACCOUNT_RECORD_KEY).payload.activeAccountId === 'cred-b',
+      switched)
+    check('C1c 身份快照确实随 active 账号变化（acct:… 不同）',
+      typeof identityBeforeSwitch === 'string' && identityBeforeSwitch.startsWith('acct:')
+      && codexAccountIdentitySnapshot() !== identityBeforeSwitch
+      && codexAccountIdentitySnapshot().startsWith('acct:'),
+      { before: identityBeforeSwitch, after: codexAccountIdentitySnapshot() })
+    mode = 'b'
+    // 配置重载让 Host 用记录里的新 active 重算身份并重算 strip（真实客户端也靠刷新/定时重算）。
     boom.fire('app-boot/config-reload')
-    await flush(16)
+    await flush(20)
     const afterSwitch = sub.emitted[sub.emitted.length - 1]
     const afterSwitchText = JSON.stringify(sub.emitted.slice(beforeSwitch))
-    check('C2 新来源永久失败时 strip 隐藏（null）', afterSwitch === null, afterSwitch)
-    check('C3 不得继续显示旧来源的 Codex 72%', !afterSwitchText.includes('72%'), afterSwitchText.slice(0, 400))
-    check('C4 新来源确实重新取数（身份隔离后未复用旧缓存）', fetchCalls >= 2, { fetch: fetchCalls })
+    check('C2 新账号永久失败时 strip 隐藏（null）', afterSwitch === null, afterSwitch)
+    check('C3 不得继续显示旧账号的 Codex 72%', !afterSwitchText.includes('72%'), afterSwitchText.slice(0, 400))
+    check('C4 新账号确实重新取数（身份隔离后未复用旧缓存）', fetchCalls >= 2, { fetch: fetchCalls })
     sub.stop()
     boom.disposeAll()
     await flush(2)
@@ -490,47 +435,50 @@ async function policyTimerDisposeTests() {
 }
 
 // ---------------------------------------------------------------------------
-// E. 原生 collect：采样期间身份漂移时该条 wire **不带 identity**
+// E. 原生 collect：采样期间切换 ChatGPT active 账号时该条 wire **不带 identity**
+// [2026-11-23] 来源退场后不再用第三方 service revision 制造漂移；改为在慢采样期间
+// 真实调用 `selectCodexAccount()`（写记录 + 更新同步快照）。
 // ---------------------------------------------------------------------------
 async function identityDriftTest() {
   const codexField = enabledFieldOf('codex')
-  let revision = 1
   let calls = 0
-  const usageService = {
-    apiVersion: 1,
-    getRevision() { return revision },
-    async readUsage() { return null },
-  }
-  stubPlanFetch('codex', async () => {
+  stubPlanFetch('codex', async (ctx) => {
     calls += 1
     if (calls === 1) {
-      // 模拟慢采样期间账号变化：采样**完成前** revision 前进。
-      revision = 2
+      // 模拟慢采样期间用户切换账号：采样**完成前** active 与身份快照都变了。
+      const switched = await selectCodexAccount(ctx, 'cred-b')
+      if (switched.ok !== true) throw new Error('synthetic account switch failed')
       return { id: 'codex', name: 'Codex', rollingUsage: { percent: 72 } }
     }
     // 第二轮：同一（已推进的）身份下暂时失败。
     return { id: 'codex', name: 'Codex', error: 'api', transient: true }
   })
   try {
+    const credentials = fakeAccountCredentials(codexAccountRecord('cred-a', ['cred-a', 'cred-b']))
     const state = {
-      config: Object.assign({ enabled: true, codexSource: 'subscription' }, allPlansDisabled(), {
+      config: Object.assign({ enabled: true }, allPlansDisabled(), {
         [codexField]: true,
       }),
     }
-    const boom = boot({ state, dshGo: fakeDshGo(), services: { codexSubscriptionUsage: usageService } })
+    const boom = boot({ state, dshGo: fakeDshGo(), credentials })
     await flush(10)
     const surface = boom.panels.get('quota')
     check('E0 原生额度面板已注册 data feed', surface !== undefined && typeof surface.data === 'function')
     if (surface === undefined || typeof surface.data !== 'function') { boom.disposeAll(); return }
+    const identityAtStart = codexAccountIdentitySnapshot()
     const emitted = []
     const stop = surface.data({ sessionId: 's1' }, (payload) => emitted.push(payload))
     await flush(18)
     check('E1 第一次采样显示 Codex 72%（数据本身有效）', JSON.stringify(emitted).includes('72'), JSON.stringify(emitted.slice(-2)).slice(0, 400))
+    check('E1b 采样期间确实发生了账号切换（身份快照已变）',
+      typeof identityAtStart === 'string' && identityAtStart.startsWith('acct:')
+      && codexAccountIdentitySnapshot() !== identityAtStart,
+      { before: identityAtStart, after: codexAccountIdentitySnapshot() })
     const beforeRefresh = emitted.length
     try { surface.actions.refresh({ sessionId: 's1' }, { locale: 'zh-CN' }) } catch (err) { /* 动作缺失时靠下一轮 */ }
     await flush(22)
     const afterText = JSON.stringify(emitted.slice(beforeRefresh))
-    check('E2 身份漂移的旧结果不带 identity：下一轮暂时失败不 carry 旧 72%',
+    check('E2 采样期间切换账号的旧结果不带 identity：下一轮暂时失败不 carry 旧 72%',
       !afterText.includes('72'), afterText.slice(0, 400))
     check('E3 第二轮确实重新采样（provider 调用 2 次）', calls === 2, { calls })
     stop()
@@ -541,79 +489,11 @@ async function identityDriftTest() {
   }
 }
 
-// ---------------------------------------------------------------------------
-// F. legacy 选择顺序：过期 done 只失去优先权，不得短路记录缓存
-// ---------------------------------------------------------------------------
-function legacySelectionTests() {
-  const now = Date.now()
-  const staleDone = { balance: 5, currency: 'CNY', fetchedAt: now - 6 * 60_000 }
-  const freshRecord = { balance: 19, currency: 'CNY', fetchedAt: now - 60_000 }
-  const staleRecord = { balance: 19, currency: 'CNY', fetchedAt: now - 6 * 60_000 }
-  const first = pickLegacyBalanceView({ done: staleDone, record: freshRecord, now })
-  check('F1 过期 done 不短路：回落到记录缓存的新余额 19 CNY',
-    first.value !== null && first.value.balance.balance === 19 && first.needsReplay === false, first)
-  const second = pickLegacyBalanceView({ done: { balance: 7, currency: 'CNY', fetchedAt: now - 60_000 }, record: freshRecord, now })
-  check('F2 对照：done 新鲜时优先 done（7 CNY）',
-    second.value !== null && second.value.balance.balance === 7, second)
-  const third = pickLegacyBalanceView({ done: staleDone, record: staleRecord, now })
-  check('F3 done / record 都不新鲜：返回 null 并请求一次重放',
-    third.value === null && third.needsReplay === true, third)
-  const fourth = pickLegacyBalanceView({ done: { balance: 5, currency: 'CNY' }, record: freshRecord, now })
-  check('F4 done 缺 fetchedAt：同样不短路，回落到记录缓存',
-    fourth.value !== null && fourth.value.balance.balance === 19, fourth)
-  const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
-  check('F5 运行时统一走选择顺序（done + record）',
-    source.includes('pickLegacyBalanceView({ done, record: legacyRecordState.data'))
-  check('F6 过期 done 分支不再直接 return null（已移除旧短路）',
-    !source.includes('if (sampledAt !== null && freshEnough(sampledAt))'))
-}
-
-/** F 端到端：没有 done 快照时，重放成功的新余额必须真正显示出来（而不是缺失）。 */
-async function legacyRecordDisplayTest() {
-  const disabled = allPlansDisabled()
-  const state = {
-    config: Object.assign({ enabled: true, mimoRememberLogin: true }, disabled, {
-      [enabledFieldOf('mimo')]: true,
-    }),
-  }
-  balanceFetchCalls = 0
-  balanceFetchImpl = async () => ({
-    status: 200,
-    async json() { return { code: 0, data: { balance: 19, currency: 'CNY' } } },
-  })
-  const credentials = fakeCredentials(validLegacyRecord(Date.now() - 60_000))
-  // 提供可达的 mimo-auth host（它同时有 display / legacyDoneBalance 两条只读 lane）。
-  const connection = { fetch: { register() { return () => {} } } }
-  const boom = boot({ state, credentials, dshGo: fakeDshGo(), services: { connection } })
-  await flush(10)
-  boom.fire('app-boot/config-reload')
-  await flush(12)
-  check('F7 重放成功（余额请求 1 次）', balanceFetchCalls === 1, { fetch: balanceFetchCalls })
-  const surface = boom.panels.get('quota')
-  check('F8 原生额度面板已注册 data feed', surface !== undefined && typeof surface.data === 'function')
-  if (surface !== undefined && typeof surface.data === 'function') {
-    const emitted = []
-    const stop = surface.data({ sessionId: 's1' }, (payload) => emitted.push(payload))
-    await flush(18)
-    const text = JSON.stringify(emitted)
-    check('F9 [0.11.4] 扫码通道下线：不再重放记录余额（mimo 显示未配置凭据）',
-      !text.includes('19.00') && text.includes('未配置凭据'), text.slice(0, 400))
-    stop()
-  }
-  boom.disposeAll()
-  await flush(2)
-  balanceFetchImpl = async () => { throw new TypeError('offline') }
-}
-
 async function main() {
-  await legacyGateTests()
-  await legacyFreshnessTest()
   await stripGateTests()
-  await codexSourceSwitchTests()
+  await codexAccountSwitchTests()
   await policyTimerDisposeTests()
   await identityDriftTest()
-  legacySelectionTests()
-  await legacyRecordDisplayTest()
 }
 
 main()

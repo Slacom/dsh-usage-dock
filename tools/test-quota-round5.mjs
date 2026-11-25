@@ -83,11 +83,11 @@ async function gui(app) {
 const mimo = PLANS.find((p) => p.id === 'mimo')
 const originalMimo = mimo.fetch
 
-const COOKIE_A = 'uid=1; serviceToken=AAA; userId=1A'
-const COOKIE_B = 'uid=1; serviceToken=BBB; userId=1B'
+const KEY_A = 'sk-mimo-AAA'
+const KEY_B = 'sk-mimo-BBB'
 const POLICY = {
   mimoEnabled: true,
-  mimoCookie: COOKIE_A,
+  mimoApiKey: KEY_A,
   quotaPolicyEnabled: true,
   quotaFocusChannels: '["mimo"]',
   quotaWarningBalanceThreshold: 10,
@@ -119,8 +119,8 @@ const POLICY = {
   await new Promise((r) => setTimeout(r, 30))
 
   // 逐次 reload：A → B → A
-  await app.save({ mimoCookie: COOKIE_B })
-  await app.save({ mimoCookie: COOKIE_A })
+  await app.save({ mimoApiKey: KEY_B })
+  await app.save({ mimoApiKey: KEY_A })
 
   // 放行旧 A 的 1CNY
   if (typeof releaseFirst === 'function') releaseFirst()

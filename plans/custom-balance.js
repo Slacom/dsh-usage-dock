@@ -44,7 +44,7 @@ import z from '@deepseek-ai/schemastery'
 import { createHash, randomUUID } from 'node:crypto'
 // [2026-11-11 Codex 双来源] 归一规则只有一份（`plans/codex-sources.js`），
 // 与 codex 取数层、Host 观察身份、状态路由共用。
-import { codexSourceOf, CODEX_SOURCE_SUBSCRIPTION } from './codex-sources.js'
+import { codexSourceOf, CODEX_SOURCE_CONNECT } from './codex-sources.js'
 
 // ===========================================================================
 // 冻结的上限（C0）。改这些值要同步改文档与测试。
@@ -926,7 +926,7 @@ function readPathConfig(row, settingsPath) {
   }
   return null
 }
-/** 仅回环主机名（与 plans/workbuddy.js 的 isLoopbackHost 同规则）。 */
+/** 仅回环主机名（与历史 WorkBuddy 模块的 isLoopbackHost 同规则；该模块已删除）。 */
 function isLoopbackHostname(hostname) {
   if (typeof hostname !== 'string' || hostname.length === 0) return false
   const host = hostname.toLowerCase()
@@ -1739,18 +1739,20 @@ function digest16(text) {
  * [2026-11-11 Codex 双来源] `codexSource` 必须进入摘要，否则切来源后旧来源的 wire
  * 仍满足「配置证明一致」，客户端会把 Connect 的数值当成 Subscription 的显示。
  * 合同（客户端 `configDigestOfClient` 必须逐字同构）：
- *   - **仅**当规范化后的来源是 `'subscription'` 时，在 `parts` 的**第一个位置**
- *     追加 `'builtin:codex-source' + '\u0002' + 'subscription'`；
+ *   - 只要规范化后的来源 **不是** `connect`（即 `subscription` / `account`），就在
+ *     `parts` 的**第一个位置**追加 `'builtin:codex-source' + '\u0002' + <规范化来源>`；
  *   - `connect` / 缺失 / 未知值**不追加**任何组件 ⇒ 缺省 connect 的摘要与旧版**逐字一致**，
- *     既有 custom 摘要 fixture 不受影响。
+ *     既有 custom 摘要 fixture 不受影响；`subscription` 的组件文本也与旧版逐字相同
+ *     （旧版写死 `'subscription'`，这里由归一函数给出同一个字面量）。
  */
 export function configDigestOf(cfg) {
   const list = unwrapVolatile(cfg != null ? cfg.customBalances : undefined)
   const revs = unwrapVolatile(cfg != null ? cfg.customKeyRev : undefined)
   const rows = Array.isArray(list) ? list : []
   const parts = []
-  if (codexSourceOf(cfg) === CODEX_SOURCE_SUBSCRIPTION) {
-    parts.push('builtin:codex-source' + '\u0002' + CODEX_SOURCE_SUBSCRIPTION)
+  const codexSource = codexSourceOf(cfg)
+  if (codexSource !== CODEX_SOURCE_CONNECT) {
+    parts.push('builtin:codex-source' + '\u0002' + codexSource)
   }
   const seen = new Set()
   for (const row of rows) {

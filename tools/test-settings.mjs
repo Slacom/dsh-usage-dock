@@ -104,11 +104,12 @@ try {
   check('设置页按实例 this 读取配置，无桌面桥依赖',()=>assert(textOf(tree).includes('Usage Dock')||textOf(tree).includes('启用套餐')))
   check('设置页仍渲染渠道卡片（页面内容未被搬移破坏）',
     ()=>assert(elements(tree).some(n=>n.props&&typeof n.props['data-plan-card']==='string')))
-  // [2026-10-21] 国内版改读模型配置里的 WorkBuddy2API 网关，不再依赖 Connect。
-  check('WorkBuddy 提示改为读取模型网关配置',()=>assert(textOf(tree).includes('workbuddy 网关配置')))
+  // [2026-11-23] WorkBuddy 已退场：设置页不应再出现它的独立分组/网关说明。
+  check('WorkBuddy 已退场：设置页不再出现 WorkBuddy 分组或网关说明',
+    ()=>assert(!textOf(tree).includes('WorkBuddy')&&!textOf(tree).includes('workbuddy')))
 
-  // [2026-10-21] 明确点「WorkBuddy 上移」，让后续顺序断言与具体渠道绑定。
-  const arrow=elements(tree).find(n=>n.type==='button'&&n.props&&n.props['aria-label']==='WorkBuddy 上移')
+  // [2026-11-23] 明确点「MiMo 上移」，让后续顺序断言与剩余内置渠道绑定。
+  const arrow=elements(tree).find(n=>n.type==='button'&&n.props&&n.props['aria-label']==='Xiaomi MiMo 上移')
   check('渠道排序是原生可点击按钮，不依赖 hover',()=>assert.equal(arrow.type,'button'))
   arrow.props.onClick()
   tree=await runtime.settle(props)
@@ -119,16 +120,16 @@ try {
   check('保存期间锁定全部字段和排序箭头',()=>assert(elements(tree).filter(n=>n.type==='input'||n.props?.['aria-label']).every(n=>n.props.disabled===true)))
   check('排序写入 planOrder',()=>{
     const order=JSON.parse(writes.find(w=>w.field==='planOrder').value)
-    // 点击「WorkBuddy 上移」一次：workbuddy 必须排到默认顺序中它前一个渠道（mimo）之前。
-    const wi=order.indexOf('workbuddy'), mi=order.indexOf('mimo')
-    assert.ok(wi>=0 && mi>=0 && wi<mi,'workbuddy 应排在 mimo 之前，实际 '+JSON.stringify(order))
+    // 点击「MiMo 上移」一次：mimo 必须排到默认顺序中它前一个渠道（codex）之前。
+    const mi=order.indexOf('mimo'), ci=order.indexOf('codex')
+    assert.ok(mi>=0 && ci>=0 && mi<ci,'mimo 应排在 codex 之前，实际 '+JSON.stringify(order))
   })
   release();await gate;await Promise.resolve()
   tree=await runtime.settle(props)
   check('保存后退出 saving，保留已写顺序',()=>{
     // 保存后同样保留该顺序。
     const saved=JSON.parse(form.value.planOrder)
-    assert.ok(saved.indexOf('workbuddy')<saved.indexOf('mimo'),'保存后 workbuddy 仍应在 mimo 之前')
+    assert.ok(saved.indexOf('mimo')<saved.indexOf('codex'),'保存后 mimo 仍应在 codex 之前')
   })
 
   // -------------------------------------------------------------------------

@@ -30,30 +30,13 @@ DeepSeek Harness（DSH）的**侧栏用量/余额插件**：在 Web/桌面端左
 用量与余额，点击可展开详情面板。fork 自 `chendefine/dsh-plugins-plan-usage`，改名 `dsh-usage-dock`
 以避免与上游混淆，并做了一系列定制（见第 6 节）。
 
-**当前版本**：0.11.3（**正式版**，2026-11-19 发布：MiMo 改 API Key 取余额并下线扫码登录 + DSH Go 原生面板渠道顺序/5 次宽度/barTone 修复 + Codex 锚点自动适配 + 设置页布局对齐；`test-dsh-go-native` 50 项；MiMo 接通「设置 → 模型」的 **XIAOMI_API_KEY**（`API_KEY_REFS` 首位）+
-provider 名含 mimo/xiaomi 时自动取该来源 Key（`providerKeyOf`）；原生设置页移除扫码/记住登录入口；
-承接 0.11.2 的 MiMo API Key 通道
-DSH Go 原生设置页 **Codex 一键适配**（`codexAdaptStatusForNative` / `applyCodexPatchOnce`，与 POST 路由同一实现）+
-Codex 不再显示月额度 + 新增 `3.2.23` 补丁清单；承接 0.11.1 的 WorkBuddy 手机端 provider 识别修复（`workbuddyProvider` 显式指定或
-按 id/displayName/后缀自动识别）+ 模型路由名归一化（`custom-workbuddy` → `workbuddy`）+
-原生额度面板去掉逐渠道「更新时间」；承接 0.11.0 的 DSH Go 原生半：原生额度面板 + 原生设置页 +
-输入框上方 `composer.strip` 额度条 +
-MiMo 扫码登录持久化；承接 0.10.6 的 Codex `Subscription` 支持第三方 3.2.17 与清单 `inheritFrom` 继承、
-`patch-state` 增加 `covered` / `manifestVersion`、设置页「需适配」块区分三态并区分两种
-unsupported 文案；再承接 0.10.5 的 MiMo 登录收敛为「扫码 → 确认账号 → 读余额」+
-显示层修复「真实余额被读取中占位盖掉」+ OpenCode Go 百分比口径（已用→剩余）+
-Codex `Subscription` 补丁支持 3.2.13 与 pnpm 布局 + 额度策略注入修复（`opencode-go` 路由映射缺失、
-`ctx.inject` 注册）+ 详情卡片重置时间两段精度与列对齐；0.10.0 的双来源手选 / WorkBuddy 只读 cn /
-MiMo 与 `usage_status` 同源不变）。
-**预发布**：0.11.2 = **pre-release**（tag `v0.11.2` / commit `b727cba` / GitHub Release id `450041396`
-→ `prerelease: true`，`/releases/latest` 仍为 **v0.11.1**；npm 侧 `latest` 已回退到 `0.11.1`，
-`0.11.2` 只挂 `prerelease` dist-tag）。**原因：MiMo 的 API Key 取余额还没在移动端真机验证过，
-用户确认通过后再转正式版。**
-上一公开版 **0.11.1**：tag `v0.11.1` / commit `7db237b` / npm `0.11.1` / Release id **449662483**。
-上一个公开版 **0.11.0**：tag `v0.11.0` / commit `c54e0ea` / npm `0.11.0` / Release id **448193666**。
-**0.10.3 / 0.10.4 是本地构建、从未发布**，不要把它们当作已发布版本；**0.10.6 也未单独发布**，
-其内容（Codex Subscription 3.2.17 + `inheritFrom` 清单 + `patch-state` 两字段）随 0.11.0 一起发布。　|　
-**上一公开版**：0.11.1（GitHub Release + npm；0.10.3 / 0.10.4 / 0.10.6 从未单独发布）
+**当前版本**：1.0.0（2026-11-25 定版）。Codex 只剩本插件自己的 ChatGPT 账号登录（多账户，见 §7）；
+WorkBuddy 已退场；MiMo 只保留 API Key；内置渠道为 OpenCode Go、DeepSeek、OpenAI Codex、小米 MiMo。
+本版同时包含 R1–R5 加固：MiMo 自动 Key 来源绑定、Codex 采集代次、移除旧补丁写入口、
+网页切换失败提示、最后账户原子空态。发布口径见
+[1.0.0 发布说明](docs/release-notes-v1.0.0.md)。
+上一正式版 **0.11.3**（tag `v0.11.3` / npm `0.11.3`）；0.10.3 / 0.10.4 / 0.10.6 未单独发布。
+**0.12.0 是未发布的测试线，已被 1.0.0 取代**，其草稿保留作历史。
 
 > **审核入口（先读这条）**：当前**权威**记录是
 > [0.9.0 发布状态](docs/release-status-v0.9.0-20261024.md)（程序已部署、用户已确认本地验收；
@@ -282,11 +265,13 @@ plans/custom-balance.js  [0.9.0] 通用自定义余额：JSON 键路径、数值
                   请求（GET+Bearer、不跟随重定向、响应体上限）、错误分类、整批调度、状态摘要
 plans/util.js     共用工具：curlJson（原生 fetch / Python / curl 三后端自适应）、窗口归一化、凭据解析
 plans/peak-phase.js  DeepSeek 峰谷计价相位纯函数（峰窗口/周末/假日表，0.8.0）
-plans/codex-sources.js  [0.10.0] Codex 来源的**只读** metadata（GET /api/plan-usage/codex-sources）：
-                  只回布尔可用性与固定状态文案，不含额度、不含凭据
-plans/mimo-auth/**      [0.10.0] MiMo 本机登录/显示会话：host.js 的 registerMimoAuth() 返回
-                  { bootEpoch, getHost, dispose }，getHost() 现读 inject 里异步建的 host；
-                  只读消费 routeDisplay/display，managed 动作固定拒绝
+plans/codex-sources.js  [0.10.0；0.12.0 起为**死代码**] 旧 Codex 三来源的只读 metadata
+                  （GET /api/plan-usage/codex-sources）。来源退场后活动路径不再调用、设置页/原生页
+                  也不再展示；仅保留给旧配置归一与工具脚本兼容
+plans/mimo-auth/**      [0.10.0–0.11.3；**0.12.0 已删除**] 曾为 MiMo 本机登录 / 显示会话
+                   （host.js 的 registerMimoAuth()、routeDisplay/display 覆盖、managed 动作）。
+                   扫码 / 记住登录退场后整目录 15 个文件删除，不再作为现行能力；历史见
+                   `docs/mimo-*.md` 与 §12（仅历史）。
 plans/http-fetch.py  兜底取数脚本（Windows 沙箱内 curl 的 TLS 不可用时的 Python/OpenSSL 方案）
 cordis.patch.yml  插件向 profile 贡献的配置层（insert 一个 plan-usage 条目）
 tools/test-fetch-backends.mjs  取数后端 + DeepSeek 渠道回归测试（见第 4 节）
@@ -295,7 +280,6 @@ tools/test-collapsed-pill.mjs  浏览器半回归测试：缩略（rail）状态
 tools/test-footer-row.mjs      浏览器半回归测试：胶囊独占侧栏底部一行（见第 4 节）
 tools/test-degrade-refresh.mjs 浏览器半回归测试：失败降级/取整/强刷/峰谷条/充值按钮/MiMo（0.8.0）
 tools/test-peak-phase.mjs      plans/peak-phase.js 单元测试（0.8.0）
-tools/test-mimo-parse.mjs      plans/mimo.js 纯函数单元测试（0.8.0）
 tools/test-custom-balance.mjs        [0.9.0] 自定义余额纯函数：路径/数值/扣减/URL/状态/代次
 tools/test-custom-balance-fetch.mjs  [0.9.0] 自定义余额网络层：请求形态/凭据/错误/并发/预算
 tools/test-custom-settings.mjs       [0.9.0] 设置页自定义区 + 渠道退场 + Key 路径写入
@@ -314,46 +298,77 @@ tools/test-usage-tool-host.mjs       [方向6/T2] **真实 apply**：注册、di
 tools/test-usage-policy.mjs          [方向6/T3] 策略：默认关闭/显式关注/保守判定/措辞约束
 tools/test-custom-round3.mjs         [0.9.1] 第三/四轮复核：来源删除不复活、观察器身份、单条自定义边界
 tools/test-custom-round5.mjs         [0.9.1] 第五轮复核：双卡误写误删、默认折叠、账号选择不白屏
-tools/test-workbuddy-gateway.mjs     [0.9.1] WorkBuddy2API 网关：根路径/鉴权/口径/账号筛选/积分包/超时
 plans/usage-tool.js                  [方向6/T1] usage_status 投影（纯函数，无 IO）
 plans/usage-tool-register.js         [方向6/T2] 工具注册/缓存/预算（不 import 宿主包）
 plans/usage-policy.js                [方向6/T3] 可选收尾策略（默认关闭）
-plans/dsh-go-native.js               [0.11.0] DSH Go 原生半：`panels`（quota / settings / mimo-login）的
+plans/dsh-go-native.js               [0.11.0] DSH Go 原生半：`panels`（**quota / settings**，2 个）的
                   静态视图骨架 + 数据投影 + 失败回退 + 复制摘要 + `ctx.dshGo.panel()` 注册；
-                  面板打开才启动 30 秒 feed，关闭即取消
+                  面板打开才启动 30 秒 feed，关闭即取消。0.12.0 已删除 `mimo-login` 面板。
 plans/strip.js                       [0.11.0] `composer.strip` 纯函数：会话路由事件（latest wins）→
                   provider → 渠道 → ≤24 字文本 / tone / 隐藏规则（不读网络、不读磁盘）
-plans/mimo-legacy-store.js           [0.11.0] MiMo legacy 扫码登录凭据：平台 4 个 cookie 的白名单提取 /
-                  凭据记录存储 / 重启后重放余额接口（纯逻辑 + 可注入 fetch）
-tools/test-dsh-go-native.mjs         [0.11.0] DSH Go 原生半契约（40 项：清单/视图/数据/动作/设置页/
-                  MiMo 登录/strip 注册/无桥接回退）
-tools/test-dsh-go-boundaries.mjs     [0.11.0 终审整改] DSH Go 边界（47 项：启用/桥接闸门、
+plans/mimo-legacy-store.js           [0.11.0–0.11.3；**0.12.0 已删除**] 曾保存 MiMo legacy 扫码登录的
+                  平台 cookie 并在重启后重放余额接口；扫码通道退场后整个文件删除。
+tools/test-dsh-go-native.mjs         [0.11.0] DSH Go 原生半契约（**53 项**：清单/视图/数据/动作/设置页/
+                  strip 注册/无桥接回退）
+tools/test-dsh-go-boundaries.mjs     [0.11.0 终审整改] DSH Go 边界（**29 项**：启用/桥接闸门、
                   来源身份隔离与永久失败清值、定时器生命周期、原生 collect 身份采样前固化/
-                  采样后复核 E1–E3、legacy 余额选择顺序 F1–F9）
-tools/test-dsh-go-strip.mjs          [0.11.0] strip 纯函数（17 项：路由事件/映射/文本/截断/隐藏）
-tools/test-mimo-legacy-store.mjs     [0.11.0] MiMo legacy 持久化（12 项：cookie 白名单/记录年龄/
-                  重放/失败枚举/稳定采样时间）
+                  采样后复核 E1–E3、账号切换身份隔离 C1b/C1c/E1b；MiMo legacy 用例已随代码删除）
+tools/test-dsh-go-strip.mjs          [0.11.0] strip 纯函数（路由事件/映射/文本/截断/隐藏）
 tools/test-route-normalize.mjs       [0.11.1] 模型路由名归一化（7 项：精确 id / 词元连续包含+最长匹配 /
                   大小写与前后空白不命中（A12）/ 等长多命中返回 null）
-tools/test-mimo-api-key.mjs          [0.11.2] MiMo API Key 余额通道（13 项：请求形态 / 现金+赠金口径 /
-                  授信不入总额 / 401 文案 / 结构异常 / fetchPlan 优先级与零请求）
-tools/test-codex-adapt-ui.mjs        [0.11.2] 网页设置页「需适配」块三态探测（24 项：appliable / patched /
-                  unsupported 两种文案 / 探测失败兜底 / 只发一次 POST / 分区与图标槽位）
+tools/test-mimo-api-key.mjs          [0.11.2] MiMo API Key 余额通道（**唯一保留的 MiMo 测试**；17 项：
+                  请求形态 / 现金+赠金口径 / 授信不入总额 / 401 文案 / 结构异常 / 无 Key 零请求）
 tools/test-codex-patch-2323.mjs      [0.11.2] 3.2.23 清单静态校验（5 项：版本/baseSha/4 条 hunk 唯一）
 ```
 
-**已接入渠道**（0.10.0 起）：OpenCode Go、DeepSeek（账号余额优先/API Key 回退）、
-OpenAI Codex（**0.10.0 起两个来源手选**：`Codex Connect` / `Codex Subscription`，不合并不回退；
-订阅来源需要第三方 `dsh-codex-subscription` 的本地只读补丁，见 §7）、
-小米 MiMo（**0.10.0 起以本机显示会话「记住登录」为准**，与 `usage_status` / 额度策略同源）、
-WorkBuddy（**2026-11-12 起改读客户端接口 `GET /v1/credits`，只统计国内 cn、不再按账号筛选**，
-见 `plans/workbuddy.js`），以及用户自建的
+> **0.12.0 已退场的测试（已删除，不要再列为待跑）**：`tools/test-codex-sources.mjs`、
+> `tools/test-codex-source-ui.mjs`、`tools/test-codex-patch-ui.mjs`、`tools/test-codex-adapt-ui.mjs`。
+> 来源退场后它们的断言对象（来源选择 / 适配块）已不存在；现役 Codex 测试是
+> `test-codex-account`（242）/ `test-codex-account-host`（46）/ `test-codex-account-ui`（100）
+> 与 `test-dsh-go-native`、`test-dsh-go-boundaries`（含账号切换身份隔离 C1b/C1c/E1b）。
+>
+> **0.12.0 随 MiMo 登录退场删除的测试（36 个，不要再列为待跑）**：除 `test-mimo-api-key` 外，
+> 所有 `test-mimo*` 套件已随 `plans/mimo-auth/**` / `plans/mimo-legacy-store.js` 删除，包括
+> `test-mimo-parse`、`test-mimo-auth-*`、`test-mimo-console-*`、`test-mimo-display-*`、
+> `test-mimo-remember*`、`test-mimo-legacy-store`、`test-mimo-footer-refresh`、`test-mimo-usage-lane` 等。
+> 现行 MiMo 只保留 `test-mimo-api-key`（17 项，API Key 请求/口径/错误/零请求）。
+>
+> **0.12.0 随 WorkBuddy 渠道退场删除的测试（6 个，不要再列为待跑）**：
+> `test-workbuddy-contract`、`test-workbuddy-expiry-label`、`test-workbuddy-legacy-selection`、
+> `test-workbuddy-round8`、`test-workbuddy-client-credits`、`test-workbuddy-gateway`——
+> 这 6 个套件在 0.12.0 随 `plans/workbuddy.js` 一起删除（渠道不再内置，断言对象已不存在）；
+> 另有 1 个 WorkBuddy debug 脚本一并删除。
+>
+> **0.12.0 最终回归（2026-11-25 收口）**：2026-11-23 的 **102 套件 / 94 通过**产生于 WorkBuddy
+> 退场后、MiMo 登录清理前，**已过期不能引用**。MiMo 清理（删除 36 个 `test-mimo*` 套件）后，
+> 最终回归 **关键 13 套件共 785 项全绿**：`test-dsh-go-boundaries` 29 / `test-usage-recheck-f1f2` 17 /
+> `test-mimo-api-key` 17 / `test-dsh-go-native` 53 / `test-degrade-refresh` 41 / `test-settings` 17 /
+> `test-settings-layout-20261024` 30 / `test-config-unwrap` 22 / `test-usage-tool` 103 /
+> `test-codex-account` 242 / `test-codex-account-host` 46 / `test-codex-account-ui` 100 /
+> `test-line-endings` 68；另有 `test-review-fixes` **40** 项通过。
+> **全部 WorkBuddy / MiMo 相关改动套件通过**；`test-codex-auto-adapt`、`test-fetch-backends`
+> 等旧套件不在本轮关键清单内，不据此声称全仓全绿。**0.12 未发布、未真机验收。**
+> 不要沿用 0.11.x 或 2026-11-23 的旧数字。
+
+**已接入渠道**（0.12.0 起为 **4 个原生 / 内置渠道**）：OpenCode Go、DeepSeek（账号余额优先/API Key 回退）、
+OpenAI Codex（**0.12.0 起只剩本插件自己的 ChatGPT 账号登录**，支持 1..8 个账户、单选生效；
+`connect` / `subscription` 已退场，代码保留为死代码，见 §7）、
+小米 MiMo（**0.12.0 起只用 API Key 余额**：`mimoApiKey` 或「设置 → 模型」里的 MiMo Key；
+无 Cookie / 扫码 / 记住登录 / `mimo-login` 面板，无 Key 固定 `no-key`），以及用户自建的
 **自定义余额渠道**（0.9.0，任意 HTTPS GET+Bearer+JSON，见第 6 节第 14 条）。
 
-**已退场渠道**：`kimi-code`、`glm-zhipu`、`glm-zai`（0.9.0），以及
-`workbuddy-ai`（0.9.1，用户决定全部改走国内网关，不再区分国际版）。
-它们的模块文件**已删除**（0.10.0），仅保留 id 字符串于 `RETIRED_PLAN_IDS`；`workbuddy-ai` **已不在 `PLANS` 且进 `RETIRED_PLAN_IDS`**；
-不要把它们的 schema 字段或 UI 加回来，除非用户明确要求恢复（0.10.0 起这些模块文件已删除，只剩 `RETIRED_PLAN_IDS` 里的 id）。
+**WorkBuddy（已退场，0.12.0）**：用户不再使用反代渠道，WorkBuddy **不再作为插件原生 / 内置渠道**——
+没有专用开关、积分口径、账号筛选，原生额度面板里也没有 WorkBuddy 分组；`plans/workbuddy.js` **已删除**，
+`workbuddy` / `workbuddy-ai` 都进 `RETIRED_PLAN_IDS`（不取数、不复活，旧配置字段保留但不生效）。
+**如仍需要，请用「自定义余额渠道」添加**：在「设置 → 模型」里选已有的 WorkBuddy2API 来源，
+再填该来源下的余额接口路径（如 `/v1/credits`）与结果 JSON 键路径；历史记录只作沿革。
+
+**已退场渠道**：`kimi-code`、`glm-zhipu`、`glm-zai`（0.9.0），
+`workbuddy-ai`（0.9.1，用户决定全部改走国内网关，不再区分国际版），
+以及 `workbuddy`（0.12.0，用户不再使用反代渠道，如仍需要改用自定义余额渠道按需添加）。
+它们的模块文件**已删除**（0.10.0 / 0.12.0），仅保留 id 字符串于 `RETIRED_PLAN_IDS`；
+`workbuddy-ai` / `workbuddy` **均已不在 `PLANS` 且进 `RETIRED_PLAN_IDS`**；
+不要把它们的 schema 字段或 UI 加回来，除非用户明确要求恢复（这些模块文件已删除，只剩 `RETIRED_PLAN_IDS` 里的 id）。
 
 ## 4. 开发流程
 
@@ -439,7 +454,8 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
 1. **显示位置**：右下角悬浮 → 左侧状态栏（官方公共席位 `sidebar.footer.action`，零核心补丁）
 2. **DeepSeek 双数据源**：DSH 账号余额优先（含赠金，无需 API Key），API Key 回退
 3. **可配置余额警告额度**：`deepseekWarnThreshold`，默认 10 元，0 表示不警告
-4. **OpenAI Codex 订阅额度**：复用 `dsh-codex-connect` 的公开额度 API，不碰 token
+4. **OpenAI Codex 订阅额度**：0.12.0 起改为**本插件自己的 ChatGPT 账号登录**（设备码，多账户单选），
+   不再复用 `dsh-codex-connect` / `dsh-codex-subscription`；令牌不出 Host
 5. **独立设置页**：在「设置 → 内置插件 → Usage Dock」里勾选渠道、填 Key，带保存/放弃
 6. **取数后端自适应**：原生 fetch（首选，Host 进程内）⇄ Python shim ⇄ curl 自动选择，
    只有传输层失败才换下一个后端；上游答复（含 HTTP 错误）立即返回
@@ -463,9 +479,11 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
    相位计算在 `plans/peak-phase.js`（纯函数，峰窗口 UTC 1-4/6-10、周末与假日全谷价），
    host 在 `/api/plan-usage` 响应里给账号登录的 DeepSeek 条目附 `peakPhase`；假日表硬编码，
    国务院公布新年份安排时在 `PEAK_HOLIDAYS` 里追加
-13. **小米 MiMo 渠道**（0.8.0）：控制台 Cookie 鉴权（非 API Key，需 userId + serviceToken），
-   只查 `GET /api/v1/balance` 显示账户余额（用户明确：不做套餐积分额度）；
-   `util.js` 的 `parseResult` 已放行 `{code:0}` 成功信封（code 非 0/非 200 才是错误）
+13. **小米 MiMo 渠道**（0.8.0；**0.12.0 起只用 API Key**）：`mimoApiKey`（`role('secret')`）或
+    「设置 → 模型」里的 MiMo Key（`XIAOMI_API_KEY` 等固定名，或 provider 名含 mimo/xiaomi 的条目），
+    只查 `GET https://api.xiaomimimo.com/v1/platform/balance`（请求头 `api-key`）显示账户余额
+    （用户明确：不做套餐积分额度）；没有 Key 固定 `no-key`。控制台 Cookie / 扫码 / 记住登录已删除。
+    `util.js` 的 `parseResult` 仍放行 `{code:0}` 成功信封（历史通道兼容）。
 14. **自定义余额渠道**（0.9.0）：用户在设置页最下方自建「厂商名称 + HTTPS 余额 URL + API Key
    / 模型凭据引用 + JSON 键路径（可选扣减键、币种）」，每条一条胶囊行与一个详情分区。
    实现要点：
@@ -487,18 +505,18 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
 
 ## 7. 已知限制
 
-> 📌 **用户已确认要做、但尚未实施的事项统一记在 [docs/backlog.md](docs/backlog.md)**（含
-> MiMo「平台票据缺失」的 3 次有限自动重试、安卓移动端适配、DSH Go 原生面板后续项、策略表口径等）。
-> 动手前先看那份清单，不要凭记忆重推需求。
+> 📌 **用户已确认要做、但尚未实施的事项统一记在 [docs/backlog.md](docs/backlog.md)**（含安卓移动端适配、
+> DSH Go 原生面板后续项、策略表口径等）。MiMo 登录 / 扫码 / 记住登录相关条目已随 0.12.0 代码删除，
+> **不再排期**；动手前先看那份清单，不要凭记忆重推需求。
 
-- **MiMo 支持 API Key 查余额**（0.11.2）：新增 `mimoApiKey`（`role('secret')`）与 `fields.apiKey`
-  ⇒ `identityOfChannel('mimo')` 自动带 `key=` 指纹（换 Key 即作废旧值/在途请求）。
-  `plans/mimo.js#fetchPlan()` 先 `resolveApiKey`，有 Key 走
-  `GET https://api.xiaomimimo.com/v1/platform/balance`（请求头 `api-key`），否则回退旧的
-  控制台 Cookie 通道（**未退役**）。口径：`balance = cash_balance + gift_balance`（**不含**授信），
-  `creditAvailable` 单独给出；401/403（`invalid_api_key` 被 `curlJson` 归为 `error:'api'`）→
-  「MiMo 拒绝了这个 API Key…请重新填写」。`index.js#mimoWireReady()` 在配了 Key 时**直接走 provider**，
-  不吃扫码/Cookie 的显示快照。测试 `test-mimo-api-key` **13 项**。
+- **MiMo 只用 API Key 查余额**（0.11.2 引入，0.12.0 收敛为**唯一通道**）：`mimoApiKey`
+  （`role('secret')`）与 `fields.apiKey` ⇒ `identityOfChannel('mimo')` 自动带 `key=` 指纹
+  （换 Key 即作废旧值/在途请求）。`plans/mimo.js#fetchPlan()` 只做：插件 Key → 「设置 → 模型」固定
+  候选名 / provider 自动匹配 → `GET https://api.xiaomimimo.com/v1/platform/balance`
+  （请求头 `api-key`）；全都没有就固定 `no-key`（**零请求**）。口径：
+  `balance = cash_balance + gift_balance`（**不含**授信），`creditAvailable` 单独给出；
+  401/403（`invalid_api_key` 被 `curlJson` 归为 `error:'api'`）→「MiMo 拒绝了这个 API Key…请重新填写」。
+  **没有** Cookie 回退、扫码、remembered 或 `mimoWireReady` 显示快照。测试 `test-mimo-api-key` **17 项**。
 - **DSH Go 原生设置页「Codex 一键适配」**（0.11.2）：Host 新增 `codexAdaptStatusForNative()`（只读五态，
   fail-closed）与 `applyCodexPatchOnce()`（`wx` 备份 → 临时文件 → 读回校验 → rename → 校验哈希）；
   `POST …/apply-patch` 与原生按钮**共用**后者。原生设置页 `codexAdaptNodes()`：只有 `appliable` 才给
@@ -509,12 +527,13 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
 - **补丁清单**（0.11.2）：新增 `plans/patches/codex-subscription-3.2.23.json`（**不继承**的完整 4 条
   hunk），`covered` = `3.2.6 / 3.2.13 / 3.2.17 / 3.2.23`；`3.2.23` 未在本机真打（本机装 3.2.17）。
 
-- **WorkBuddy 手机端 provider 识别**（0.11.1）：网关 provider id 与设备相关（桌面 `workbuddy`、
+- **（已退场，仅历史）WorkBuddy 手机端 provider 识别**（0.11.1）：网关 provider id 与设备相关（桌面 `workbuddy`、
   手机自定义来源 `custom-workbuddy`）。`plans/workbuddy.js#pickGatewayProvider()` 判定顺序：
   ① 显式 `workbuddyProvider`（新配置项，留空=自动，填了只认它）；② id 归一化等于 `workbuddy`；
   ③ `displayName` 归一化等于 `workbuddy`；④ id 归一化以 `workbuddy` 结尾。③/④ 多命中 ⇒ 歧义报错、
   要求显式指定；`workbuddy-api` / `wb-workbuddy-2` 不会自动命中。`index.js` 的来源指纹改用解析出的 id
   （新增 `GATEWAY_PROVIDER_FALLBACK`）。回归 `test-workbuddy-gateway` **39 项**（G13–G20）。
+  **0.12.0 起 `plans/workbuddy.js` 已删除、该测试已下线，以上只作历史沿革。**
 - **路由名归一化**（0.11.1）：`plans/quota-prompt.js#resolveRoute` 增加「词元连续包含 + 最长匹配」，
   `custom-workbuddy` → `workbuddy`、`custom-workbuddy-ai` → `workbuddy-ai`；**不**转小写/去空白
   （`WORKBUDDY` / `" workbuddy"` 仍不命中，A12 约定不变）；等长多命中返回 `null`。
@@ -527,9 +546,9 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
   `"icon":"wallet"`），与既有 `dsh`（Web 半）**并存互不影响**：
   - `contributes["composer.strip"]` **1 条**（`{id:"strip", icon:"wallet", panel:"quota"}`）——
     输入框上方一行额度摘要，点按打开 `quota` 面板（`presentation:"sheet"` 底部弹层）。
-  - `contributes.panels` **3 个**：`quota`（`session.tab` + `features`，即对话详情「插件」页签 /
-    全部功能）、`settings`（原生设置页，`placement:["plugin"]`）、`mimo-login`（MiMo 扫码登录面板，
-    `placement:["plugin"]`）。
+  - `contributes.panels` **2 个**：`quota`（`session.tab` + `features`，即对话详情「插件」页签 /
+    全部功能）、`settings`（原生设置页，`placement:["plugin"]`）。**`mimo-login` 面板已在 0.12.0
+    随 MiMo 扫码登录一起删除**，不要把它写回清单或视图。
   - 顶层 `"icon": "./icon.svg"` 与 `files` 加入 `icon.svg`（桌面 Cordis 插件同款约定）；根目录
     `icon.svg` / `icon-outline.svg` / `preview.png` 与 `docs/assets/wallet/**` 是给**桌面端复用**的
     视觉近似素材——DSH Go App 胶囊上的钱包图是 **App 内置图标名** `wallet`，不在本包发布内容里
@@ -537,12 +556,12 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
   - 只在装了 dsh-go 桥接的主机注册原生半（`ctx.inject(['dshGo'])`）；没有 `dshGo` 服务时
     `apply` 照旧；官方插件检查器的隔离宿主没有 `webServer`，`apply` 注册完原生面板即返回，
     `check --load` 才能加载校验视图。**「Web / 桌面端行为不变」在启用闸门整改后成立**
-    （此前缺闸门：无桥 / 停用时仍可能读凭据或取数）：legacy 记忆登录要求
-    `桥存在 && enabled !== false && mimoEnabled !== false && mimoRememberLogin !== false`，
-    strip 在总开关 / 渠道停用时**不调 provider、不显示旧值**，见下面条目的整改说明。
+    （此前缺闸门：无桥 / 停用时仍可能读凭据或取数）：strip 在总开关 / 渠道停用时
+    **不调 provider、不显示旧值**，见下面条目的整改说明。MiMo 已没有登录/凭据读取路径。
 - **原生设置页入口**（0.11.0）：额度面板底部是「刷新 / 设置」，点「设置」发 `{ open: "panel:settings" }`
-  打开本插件的原生设置面板。它只编辑**非密钥**字段（插件总开关、各渠道开关、Codex 来源、
-  余额提醒阈值、额度策略阈值）；密钥 / Cookie / 自定义余额仍走网页版设置页。设置页按渠道分组，
+  打开本插件的原生设置面板。它只编辑**非密钥**字段（插件总开关、各渠道开关、
+  余额提醒阈值、额度策略阈值）；密钥 / 自定义余额仍走网页版设置页。
+  **MiMo 分组只有开关、余额提醒与额度策略，没有登录/扫码/记住登录控件。** 设置页按渠道分组，
   「启用额度策略 / 关注额度策略」开关是 onChange 即时保存 + refresh 重建视图——**切换开关会重建
   表单，未保存的其它编辑会被刷新**；保存时只提交当前视图实际渲染的字段（隐藏的策略输入不写，
   保留原配置）。
@@ -563,20 +582,14 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
   失败 / 未知 / 无窗口 / 无余额 → `null`（有上次可用值则继续显示旧值并后台刷新）。
   **终审整改**：总开关 / 渠道开关停用时**不调 provider、不显示旧值**——在读缓存/投影前与调用取数前
   各判一次闸门，配置重载窗口内同步遮蔽（`stripConfigPending`）并清缓存；缓存/在途 key =
-  `channelId|identityOfChannel(id)`（Codex 含 `codexSource`，自定义含 provider/端点/修订号），
+  `channelId|identityOfChannel(id)`（Codex 含账号快照 `acct=…r<修订号>`，自定义含 provider/端点/修订号），
   **永久失败清旧值**，只有**同一身份**下的暂时失败才 carry 并标 `stale`。
-- **MiMo legacy 登录持久化**（0.11.0，默认开 `mimoRememberLogin`）：扫码登录成功后把**平台侧 4 个
-  cookie**（`api-platform_serviceToken` / `userId` / `api-platform_slh` / `api-platform_ph`）交给
-  `ctx.credentials` 保管（凭据记录，不含账号密码 / 账号 cookie / 上游原文）；引擎重启后重放
-  `GET https://platform.xiaomimimo.com/api/v1/balance`，200 / code=0 即恢复余额，401 / 403 / 结构异常
-  则删除记录并回落重新扫码。设置页 MiMo 分组可关闭（关闭即删除记录）。真机已验证「扫码写入记录 →
-  重启引擎免扫码恢复余额」。**残余风险**：`serviceToken` 实际有效期、设备/IP 绑定是否会失效均未知，
-  过期需重新扫码。实现坑：登录流程结束会 `jar.clear()`，cookie 必须在读余额时（`askBalanceMatch`）
-  抓取；`serviceToken` 的 `Path` 可能是 `/api`，要用余额接口完整 URL 取 cookie。
-  **终审整改**：保存/恢复统一过四层闸门（桥存在、`enabled`、`mimoEnabled`、`mimoRememberLogin`
-  均非 `false`），无桥/停用时**不读凭据、不重放**，桥未就绪直接返回不排队；
-  `legacyDoneBalance()` 返回**稳定采样时间**（真正拿到余额那一刻，多次 peek 不变），超过 **5 分钟**
-  或缺时间戳不再当 fresh，而是触发一次记录重放并返回「读取中 / 缺失」，不拿旧余额冒充当前值。
+- **（已删除，仅历史）MiMo legacy 登录持久化**（0.11.0–0.11.3）：曾在扫码登录成功后把平台侧 4 个
+  cookie 交给 `ctx.credentials` 保管，引擎重启后重放
+  `GET https://platform.xiaomimimo.com/api/v1/balance` 免扫码恢复余额；设置页 MiMo 分组可关闭。
+  真机曾验证「扫码写入记录 → 重启引擎免扫码恢复余额」。**0.12.0 起整条通道（含记录、重放、
+  四层闸门、`mimoRememberLogin`）已随 `plans/mimo-legacy-store.js` 与 `plans/mimo-auth/**` 删除**；
+  不要再把它当现行能力，也不要把 `mimoRememberLogin` 写回 schema/设置页。
 - **DSH Go 第二轮整改（0.11.0，终审三轮中的第二轮）**：首轮 5 类问题整改后，第二轮又发现 2 项并修复：
   - **原生 collect 身份采样前固化 / 采样后复核**（E1–E3）：取数**前**先固化每个渠道的
     `identityOfChannel(id)`，采样结束后用同一时刻的期望值复核；期间身份漂移（改 Codex 来源 /
@@ -591,15 +604,11 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
     还额外验证「身份稳定后能自愈（29% 再 carry）」「记录缓存再次过期会重新重放」
     「恰好 5 分钟仍新鲜、+1ms 重放」。
     **验收边界：这是离线代码与定向行为复审通过，不等同手机真机、原生视觉或发布验收。**
-    守门测试 `tools/test-dsh-go-boundaries.mjs` 已扩到 **47** 项（含 E1–E3 / F1–F9）。
-- **mimo-auth 官方接口变化兼容**（0.11.0）：按 2026-11-14 真机联调做的最小兼容（不改流程，
-  网页版同样受益）：① 官方子域（`account.xiaomi.com` 及其子域）放宽域名 / 用途校验；
-  ② quoted cookie 值与账号域 cookie（CookieJar `allowQuotedValues` + 白名单补 `account.xiaomi.com`）；
-  ③ 格式非法的 `Set-Cookie` 行按浏览器语义**忽略并继续**（固定枚举诊断，不再整次
-  `E_SET_COOKIE_REJECTED`）；④ 扫码回执字段可为严格引号包裹（原样出站、不 decode / unescape）；
-  ⑤ 回执 `userId` 可为 JSON **number**（只接受安全非负整数并转十进制字符串）；
-  ⑥ 移动网络瞬时断连的 GET **单次重试（300ms）**；⑦ 所有网络失败点带固定枚举诊断
-  `step + networkCode`，不再有「无信息 E_NETWORK」。
+    守门测试 `tools/test-dsh-go-boundaries.mjs` 已扩到 **50** 项（含 E1–E3 / F1–F9 与 0.12.0 新增的
+    账号切换身份隔离 C1b/C1c/E1b）。
+- **（已删除，仅历史）mimo-auth 官方接口变化兼容**（0.11.0）：曾按 2026-11-14 真机联调对
+  扫码流程做最小兼容（官方子域、quoted cookie、非法 Set-Cookie 行忽略、回执字段引号 / number、
+  GET 单次重试、固定枚举诊断）。**0.12.0 已随扫码通道一起删除，不再维护**；只作历史记录。
 - **DSH Go 原生半未验证 / 未搬项**（0.11.0）：
   - **第三轮定向复审通过（定向范围），但不等同手机真机、原生视觉或发布验收**；前两轮整改后也
     没有重新上手机验收（只做了离线测试、主代理实跑与定向行为复审）；策略刷新定时器、strip 闸门、
@@ -607,26 +616,32 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
   - **`composer.strip` 尚未在真机确认观感**：slot 是单行文本、空白会被折叠，数值只能跟在名字后；
     用户还没在手机上看过实际效果。
   - **原生面板不是真机渲染验证**：视图结构只由官方 `check --load` 的 App 解析器副本验证过
-    （视图约 2196 字节 / 27 组件 / 4 层，上限 32 KiB / 120 / 8）；MiMo 登录持久化另有
-    2026-11-16 真机验收，但面板 / 设置页的视觉观感仍待用户确认。
-  - **面板未搬 Web 卡片细节**：DeepSeek 峰谷条、充值入口、赠金明细、Codex `Subscription`
-    适配入口等只在 Web 详情卡片里，原生面板本轮只做额度总览。
+    （视图约 2196 字节 / 27 组件 / 4 层，上限 32 KiB / 120 / 8）；面板 / 设置页的视觉观感仍待用户确认。
+    MiMo 登录持久化**曾**在 2026-11-16 做过真机验收，但该功能与验收对象已在 0.12.0 删除，不再适用。
+  - **面板未搬 Web 卡片细节**：DeepSeek 峰谷条、充值入口、赠金明细等只在 Web 详情卡片里，
+    原生面板只做额度总览；Codex `Subscription` 适配入口已随来源退场下线（0.12.0）。
   - 面板打开期间与 Web GUI 可能各自请求一次（30 秒节奏，暂不共用缓存）；视图骨架在面板打开时生成，
     运行中改配置 / 排序后需**重新打开面板**才会更新分块。
-  - MiMo「登录不可用（需要新版宿主）」与 Codex Subscription 版本 / 补丁问题仍按
-    `docs/backlog.md` §2 单独处理，与本面板无耦合。
-- **Codex `Subscription` 来源依赖第三方本地补丁**（0.10.0）：需要在第三方包
+  - MiMo「登录不可用（需要新版宿主）」是**已删除功能的历史问题**：0.12.0 不再有登录/扫码，
+    只有 API Key 余额，因此不需要再按 `docs/backlog.md` §2 处理 MiMo 登录；
+    Codex Subscription 的版本 / 补丁问题在 0.12.0 来源退场后只属历史记录（不再有入口）。
+- **原生额度面板只含 4 个渠道，默认顺序 `DeepSeek → MiMo → Codex → OpenCode Go`**（0.12.0）：
+  兜底顺序由 `plans/dsh-go-native.js#NATIVE_CHANNEL_ORDER` 决定（已保存的 `planOrder` 仍优先）；
+  WorkBuddy 分组、渠道开关与额度策略字段随渠道退场一并删除，旧配置里的 `workbuddy*` 字段保留但不生效。
+  原生设置页按渠道分组，现在只有 OpenCode Go / DeepSeek / Codex / MiMo 四组。
+- **（已退场，仅历史）Codex `Subscription` 来源依赖第三方本地补丁**（0.10.0–0.11.x）：需要在第三方包
   `dsh-codex-subscription` 上打**本地只读 service 补丁**才拿得到订阅额度，该补丁**不在本包发布内容里**。
   没打补丁时该来源显示「接口暂不可用（需适配）」；`Codex Connect` 来源不受影响、照常可用。
   该补丁还需按第三方包的版本重新核对（本包只消费它的只读接口约定）。
-- **一键应用本地适配**（0.10.2）：设置页 `Subscription` 行显示「需适配」时可直接点「应用本地适配」
+- **（已退场，仅历史）一键应用本地适配**（0.10.2）：设置页 `Subscription` 行显示「需适配」时可直接点「应用本地适配」
   （Host 路由 `GET /api/plan-usage/codex-subscription/patch-state` 只读、`POST …/apply-patch` 执行，
   目标包目录由插件自身位置推导、**不接受任何参数**，与 CLI 共用 `plans/codex-subscription-patch.js`）。
   应用后需重启 DSH 生效；批量/离线场景仍建议用 CLI `node tools/patch-codex-subscription.mjs --apply`。
-- **MiMo 只保留扫码登录一条通道**（0.10.2）：显示快照不适用时 mimo 固定为缺失态（`error:"missing"`），
-  **不再回落** `plans/mimo.js#fetchPlan` 的旧 Cookie lane，因此 401 之类的旧错误不再出现在界面上；
-  配置里的 `mimoCookie` 字段与值**原样保留、不被读取**（不迁移、不清除）。
-- **第三方插件升级/重装会覆盖 Codex Subscription 的补丁**（0.10.1）：升级后运行
+- **（已删除，仅历史）MiMo 只保留扫码登录一条通道**（0.10.2–0.11.3）：显示快照不适用时
+  mimo 固定为缺失态（`error:"missing"`），不回退旧 Cookie lane；配置里的 `mimoCookie` 原样保留、
+  不被读取。**0.12.0 起扫码 / 显示快照整条链已删除**：MiMo 只认 API Key，无 Key 固定 `no-key`；
+  `mimoCookie` 不再是有效配置，也不再被提及为可用输入。
+- **（已退场，仅历史）第三方插件升级/重装会覆盖 Codex Subscription 的补丁**（0.10.1）：升级后运行
   `node tools/patch-codex-subscription.mjs`（默认只检查，`--apply` 才写；另有 `--revert` 从最近备份恢复）。
   出现「不可适配 / 需要生成清单」即表示未打补丁；hunk 清单与第三方版本**绑定**，换版本需重新生成
   `plans/patches/codex-subscription-<version>.json`，不要指望模糊匹配。
@@ -652,16 +667,19 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
   排障用 `/api/plan-usage` 的只读字段 `quotaContext: { registered, state, channelId }`
   （`state` 固定枚举：`rendered` / `route-unmapped` / `route-not-focused` / `policy-off` / `unobserved-route` …），
   不要靠猜「是不是没注册」。
-- **MiMo 的 `usage_status` 读的是显示快照**（0.10.0）：胶囊 / 详情 / 工具 / 额度策略共用同一份
-  本机显示会话快照（`getHost().routeDisplay.peek()`，缺失才回退 `display.peek()`），
-  因此需要「记住登录」链路才有数值；没有该链路时显示占位/读取中，而不是旧的手工 Cookie 值。
-  MiMo 也因此**不参与** 30 秒成功缓存（见 `ACCOUNT_BOUND_PLAN_IDS`）。
+- **MiMo 的 `usage_status` 不再读显示快照**（0.12.0）：胶囊 / 详情 / 工具 / 额度策略 / strip 全部
+  走同一条 API Key wire，身份带 `key=` 指纹；没有 Key 时工具如实返回 `no-key`，**不再需要**
+  「记住登录」链路，也不会显示「读取中」占位或旧 Cookie 值。MiMo 仍留在
+  `ACCOUNT_BOUND_PLAN_IDS`（**刻意不进 30 秒成功缓存**，避免改变既有缓存语义）。
 - 0.8.1 的 Host 已通过可选 `configEditor` 重读配置（2 秒内复用）；缺少该服务的旧版/移植端回退启动快照，修改凭据和 Host 开关后仍需重启引擎。显示层过滤与排序订阅表单。
   （0.9.0 起 `cfgValue()` 能正确解包 volatile 包装，因此**开关本身**在没有 configEditor 的
   部署里也生效；但「改完不重启就换 Key」仍要求 configEditor。）
-- **国内 WorkBuddy**（0.9.1 起）不再依赖 WorkBuddy Connect：改为读「设置 → 模型」里 `workbuddy`
-  网关配置，访问 `<origin>/status` 根路径并复用该来源的 Bearer Key。因此它依赖**模型配置里
-  确实存在该 provider**，且该网关在运行。国际版 `workbuddy-ai` 已退场。
+- **（已退场，仅历史）国内 WorkBuddy**（0.9.1–0.11.3）：曾读「设置 → 模型」里 `workbuddy`
+  网关配置，访问 `<origin>/status` 根路径（2026-11-12 起改客户端接口 `<origin>/v1/credits`）
+  并复用该来源的 Bearer Key，因此依赖模型配置里确实存在该 provider 且网关在运行。
+  **0.12.0 已退场**：用户不再使用反代渠道，插件不再有 WorkBuddy 专用开关 / 积分口径 / 账号筛选 /
+  原生面板分组；`plans/workbuddy.js` 删除、`workbuddy` / `workbuddy-ai` 进 `RETIRED_PLAN_IDS`。
+  如仍需要，请用「自定义余额渠道」按同一来源 + `/v1/credits` 路径自行添加。
   源码/模拟检查通过不等同所有 DSHA 设备真机验证。
 - 原生 fetch **不读系统代理设置**（Node/undici 默认行为）。必须走代理出网的环境里首次请求会先
   失败一次（最多 10 秒），随后自动落到会读代理的 Python shim 并被记住——功能不受影响，只是首次稍慢。
@@ -680,6 +698,23 @@ const summary = await account.getBalance({ version, locale, timezoneOffsetSecond
     残余风险：若运行时的 `node:https` 行为被宿主改写，绑定即失效——本项目不作此假设，但不声称绝对。
   - 没有低余额告警阈值（不继承 DeepSeek 的 10 元）；需要时另开需求。
   - `/api/plan-usage/custom-status` 是 0.9.0 新增的只读路由（只回布尔），扩大了对外接口面。
+- **Codex 只保留本插件账号 + 多账户（0.12.0 开发中）**：`connect` / `subscription` 两个来源**已退场**
+  ——网页设置页不再有来源单选 / 摘要 / 说明 / Subscription 适配块，DSH Go 原生设置页不再有
+  `codexSource` 下拉与一键适配入口；活动取数 `plans/codex.js#fetchPlan` **恒走 account**
+  （`codexSource` 字段仅留作旧配置 / 旧 wire 兼容，相关来源模块保留为死代码）。
+  私有记录 `dsh-usage-dock/codex`（kind `grant`）升级为 **v2**
+  `{version:2, activeAccountId, accounts:[…]}`：**1..8 个账户、单选生效**，`credentialId` /
+  `accountId` 各自唯一；旧 v1 单账户**读兼容、写后落 v2**。账户操作：添加（新 `credentialId`
+  追加 + active）、同账号重登（upsert：保留 `credentialId`、`revision+1`、active 跟随）、
+  select（只改 `activeAccountId`）、remove（只删指定 id；移除最后一个删整条记录；满 8 个返回 `limit`）。
+  UI：账户列表**上方**整行「添加账户」；每行 radio +「账号名 · 订阅类型」（14px primary/500 +
+  13px secondary）；**仅选中行**最右侧同一行显示「重新登录 / 退出登录」。
+  观察身份 `identityOfChannel('codex')` 只追加 `acct=<快照>`，快照 =
+  `acct:<accountId sha256 前 8>@<credentialId 前 8>r<revision>`；**不含** `codexSource` 或第三方
+  service revision。取数走设备码 OAuth + `GET https://chatgpt.com/backend-api/wham/usage`
+  （**非官方支持**的内部接口）。**未部署、未发布、未真机验证**；真实账号只成功登录过一个账户一次；
+  手机端无登录/切换入口，需桌面网页版。
+  协议、v2 记录、账户语义与已知限制见 [docs/codex-account-oauth-20261122.md](docs/codex-account-oauth-20261122.md)。
 
 ## 8. 发布
 
@@ -881,7 +916,11 @@ $token = (("protocol=https`nhost=github.com`n`n" | git credential fill) -replace
 
 ---
 
-## 12. MiMo 阶段恢复入口
+## 12. MiMo 阶段恢复入口（**仅历史；相关代码已于 0.12.0 删除**）
+
+> ⛔ **2026-11-24 起：本节只作历史。** MiMo 扫码登录 / 显示会话 / 记住登录 / legacy 凭据记录 /
+> `mimo-login` 原生面板已全部删除，现行 MiMo 只有 API Key 余额（见 §3 / §6 第 13 条 / §7）。
+> 不要按本节恢复代码、路由、面板或配置；保留本节只为追溯当时的实施与失败记录。
 
 > **2026-11-06 最新：正式 console 源码主线已接线，Max 一次独立终审 Pass（仅本地合成范围，无阻断），不是已真实可用。**
 > 详见[主线实施记录](docs/mimo-console-mainline-20261106.md)与[终审记录](docs/mimo-console-mainline-review-20261106.md)。
@@ -935,4 +974,4 @@ $token = (("protocol=https`nhost=github.com`n`n" | git credential fill) -replace
 
 ---
 
-*文档更新时间：2026-10-28（本次仅更新协作规则；当前权威发布状态：[docs/release-status-v0.9.0-20261024.md](docs/release-status-v0.9.0-20261024.md)；`0.9.1` 为过程标签，已并入 0.9.0）*
+*文档更新时间：2026-11-25（MiMo 登录清理与 0.12.0 最终测试数字；协作规则仍为 2026-10-28 版；当前权威发布状态：[docs/release-status-v0.9.0-20261024.md](docs/release-status-v0.9.0-20261024.md)；`0.9.1` 为过程标签，已并入 0.9.0）*

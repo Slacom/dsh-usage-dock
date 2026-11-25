@@ -110,8 +110,8 @@ function check(name, cond, detail) {
 // N4 — 路由 → 渠道映射
 // ===========================================================================
 {
-  check('N4a workbuddy → workbuddy 渠道', channelForProvider('workbuddy') === 'workbuddy')
-  check('N4b workbuddy-ai 独立', channelForProvider('workbuddy-ai') === 'workbuddy-ai')
+  check('N4a 手机端自定义名归一化：custom-openai-codex → codex', channelForProvider('custom-openai-codex') === 'codex')
+  check('N4b 手机端自定义名归一化：my-opencode-go → opencode-go', channelForProvider('my-opencode-go') === 'opencode-go')
   check('N4c openai-codex → codex', channelForProvider('openai-codex') === 'codex')
   check('N4d deepseek-account 带 account 源',
     resolveRoute('deepseek-account').source === 'account')
@@ -122,8 +122,8 @@ function check(name, cond, detail) {
   // [0.10.5] 真机故障回归：provider route id 就是 `opencode-go`，漏映射会让策略在
   // 用户真正使用该渠道时静默不投放（提示词里看不到任何额度快照）。
   check('N4i opencode-go → opencode-go 渠道', channelForProvider('opencode-go') === 'opencode-go')
-  check('N4h 用 WorkBuddy 跑 DeepSeek 模型 → 评估 WorkBuddy 而非 DeepSeek',
-    channelForProvider('workbuddy') === 'workbuddy' && channelForProvider('workbuddy') !== 'deepseek')
+  check('N4h 用 OpenCode Go 跑别家模型 → 评估 OpenCode Go 而非 DeepSeek',
+    channelForProvider('opencode-go') === 'opencode-go' && channelForProvider('opencode-go') !== 'deepseek')
 }
 
 // ===========================================================================

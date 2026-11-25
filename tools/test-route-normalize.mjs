@@ -2,8 +2,10 @@
 /**
  * [2026-11-17] provider → 渠道映射归一化。
  *
- * 真机故障：手机端把 WorkBuddy 网关命名为 `custom-workbuddy`（displayName 才叫 workbuddy），
+ * 真机故障：手机端把模型来源命名为 `custom-<渠道>`（displayName 才与内置名一致），
  * 旧实现只做精确 id 匹配 → 路由 unmapped → 额度策略不注入、胶囊不显示。
+ * [2026-11-23] WorkBuddy 已退场，改用仍在内置 ROUTE_TABLE 的 OpenCode Go / Codex /
+ * DeepSeek 覆盖同一套归一化规则。
  *
  * 规则：精确 id 优先；其次按「词元连续包含 + 最长匹配」；等长多命中视为歧义（返回 null）。
  */
@@ -27,8 +29,6 @@ const channelOf = (provider) => {
 }
 
 check('精确 id 全部照旧（不因归一化改变既有映射）', () => {
-  assert.equal(channelOf('workbuddy'), 'workbuddy')
-  assert.equal(channelOf('workbuddy-ai'), 'workbuddy-ai')
   assert.equal(channelOf('opencode-go'), 'opencode-go')
   assert.equal(channelOf('openai-codex'), 'codex')
   assert.equal(channelOf('deepseek-account'), 'deepseek')
@@ -38,28 +38,23 @@ check('精确 id 全部照旧（不因归一化改变既有映射）', () => {
 })
 
 check('自定义来源名归一化到同一渠道（手机端真机场景）', () => {
-  assert.equal(channelOf('custom-workbuddy'), 'workbuddy')
-  assert.equal(channelOf('my-workbuddy-api'), 'workbuddy')
+  assert.equal(channelOf('custom-opencode-go'), 'opencode-go')
+  assert.equal(channelOf('my-openai-codex'), 'codex')
   assert.equal(channelOf('my-opencode-go'), 'opencode-go')
   assert.equal(channelOf('custom-deepseek-account'), 'deepseek')
   assert.equal(resolveRoute('custom-deepseek-account').source, 'account')
 })
 
-check('最长词元序列优先：custom-workbuddy-ai → workbuddy-ai（不是 workbuddy）', () => {
-  assert.equal(channelOf('custom-workbuddy-ai'), 'workbuddy-ai')
-  assert.equal(channelOf('x-workbuddy-ai'), 'workbuddy-ai')
-})
-
 check('等长多命中 ⇒ 歧义返回 null（不猜）', () => {
-  // `opencode-go` 与 `workbuddy-ai` 都是 2 个词元，同时出现则无法判断
-  assert.equal(resolveRoute('opencode-go-workbuddy-ai'), null)
+  // `openai-codex` 与 `opencode-go` 都是 2 个词元，同时出现则无法判断
+  assert.equal(resolveRoute('openai-codex-opencode-go'), null)
 })
 
 check('大小写/前后空白仍不命中（沿用 A12：不做大小写与空白归一化）', () => {
-  assert.equal(resolveRoute('WORKBUDDY'), null)
-  assert.equal(resolveRoute('Custom-WorkBuddy'), null)
-  assert.equal(resolveRoute(' workbuddy'), null)
-  assert.equal(resolveRoute('workbuddy '), null)
+  assert.equal(resolveRoute('OPENCODE-GO'), null)
+  assert.equal(resolveRoute('Custom-OpenCode-Go'), null)
+  assert.equal(resolveRoute(' opencode-go'), null)
+  assert.equal(resolveRoute('opencode-go '), null)
 })
 
 check('不认识的名字仍然 null（不误认）', () => {
@@ -72,7 +67,7 @@ check('不认识的名字仍然 null（不误认）', () => {
 
 check('胶囊映射同样受益（strip 走同一个 resolveRoute）', () => {
   const deps = { resolveRoute, customEntries: [] }
-  assert.deepEqual(providerToChannel('custom-workbuddy', deps), { channelId: 'workbuddy', custom: false, name: null, source: null })
+  assert.deepEqual(providerToChannel('custom-opencode-go', deps), { channelId: 'opencode-go', custom: false, name: null, source: null })
   assert.equal(providerToChannel('unknown-provider', deps), null)
 })
 

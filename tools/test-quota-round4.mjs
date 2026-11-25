@@ -21,7 +21,7 @@ function check(name, cond, detail) {
 
 const DISABLED = {
   opencodeGoEnabled: false, deepseekEnabled: false, codexEnabled: false,
-  mimoEnabled: false, workbuddyEnabled: false, workbuddyAiEnabled: false,
+  mimoEnabled: false, deepseekEnabled: false, workbuddyAiEnabled: false,
 }
 
 /** 真实 apply，配置可就地修改并触发 reload。 */
@@ -83,8 +83,8 @@ const originalMimo = mimo.fetch
 // R4-01 — A→B→A 回切后旧在途结果不得复活
 // ===========================================================================
 {
-  const COOKIE_A = 'uid=1; serviceToken=AAA; userId=1A'
-  const COOKIE_B = 'uid=1; serviceToken=BBB; userId=1B'
+  const KEY_A = 'sk-mimo-AAA'
+  const KEY_B = 'sk-mimo-BBB'
   let releaseOld = null
   const oldGate = new Promise((resolve) => { releaseOld = resolve })
   let call = 0
@@ -99,7 +99,7 @@ const originalMimo = mimo.fetch
 
   const app = boot({
     mimoEnabled: true,
-    mimoCookie: COOKIE_A,
+    mimoApiKey: KEY_A,
     quotaPolicyEnabled: true,
     quotaFocusChannels: '["mimo"]',
     quotaWarningBalanceThreshold: 10,
@@ -109,11 +109,11 @@ const originalMimo = mimo.fetch
   })
   // 1) A 下取得 95
   const first = await gui(app)
-  // [0.10.5] MiMo 旧 Cookie 通道已在 0.10.2 移除：单通道下 mimo 恒为缺失态、零请求。
-  // 本条从「取到余额 95」改为「如实缺席」，其余 R4-01 系列继续守住「旧在途/旧身份不复活」。
+  // [0.11.4] MiMo 只有 API Key 一条通道（Cookie / 扫码已删除），
+  // 因此 Key A 下取到余额 95。
   const firstMimo = first.data.plans.find((p) => p.id === 'mimo')
-  check('R4-01a A 下 mimo 为缺失态（单通道，不再读 Cookie）',
-    firstMimo !== undefined && firstMimo.error === 'missing' && firstMimo.balance === undefined, firstMimo)
+  check('R4-01a A 下 mimo 取到余额 95（API Key 通道）',
+    firstMimo !== undefined && firstMimo.error === undefined && firstMimo.balance === 95, firstMimo)
 
   // 2) A 下启动一个会挂起的请求（call=2）
   const pendingOld = gui(app)
@@ -121,14 +121,14 @@ const originalMimo = mimo.fetch
 
   // 3) 切到 B
   mimo.fetch = async () => ({ id: 'mimo', name: 'Xiaomi MiMo', balance: 50, currency: 'CNY', unit: 'currency' })
-  await app.save({ mimoCookie: COOKIE_B })
+  await app.save({ mimoApiKey: KEY_B })
   const bBody = await gui(app)
   const bMimo = bBody.data.plans.find((p) => p.id === 'mimo')
-  check('R4-01b B 下 mimo 仍为缺失态',
-    bMimo !== undefined && bMimo.error === 'missing' && bMimo.balance === undefined, bMimo)
+  check('R4-01b B 下 mimo 取到余额 50',
+    bMimo !== undefined && bMimo.error === undefined && bMimo.balance === 50, bMimo)
 
   // 4) 切回 A（配置值回到 A，哈希也回到 A）
-  await app.save({ mimoCookie: COOKIE_A })
+  await app.save({ mimoApiKey: KEY_A })
 
   // 5) 释放旧的 A 请求（它拿 1）—— 这张票据属于「切出之前」的激活，
   //    即使身份哈希又变回 A，它的 epoch 也已落后，必须被拒绝。
@@ -164,7 +164,7 @@ const originalMimo = mimo.fetch
   }
   const app = boot({
     mimoEnabled: true,
-    mimoCookie: 'uid=1; serviceToken=AAA; userId=1A',
+    mimoApiKey: 'sk-mimo-AAA',
     quotaPolicyEnabled: true,
     quotaFocusChannels: '["mimo"]',
     quotaWarningBalanceThreshold: 10,
@@ -174,8 +174,8 @@ const originalMimo = mimo.fetch
   })
   const first = await gui(app)
   const eFirstMimo = first.data.plans.find((p) => p.id === 'mimo')
-  check('R4-01e 停用前 mimo 为缺失态',
-    eFirstMimo !== undefined && eFirstMimo.error === 'missing' && eFirstMimo.balance === undefined, eFirstMimo)
+  check('R4-01e 停用前 mimo 取到余额 95',
+    eFirstMimo !== undefined && eFirstMimo.error === undefined && eFirstMimo.balance === 95, eFirstMimo)
 
   const pendingOld = gui(app)
   await new Promise((r) => setTimeout(r, 20))
@@ -294,19 +294,19 @@ const originalMimo = mimo.fetch
 // 防御项 — 真实 apply：C wire 不清空来源
 // ===========================================================================
 {
-  const wb = PLANS.find((p) => p.id === 'workbuddy')
-  const originalWb = wb.fetch
-  wb.fetch = async () => ({ id: 'workbuddy', name: 'WorkBuddy', creditsTotal: 321 })
-  const app = boot({ workbuddyEnabled: true })
+  const ds = PLANS.find((p) => p.id === 'deepseek')
+  const originalDs = ds.fetch
+  ds.fetch = async () => ({ id: 'deepseek', name: 'DeepSeek', balance: 321 })
+  const app = boot({ deepseekEnabled: true })
   await gui(app)
-  wb.fetch = async () => ({ id: 'workbuddy', name: 'WorkBuddy', error: 'cancelled' })
+  ds.fetch = async () => ({ id: 'deepseek', name: 'DeepSeek', error: 'cancelled' })
   const cancelled = await gui(app)
   const entry = cancelled.data.plans[0]
   // C 不提交：状态与数值应保持上一次成功的结论
-  check('R4-D3 C wire 后仍保留有效数值', entry.creditsTotal === 321, entry.creditsTotal)
+  check('R4-D3 C wire 后仍保留有效数值', entry.balance === 321, entry.balance)
   check('R4-D4 C wire 后状态仍为 ok', entry.effectiveStatus === 'ok', entry.effectiveStatus)
   app.close()
-  wb.fetch = originalWb
+  ds.fetch = originalDs
 }
 
 // ===========================================================================

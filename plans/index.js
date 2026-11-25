@@ -14,25 +14,26 @@
  *   `plans/kimi-code.js`、`plans/glm.js`、`plans/glm-zai.js`、`plans/glm-zhipu.js`
  *   作为历史维护资料保留在仓库里，但**不再被 import**（也就不再进入运行时）。
  *   Kimi 的口径 / ratio-pool / Cookie 月限问题按用户决定**不修**。
+ *
+ * [2026-11-23] WorkBuddy 退场：用户要求 WorkBuddy **不再作为插件原生/内置渠道**，
+ *   以后要用只通过「自定义余额渠道」添加。`workbuddy` 与 `workbuddy-ai` 都进入
+ *   `RETIRED_PLAN_IDS`；`plans/workbuddy.js` 已删除，Host 不再 import、不再取数、
+ *   不再渲染设置项或额度分组。原生渠道只保留 DeepSeek / MiMo / Codex / OpenCode Go。
  */
 import opencodeGo from './opencode-go.js'
 import deepseek from './deepseek.js'
 import codex from './codex.js'
 import mimo from './mimo.js'
-import workbuddy from './workbuddy.js'
 
 /**
  * 已接入的套餐（渠道）：id 同时用作配置键名与 wire 标识。
- * [0.8.3] WorkBuddy 拆成两个独立渠道：国内版（workbuddy）与国际版（workbuddy-ai）
- * ——两者积分不通用，且需要各自开关与排序（用户 2026-10-17 要求）。
  * [0.9.0] 三个退场渠道（kimi-code / glm-zhipu / glm-zai）已从此表移除。
+ * [2026-10-21] workbuddy-ai 已退场（用户确认不再区分国际版）。
+ * [2026-11-23] workbuddy 也已退场：WorkBuddy 不再作为内置渠道，改由用户在
+ * 「自定义余额渠道」里自行添加；两个 id 都进入 RETIRED_PLAN_IDS，旧配置里的
+ * 引用会被安全忽略，且**不会**再被取数或渲染。
  */
-/**
- * [2026-10-21] workbuddy-ai 已退场：用户确认全部改走国内 WorkBuddy2API 网关，
- * 不再区分国际版；其 id 进入 RETIRED_PLAN_IDS，旧配置里的引用会被安全忽略，
- * 且**不会**再被取数或渲染。
- */
-export const PLANS = [opencodeGo, deepseek, codex, mimo, workbuddy]
+export const PLANS = [opencodeGo, deepseek, codex, mimo]
 
 /** id → plan 的索引（配置读写路由校验未知套餐用）。 */
 export const PLAN_BY_ID = Object.fromEntries(PLANS.map((plan) => [plan.id, plan]))
@@ -45,7 +46,7 @@ export const PLAN_BY_ID = Object.fromEntries(PLANS.map((plan) => [plan.id, plan]
  * 而不是当成未知参数错误，更不能复活为可查询渠道。这条契约在当前版本**没有**
  * 工具实现（方向 6 仍是规划），仅作为注册表事实保留，避免将来重新猜一遍。
  */
-export const RETIRED_PLAN_IDS = ['kimi-code', 'glm-zhipu', 'glm-zai', 'workbuddy-ai']
+export const RETIRED_PLAN_IDS = ['kimi-code', 'glm-zhipu', 'glm-zai', 'workbuddy-ai', 'workbuddy']
 
 /** 某 id 是否为已退场的活动渠道（供未来工具层/迁移逻辑复用）。 */
 export function isRetiredPlanId(id) {

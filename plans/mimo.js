@@ -1,40 +1,43 @@
 /**
- * 小米 MiMo 开放平台余额模块（0.8.0 新增渠道）：
+ * 小米 MiMo 开放平台余额模块（0.8.0 新增渠道；0.11.4 起**只保留 API Key 通道**）。
  *
- * 只做**API 余额**显示（不做套餐积分/补偿积分额度）——数据来自小米开放平台
- * 控制台的余额端点，与控制台「账户余额」页同一数据源：
- *   GET https://platform.xiaomimimo.com/api/v1/balance
- *   → { code: 0, data: { balance: '16.48', currency: 'CNY',
- *       cashBalance: '16.48', giftBalance: '0.00' } }
- * （数值为**字符串**；currency 决定显示符号：CNY→¥、USD→$。）
- *
- * 鉴权：**不是 API Key**，是小米开放平台控制台的整段 Cookie 请求头（登录
- * platform.xiaomimimo.com 后 F12 → 网络 → 任一请求 → 复制请求头里完整的
- * cookie 值）。必需字段：userId 与 serviceToken（api-platform_serviceToken
- * 亦接受）。tp-·/ttp-· 形态的专用 Key 没有余额端点，不支持查询（前缀后的
- * 星号会提前闭合块注释，此处用「·」代指）。取数与解析口径照抄
- * dsh-cost-meter 的 lib/coding-plans.js（本机安装副本逐一核对）。
- *
- * 与其他渠道相同的统一 plan 对象：{ id, name, fields, schema, source, fetch }。
- * wire 对象携带 balance（number）、currency（string）、cashBalance / giftBalance
- * （number | null，详情面板明细）、via: 'console'。
- */
-import z from '@deepseek-ai/schemastery'
-import { curlJson, toNum, planBase, execError, resolveApiKey } from './util.js'
-
-const fields = { enabled: 'mimoEnabled', cookie: 'mimoCookie', apiKey: 'mimoApiKey' }
-
-const source = { endpoint: 'https://platform.xiaomimimo.com/api/v1/balance' }
-
-/**
- * [0.11.2] **API Key 余额接口**（与 DeepSeek 同构，逐步取代控制台 Cookie）：
+ * 只做**API 余额**显示（不做套餐积分/补偿积分额度）——数据来自 MiMo 开放平台的
+ * 余额端点（与 DeepSeek 同构）：
  *   `GET https://api.xiaomimimo.com/v1/platform/balance`
  *   鉴权：`api-key: sk-…`（或 `Authorization: Bearer sk-…`），必须用**普通 API Key**。
  *   文档：<https://mimo.mi.com/docs/zh-CN/api/asset/balance-get>
  *
  * 响应：`{ object:'balance', is_available, balance_infos:[{ currency, cash_balance,
  * gift_balance, frozen_balance, credit_limit, credit_available, total_available }] }`
+ *
+ * **历史变更**：0.8.0–0.11.3 曾同时支持「控制台 Cookie」与「扫码登录/记住登录」两条
+ * 通道（`platform.xiaomimimo.com/api/v1/balance` + userId/serviceToken，以及一套
+ * 本机登录/凭据持久化模块）。这些通道已**彻底删除**：
+ * 本模块只认 `mimoApiKey`（插件配置）或「设置 → 模型」里的 MiMo Key，
+ * 没有 Key 时固定返回 `no-key`，不再回退任何 Cookie / 扫码路径。
+ *
+ * **[R1] 「设置 → 模型」自动复用 Key 采用「名称 + 可信 origin」双条件**：
+ * 光看 provider id / displayName 里含 `mimo|xiaomi` 是不够的 —— 第三方 relay（例如
+ * `mimo-relay`）也会命中名称，但它的 Key 属于别家网关，拿去请求
+ * `https://api.xiaomimimo.com` 等于把别人的凭据发给小米。因此名称命中后还必须校验该
+ * provider 的 `baseURL` 规范化 origin **精确等于**受信来源（当前只认
+ * `https://api.xiaomimimo.com`）；缺失 / 非字符串 / 解析失败 / 非 https / 带 userinfo /
+ * 带显式端口 / 第三方地址一律 **fail closed 跳过**，既**不解析**该 provider 的
+ * `apiKeyEnv`，也**不发起**余额请求。`hasMimoApiKey()` 与 `fetchPlan()` 共用同一个
+ * `providerKeyOf()`，规则天然一致；插件显式 `mimoApiKey` 与固定候选名
+ * （`API_KEY_REFS`）的优先级保持不变。
+ *
+ * 与其他渠道相同的统一 plan 对象：{ id, name, fields, schema, fetch }。
+ * wire 对象携带 balance（number）、currency（string）、cashBalance / giftBalance
+ * （number | null，详情面板明细）、creditAvailable（number | null）、via: 'api-key'。
  */
+import z from '@deepseek-ai/schemastery'
+import { curlJson, toNum, planBase, execError, resolveApiKey } from './util.js'
+
+/** 插件配置字段名：渠道开关 + API Key。 */
+const fields = { enabled: 'mimoEnabled', apiKey: 'mimoApiKey' }
+
+/** [0.11.2] **API Key 余额接口**：`GET https://api.xiaomimimo.com/v1/platform/balance`。 */
 export const API_KEY_ENDPOINT = 'https://api.xiaomimimo.com/v1/platform/balance'
 /** 「设置 → 模型」凭据库里可能出现的 MiMo Key 名（插件配置优先）。
  *  [0.11.3] 补上桌面端实际使用的 `XIAOMI_API_KEY`（此前只列了 MIMO_* 三个名字，
@@ -42,8 +45,51 @@ export const API_KEY_ENDPOINT = 'https://api.xiaomimimo.com/v1/platform/balance'
 const API_KEY_REFS = ['XIAOMI_API_KEY', 'MIMO_API_KEY', 'MIMO_APIKEY', 'XIAOMI_MIMO_API_KEY']
 
 /**
- * [0.11.3] 从「设置 → 模型」的 provider 目录里按 id / displayName **包含 mimo 或 xiaomi** 的条目
+ * [R1] 允许自动复用「设置 → 模型」Key 的**可信 API 来源**集合（规范化 origin）。
+ *
+ * 只认小米 MiMo 开放平台自己的 API 域名。不要因为某个第三方网关「也能调 MiMo」
+ * 就往里加：本模块的请求地址固定是 `API_KEY_ENDPOINT`，加进来就等于允许把该网关的
+ * Key 发给小米。
+ */
+const TRUSTED_MIMO_ORIGINS = new Set(['https://api.xiaomimimo.com'])
+
+/**
+ * [R1] 校验某个 provider 的 `baseURL` 是否指向可信的小米 MiMo API 来源。
+ *
+ * **fail closed**：任何一条不满足都返回 `null`（调用方据此跳过该 provider）。
+ *   - 必须是字符串、trim 后非空、能被 `new URL()` 解析；
+ *   - 必须 `https:`（不认 http / ws / 其它协议）；
+ *   - 不能带 userinfo（`user:pass@`），否则 origin 的可信性会被伪造；
+ *   - 不能带显式端口 —— 含被 `URL` 规范化掉的 `:443`，因此额外按原文 authority 判断；
+ *   - 规范化 origin 必须**精确命中** `TRUSTED_MIMO_ORIGINS`（大小写由 `URL` 归一）；
+ *   - 路径不限（常见 `/v1`）：请求地址始终是固定的 `API_KEY_ENDPOINT`，与 `baseURL` 路径无关。
+ *
+ * @param {unknown} baseURL provider 的模型接口地址
+ * @returns {string|null} 可信的规范化 origin；不可信返回 `null`
+ */
+function trustedMimoOriginOf(baseURL) {
+  if (typeof baseURL !== 'string') return null
+  const raw = baseURL.trim()
+  if (raw.length === 0) return null
+  let parsed = null
+  try { parsed = new URL(raw) } catch (err) { return null }
+  if (parsed.protocol !== 'https:') return null
+  if (parsed.username !== '' || parsed.password !== '') return null
+  if (parsed.port !== '') return null
+  // `URL` 会把 `https://host:443` 的端口规范化掉，所以显式端口必须看原文 authority。
+  const authority = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/([^/?#]*)/.exec(raw)
+  if (authority === null) return null
+  if (authority[1].includes(':')) return null
+  const origin = parsed.origin
+  return TRUSTED_MIMO_ORIGINS.has(origin) ? origin : null
+}
+
+/**
+ * [R1] 从「设置 → 模型」的 provider 目录里按 id / displayName **包含 mimo 或 xiaomi** 的条目
  * 自动找到 Key（只读：不解析地址、不联网，只按该 provider 的 `apiKeyEnv` 去凭据库取值）。
+ *
+ * **双条件**：名称命中只是必要条件；还必须通过 `trustedMimoOriginOf(target.baseURL)`
+ * 校验来源。不可信的 provider 直接 `continue`，**绝不调用 `creds.resolve`**。
  *
  * 为什么需要：不同设备给 MiMo 起的 provider id 不一样（桌面 `xiaomi`、手机可能是别的名字），
  * 光靠固定候选名（XIAOMI_API_KEY …）覆盖不全；这一层让「设置 → 模型里配过 MiMo Key」的设备
@@ -67,6 +113,12 @@ async function providerKeyOf(ctx) {
     if (target === null || typeof target !== 'object') continue
     const label = String(target.provider || '') + ' ' + String(target.displayName || '')
     if (!/mimo|xiaomi/i.test(label)) continue
+    /**
+     * [R1] 名称命中之后**先校验来源**，再碰凭据引用。
+     * 第三方 relay（id/displayName 带 mimo 但 baseURL 指向别家）在这里被跳过：
+     * 不解析它的 Key、也不发余额请求。
+     */
+    if (trustedMimoOriginOf(target.baseURL) === null) continue
     const env = typeof target.apiKeyEnv === 'string' ? target.apiKeyEnv.trim() : ''
     if (env.length === 0) continue
     try {
@@ -80,6 +132,9 @@ async function providerKeyOf(ctx) {
 /**
  * 是否有可用的 MiMo API Key：**插件配置字段 > 固定候选名 > provider 自动匹配**。
  * `frozenCredential` 存在时（模型工具的身份冻结）只认冻结状态，不做 provider 猜名。
+ *
+ * 这里的第三档与 `fetchPlan()` 共用 `providerKeyOf()`，因此「名称 + 可信 origin」双条件
+ * 在两处**完全一致**：不可信来源不会被算作「有 Key」。
  */
 export async function hasMimoApiKey(ctx, cfg, options) {
   const frozen = options !== null && options !== undefined ? options.frozenCredential : null
@@ -104,67 +159,24 @@ const plan = {
   fields,
   schema: {
     mimoEnabled: z.boolean().default(true),
-    /**
-     * [0.11.2] 普通 API Key（`sk-…`）：填了就**优先**走 API Key 余额接口，
-     * 不再依赖控制台 Cookie。留空则回退到旧的 Cookie 通道（兼容存量配置）。
-     */
+    /** 普通 API Key（`sk-…`）：MiMo 余额的**唯一**凭据来源。 */
     mimoApiKey: z.string().role('secret'),
-    mimoCookie: z.string().role('secret'),
     // 余额低于该值时状态灯转为警告色；默认 10 元。0 表示不警告。
     mimoWarnThreshold: z.number().min(0).default(10),
   },
-  source,
 }
 
 /**
- * 归一化控制台 Cookie（整段 Cookie 头粘贴）。容忍「Cookie:」前缀、整体引号与
- * 换行；必需 userId 与 serviceToken（api-platform_serviceToken 或 serviceToken）
- * 两族字段，缺一即视为无效。返回归一化 Cookie 串；无效 → null。
+ * 没配 Key 时的固定 wire（**零请求**）。
+ *
+ * 0.11.4 起 MiMo 只有 API Key 一条通道，因此这里不再有「Cookie / F12 / 扫码」提示，
+ * 也不再按 `frozenCredential` 分支去读任何 Cookie 字段。
  */
-export function normalizeMimoCookie(value) {
-  let s = typeof value === 'string' ? value.trim() : ''
-  if (s.length === 0) return null
-  s = s.replace(/^(?:cookie|set-cookie)\s*:\s*/i, '').replace(/[\r\n]+/g, ' ').trim()
-  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) s = s.slice(1, -1).trim()
-  if (s.length === 0) return null
-  const parts = s.split(';').map((part) => part.trim()).filter(Boolean)
-  if (parts.some((part) => !/^[^=\s]+=[^;]*$/.test(part))) return null
-  const populated = parts.filter((part) => part.slice(part.indexOf('=') + 1).replace(/^["']|["']$/g, '').trim())
-  const hasToken = populated.some((part) => /^(?:api-platform_)?serviceToken=/.test(part))
-  const hasUser = populated.some((part) => /^userId=/.test(part))
-  return hasToken && hasUser ? s : null
-}
-
-/** Cookie 是否已配置（供设置页显示「已配置/未配置」徽标）。 */
-export function cookieConfigured(cfg) {
-  return normalizeMimoCookie(cfg != null ? cfg.mimoCookie : undefined) !== null
-}
-
-/**
- * 解析余额响应。只挑总额/现金/赠送三个数字；非法 → null（不编造 0）。
- */
-export function parseMimoBalance(data) {
-  if (data === null || typeof data !== 'object') return null
-  const d = data.data !== null && typeof data.data === 'object' ? data.data : data
-  const total = toNum(d.balance ?? d.cashBalance)
-  if (total === null || total < 0) return null
-  const cash = toNum(d.cashBalance)
-  const gift = toNum(d.giftBalance)
-  const currency = String(d.currency ?? '').trim().toUpperCase()
-  return {
-    balance: total,
-    cashBalance: cash !== null && cash >= 0 ? cash : null,
-    giftBalance: gift !== null && gift >= 0 ? gift : null,
-    currency: currency.length > 0 ? currency : 'CNY',
-  }
-}
-
-/** 币种 → 显示符号（未知币种显示「XXX 」前缀）。 */
-export function currencySymbol(currency) {
-  const cur = String(currency ?? '').trim().toUpperCase()
-  if (cur === 'CNY' || cur === 'RMB') return '¥'
-  if (cur === 'USD') return '$'
-  return cur.length > 0 ? cur + ' ' : '¥'
+function noKeyWire() {
+  return Object.assign(planBase(plan), {
+    error: 'no-key',
+    message: '未配置小米 MiMo API Key：请在「设置 → Usage Dock」填写，或在「设置 → 模型」里配置 XIAOMI_API_KEY',
+  })
 }
 
 /**
@@ -234,87 +246,22 @@ export async function fetchApiKeyBalance(shell, apiKey, cfg, options) {
   }
 }
 
-/** 拉取小米 MiMo 余额：API Key 优先；没有 Key 时回退控制台 Cookie（存量配置）。 */
+/**
+ * 拉取小米 MiMo 余额：**只走 API Key**；没有任何 Key 时返回固定 `no-key`（零请求）。
+ *
+ * 身份/缓存隔离由调用方按 `key=` 指纹处理（`fields.apiKey` 已登记）。
+ * `frozenCredential`（模型工具的身份冻结）存在时不再做 provider 猜名，与 `hasMimoApiKey` 同源。
+ * provider 自动匹配同样受 `providerKeyOf()` 的「名称 + 可信 origin」双条件约束：
+ * 不可信来源视为没有 Key，直接返回 `no-key`（零请求）。
+ */
 export async function fetchPlan(ctx, shell, cfg, options) {
-  // [0.11.2] API Key 通道优先（与 DeepSeek 同构）：配了 key 就不再依赖控制台 Cookie。
-  // 身份/缓存隔离由调用方按 `key=` 指纹处理（fields.apiKey 已登记）。
   let apiKey = await resolveApiKey(ctx, cfg != null ? cfg : {}, fields.apiKey, API_KEY_REFS, options)
   if (apiKey === undefined) {
     const frozen = options !== null && options !== undefined ? options.frozenCredential : null
     if (frozen === null || frozen === undefined) apiKey = await providerKeyOf(ctx)
   }
-  if (apiKey !== undefined) return fetchApiKeyBalance(shell, apiKey, cfg, options)
-  // [F2] 有冻结描述时必须**严格遵守**其状态（与身份同源）：
-  //   explicit → 只读它自己的冻结字段（缺失/无效也不回退实时 cfg）
-  //   none     → 直接缺凭据（零请求）
-  //   其它（MiMo 没有引用来源）→ 安全拒绝，不冒充未采样
-  // 只有 null/undefined（未采样）才读 cfg。
-  const frozen = options !== null && options !== undefined
-    && options.frozenCredential !== null && options.frozenCredential !== undefined
-    && typeof options.frozenCredential === 'object'
-    ? options.frozenCredential
-    : null
-  let cookieSource = cfg != null ? cfg.mimoCookie : undefined
-  if (frozen !== null) {
-    if (frozen.kind !== 'explicit'
-      || frozen.fields === null || frozen.fields === undefined
-      || frozen.fields.mimoCookie === undefined) {
-      // none / ref / 未知状态 / 显式但缺少该字段：一律安全拒绝，绝不回退到当前配置。
-      return Object.assign(planBase(plan), {
-        error: 'no-key',
-        message: '未配置小米开放平台控制台 Cookie：登录 platform.xiaomimimo.com 后，F12 → 网络 → 任一请求的请求头 cookie 整段复制（需含 userId 与 serviceToken）',
-      })
-    }
-    cookieSource = frozen.fields.mimoCookie
-  }
-  const cookie = normalizeMimoCookie(cookieSource)
-  if (cookie === null) {
-    return Object.assign(planBase(plan), {
-      error: 'no-key',
-      message: '未配置小米开放平台控制台 Cookie：登录 platform.xiaomimimo.com 后，F12 → 网络 → 任一请求的请求头 cookie 整段复制（需含 userId 与 serviceToken）',
-    })
-  }
-  try {
-    const { data, err } = await curlJson(shell, source.endpoint, {
-      signal: options === undefined ? undefined : options.signal,
-      timeoutMs: options === undefined || typeof options.remaining !== 'function' ? undefined : options.remaining(),
-      headers: {
-        cookie,
-        // 部分网关对无 UA 的请求有风控；带上与控制台一致的浏览器标识。
-        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) dsh-usage-dock/0.8',
-        referer: 'https://platform.xiaomimimo.com/',
-      },
-    })
-    if (err !== undefined) {
-      // 登录态过期时上游通常回 401/403 或业务 code=401，给出「重新复制」文案。
-      const raw = err.message || ''
-      const expired = /HTTP (401|403)/.test(raw) || /code (401|403)/.test(raw)
-      return Object.assign(planBase(plan), err, {
-        message: expired
-          ? '控制台登录态已过期，请重新登录 platform.xiaomimimo.com 并复制新的 Cookie（' + raw + '）'
-          : raw || '小米 MiMo 余额获取失败',
-      })
-    }
-    const parsed = parseMimoBalance(data)
-    if (parsed === null) {
-      return Object.assign(planBase(plan), {
-        error: 'parse',
-        message: '余额响应结构无法解析（可能 Cookie 已失效或接口变更）',
-      })
-    }
-    return Object.assign(planBase(plan), {
-      balance: parsed.balance,
-      cashBalance: parsed.cashBalance,
-      giftBalance: parsed.giftBalance,
-      currency: parsed.currency,
-      isAvailable: true,
-      via: 'console',
-      warnThreshold: warnThresholdOf(cfg),
-    })
-  } catch (err) {
-    const msg = err && err.message ? err.message : String(err)
-    return Object.assign(execError(plan), { message: '小米 MiMo 余额请求异常：' + msg })
-  }
+  if (apiKey === undefined) return noKeyWire()
+  return fetchApiKeyBalance(shell, apiKey, cfg, options)
 }
 
 export default Object.assign(plan, { fetch: fetchPlan })

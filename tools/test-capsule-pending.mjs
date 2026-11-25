@@ -58,10 +58,9 @@ const BASE = {
   enabled: true,
   planOrder: '[]',
   opencodeGoEnabled: false,
-  codexEnabled: false,
+  codexEnabled: true,
   mimoEnabled: false,
   deepseekEnabled: true,
-  workbuddyEnabled: true,
 }
 
 function makeForm(initial) {
@@ -100,20 +99,20 @@ const EMPTY = { ok: true, data: { plans: [] } }
     fn(input, null) === input && fn(input, undefined) === input && fn(input, 'x') === input)
 
   const all = fn([], BASE)
-  check('U2 空 wire ⇒ 只铺已启用的内置渠道（deepseek + workbuddy），顺序 = PLANS 顺序',
-    all.length === 2 && all[0].id === 'deepseek' && all[1].id === 'workbuddy'
+  check('U2 空 wire ⇒ 只铺已启用的内置渠道（deepseek + codex），顺序 = PLANS 顺序',
+    all.length === 2 && all[0].id === 'deepseek' && all[1].id === 'codex'
     && all.every((p) => p.pending === true), all.map((p) => p.id))
 
-  check('U3 停用渠道不铺（workbuddyEnabled:false ⇒ 只剩 deepseek）',
-    fn([], Object.assign({}, BASE, { workbuddyEnabled: false })).map((p) => p.id).join(',') === 'deepseek')
+  check('U3 停用渠道不铺（codexEnabled:false ⇒ 只剩 deepseek）',
+    fn([], Object.assign({}, BASE, { codexEnabled: false })).map((p) => p.id).join(',') === 'deepseek')
 
   const dedupe = fn([{ id: 'deepseek', balance: 7.38 }], BASE)
   check('U4 已有真实 plan 的 id 不重复铺',
     dedupe.filter((p) => p.id === 'deepseek').length === 1 && dedupe[0].pending !== true, dedupe.map((p) => p.id))
 
-  check('U5 planOrder 生效（workbuddy 排到 deepseek 前）',
-    fn([], Object.assign({}, BASE, { planOrder: JSON.stringify(['workbuddy', 'deepseek']) }))
-      .map((p) => p.id).join(',') === 'workbuddy,deepseek')
+  check('U5 planOrder 生效（codex 排到 deepseek 前）',
+    fn([], Object.assign({}, BASE, { planOrder: JSON.stringify(['codex', 'deepseek']) }))
+      .map((p) => p.id).join(',') === 'codex,deepseek')
 
   const custom = {
     id: 'custom:pendingAAA1', name: '测试渠道A', provider: 'x', balanceEndpoint: '/v1/balance',
@@ -138,10 +137,10 @@ const EMPTY = { ok: true, data: { plans: [] } }
   const { tree, client } = await mountBadge(BASE, EMPTY)
   const text = textAll(tree)
   const rows = pendingRows(tree)
-  check('P1a 首帧两行占位（deepseek + workbuddy）', rows.length === 2, rows.length)
-  check('P1b 行名与顺序：DeepSeek 在 WorkBuddy 之前',
-    text.indexOf('DeepSeek') !== -1 && text.indexOf('WorkBuddy') !== -1
-    && text.indexOf('DeepSeek') < text.indexOf('WorkBuddy'), text.slice(0, 120))
+  check('P1a 首帧两行占位（deepseek + codex）', rows.length === 2, rows.length)
+  check('P1b 行名与顺序：DeepSeek 在 OpenAI Codex 之前',
+    text.indexOf('DeepSeek') !== -1 && text.indexOf('OpenAI Codex') !== -1
+    && text.indexOf('DeepSeek') < text.indexOf('OpenAI Codex'), text.slice(0, 120))
   check('P1c 数值区是单个 …，且不含数字/币种/✦/%',
     rows.every((r) => textOf(r.props.children[2]) === '…') && !/[0-9]/.test(text)
     && text.indexOf('¥') === -1 && text.indexOf('✦') === -1 && text.indexOf('%') === -1, text.slice(0, 160))
@@ -151,8 +150,8 @@ const EMPTY = { ok: true, data: { plans: [] } }
       return dot !== undefined && dot.props && dot.props.style
         && dot.props.style.background === 'var(--dsw-alias-label-secondary)'
     }), rows.map((r) => r.props.children[0].props.style.background))
-  check('P1e 未启用渠道整行不存在（OpenCode/Codex/MiMo）',
-    ['OpenCode Go', 'OpenAI Codex', 'Xiaomi MiMo'].every((n) => text.indexOf(n) === -1), text.slice(0, 160))
+  check('P1e 未启用渠道整行不存在（OpenCode/MiMo）',
+    ['OpenCode Go', 'Xiaomi MiMo'].every((n) => text.indexOf(n) === -1), text.slice(0, 160))
   client.restore()
 }
 
@@ -160,9 +159,9 @@ const EMPTY = { ok: true, data: { plans: [] } }
 // P2 — 停用即整行消失
 // ===========================================================================
 {
-  const { tree, client } = await mountBadge(Object.assign({}, BASE, { workbuddyEnabled: false }), EMPTY)
+  const { tree, client } = await mountBadge(Object.assign({}, BASE, { codexEnabled: false }), EMPTY)
   const text = textAll(tree)
-  check('P2a 停用 workbuddy ⇒ 该行完全不存在', text.indexOf('WorkBuddy') === -1, text.slice(0, 120))
+  check('P2a 停用 codex ⇒ 该行完全不存在', text.indexOf('OpenAI Codex') === -1, text.slice(0, 120))
   check('P2b 其余启用渠道仍在（deepseek），且只有 1 行占位',
     text.indexOf('DeepSeek') !== -1 && pendingRows(tree).length === 1, text.slice(0, 120))
   client.restore()
@@ -177,7 +176,7 @@ const EMPTY = { ok: true, data: { plans: [] } }
     data: {
       plans: [
         { id: 'deepseek', name: 'DeepSeek', balance: 7.38, isAvailable: true, via: 'account', warnThreshold: 10 },
-        { id: 'workbuddy', name: 'WorkBuddy', creditsTotal: 1234 },
+        { id: 'codex', name: 'OpenAI Codex', percentMode: 'remaining', rollingUsage: { percent: 55 }, weeklyUsage: { percent: 72 }, isAvailable: true },
       ],
       cfg: { digest: null, readAt: 1, reloadable: true },
     },
@@ -185,10 +184,10 @@ const EMPTY = { ok: true, data: { plans: [] } }
   const { tree, client, form } = await mountBadge(BASE, WIRE)
   const text = textAll(tree)
   check('P3a 真实数据到达后没有占位行', pendingRows(tree).length === 0, pendingRows(tree).length)
-  check('P3b 显示真实数值（DeepSeek 7.38 / WorkBuddy ✦1,234）',
-    /7\.38/.test(text) && /1,234/.test(text), text.slice(0, 160))
+  check('P3b 显示真实数值（DeepSeek ¥ 7.38 / Codex 55% 72%）',
+    /7\.38/.test(text) && /55%/.test(text) && /72%/.test(text), text.slice(0, 160))
   check('P3c 行数仍是 2、无重复渠道名',
-    (text.match(/DeepSeek/g) || []).length === 1 && (text.match(/WorkBuddy/g) || []).length === 1, text.slice(0, 160))
+    (text.match(/DeepSeek/g) || []).length === 1 && (text.match(/OpenAI Codex/g) || []).length === 1, text.slice(0, 160))
   const merged = client.module.pendingPlaceholders(WIRE.data.plans, form.value)
   check('P3d 同一批 wire 再跑占位函数不新增任何行', merged.length === 2, merged.map((p) => p.id))
   client.restore()
@@ -204,7 +203,7 @@ const EMPTY = { ok: true, data: { plans: [] } }
   }
   const off = Object.assign({}, custom, { id: 'custom:pendingBBB2', name: '停产渠道B', enabled: false })
   const { tree, client } = await mountBadge(
-    Object.assign({}, BASE, { deepseekEnabled: false, workbuddyEnabled: false, customBalances: [custom, off] }),
+    Object.assign({}, BASE, { deepseekEnabled: false, codexEnabled: false, customBalances: [custom, off] }),
     EMPTY,
   )
   const text = textAll(tree)

@@ -156,11 +156,10 @@ function payload(plans, entries, extra) {
   const cfg = [A_ENTRY]
   let gateOpen = false
   let releaseGate = null
-  let call = 0
+  let hangNext = false
   const client = loadClient(runtime, { form, payload: payload([], cfg) })
   globalThis.fetch = async () => {
-    call += 1
-    if (call > 1 && !gateOpen) {
+    if (hangNext && !gateOpen) {
       // 保存后的那一轮：新请求挂起，验证「旧值立刻隐藏」。
       await new Promise((resolve) => { releaseGate = resolve })
     }
@@ -174,9 +173,12 @@ function payload(plans, entries, extra) {
   }
   runtime.mount(client.Badge, { configForm: form, wide: true })
   let tree = await runtime.settle({ configForm: form, wide: true })
+  await sleep(20)
+  tree = await runtime.settle({ configForm: form, wide: true })
   check('W2a 先显示 $ 91.23', /\$\s?91\.23/.test(textAll(tree)), textAll(tree))
 
   // 用户在设置页重新填写并保存**同一把** Key（幂等写入）：走同一条失效入口。
+  hangNext = true
   client.module.invalidateCustomChannel(A_ENTRY.id)
   tree = await runtime.settle({ configForm: form, wide: true })
   check('W2b 保存后旧值立刻隐藏（保守）', !/91\.23/.test(textAll(tree)), textAll(tree))

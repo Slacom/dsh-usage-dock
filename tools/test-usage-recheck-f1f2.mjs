@@ -1,11 +1,13 @@
 /**
- * [方向 6 / 第五轮复核 F1–F2] 回归用例：冻结协议的逐层传递与状态服从。
+ * [方向 6 / 第五轮复核 F1] 回归用例：冻结协议的逐层传递与状态服从。
  *
  * F1：custom 的冻结快照必须经「identify → 注册层 → collector → provider」全程送达，
  *     且 provider 在选择已保存凭据**之前**就服从冻结状态。
- * F2：MiMo 必须服从冻结的 none（零请求），explicit 只读冻结字段，未采样才读 cfg。
  *
- * 全部走真实 apply + 真实 provider，只桩掉 credentials / configEditor / 传输。
+ * MiMo 的扫码 / 记住登录 / Cookie 通道已在 0.12.0 删除，原 F2 段（MiMo 冻结 Cookie 语义）
+ * 随之整体移除；MiMo 现在只有 API Key 一条通道，见 test-mimo-api-key.mjs。
+ *
+ * 全部走真实 fetchCustomPlans，只桩掉凭据解析与传输。
  *
  * 用法：node tools/test-usage-recheck-f1f2.mjs
  */
@@ -13,12 +15,9 @@
 // 允许读取没有 provider 的旧条目（仅测试进程；生产默认拒绝）。
 process.env.DSH_USAGE_DOCK_ALLOW_LEGACY_CUSTOM = '1'
 
-import assert from 'node:assert/strict'
-import { apply, Config } from '../index.js'
-import { PLANS, percentSemanticsOf } from '../plans/index.js'
 import { fetchCustomPlans } from '../plans/custom-balance.js'
 import { createUsageTool } from '../plans/usage-tool-register.js'
-import mimo from '../plans/mimo.js'
+import { percentSemanticsOf } from '../plans/index.js'
 
 let passCount = 0
 let failCount = 0
@@ -27,7 +26,6 @@ function check(name, cond, detail) {
   else { failCount++; console.log('[FAIL] ' + name + (detail !== undefined ? ' — ' + JSON.stringify(detail).slice(0, 600) : '')) }
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-const disabledAll = Object.fromEntries(PLANS.map((p) => [p.fields.enabled, false]))
 const PUBLIC_RESOLVER = async () => ['93.184.216.34']
 
 function makeCtx(services) {
@@ -284,189 +282,6 @@ function customEntry(overrides) {
     records.length === 1 && records[0].auth.indexOf('ref-A') !== -1, records.map((r) => r.auth))
   check('F1.6 结果是 A 的余额 10', out.channels[0].balance === 10, out.channels[0])
   check('F1.6 provider 没有再解析一次引用', resolves === 1, resolves)
-}
-
-// ===========================================================================
-// F2.1 — MiMo 冻结 none：零请求、缺凭据（即使 cfg 里有 Cookie B）
-// ===========================================================================
-{
-  const realFetch = globalThis.fetch
-  let requests = 0
-  globalThis.fetch = async () => {
-    requests += 1
-    return new Response(JSON.stringify({ code: 0, data: { balance: 17.55 } }), { status: 200 })
-  }
-  try {
-    const out = await mimo.fetch({}, undefined, { mimoCookie: 'uid=1; serviceToken=B; userId=1B' }, {
-      frozenCredential: { kind: 'none' },
-    })
-    check('F2.1 冻结 none 时零请求', requests === 0, requests)
-    check('F2.1 冻结 none 时返回缺凭据', out.error === 'no-key', out)
-    check('F2.1 冻结 none 时不返回余额', out.balance === undefined, out)
-  } finally {
-    globalThis.fetch = realFetch
-  }
-}
-
-// ===========================================================================
-// F2.2 — MiMo 冻结 explicit：只用冻结字段
-// ===========================================================================
-{
-  const realFetch = globalThis.fetch
-  const sent = []
-  globalThis.fetch = async (url, init) => {
-    sent.push(String(init !== undefined && init.headers !== undefined ? init.headers.cookie || '' : ''))
-    return new Response(JSON.stringify({ code: 0, data: { balance: 5 } }), { status: 200 })
-  }
-  try {
-    const out = await mimo.fetch({}, undefined, { mimoCookie: 'uid=1; serviceToken=B; userId=1B' }, {
-      frozenCredential: { kind: 'explicit', fields: { mimoCookie: 'uid=1; serviceToken=A; userId=1A' } },
-    })
-    check('F2.2 冻结 explicit 时发送冻结 Cookie A', sent.length === 1 && sent[0].indexOf('serviceToken=A; userId=1A') !== -1, sent)
-    check('F2.2 结果正常', out.error === undefined, out)
-  } finally {
-    globalThis.fetch = realFetch
-  }
-}
-
-// ===========================================================================
-// F2.3 — MiMo explicit 但缺该字段：安全拒绝，不回退 cfg
-// ===========================================================================
-{
-  const realFetch = globalThis.fetch
-  let requests = 0
-  globalThis.fetch = async () => {
-    requests += 1
-    return new Response(JSON.stringify({ code: 0, data: { balance: 17.55 } }), { status: 200 })
-  }
-  try {
-    const out = await mimo.fetch({}, undefined, { mimoCookie: 'uid=1; serviceToken=B; userId=1B' }, {
-      frozenCredential: { kind: 'explicit', fields: {} },
-    })
-    check('F2.3 显式冻结缺字段时零请求', requests === 0, requests)
-    check('F2.3 显式冻结缺字段时返回缺凭据', out.error === 'no-key', out)
-  } finally {
-    globalThis.fetch = realFetch
-  }
-}
-
-// ===========================================================================
-// F2.4 — MiMo 未采样（null）：仍读 cfg（正常路径不变）
-// ===========================================================================
-{
-  const realFetch = globalThis.fetch
-  const sent = []
-  globalThis.fetch = async (url, init) => {
-    sent.push(String(init !== undefined && init.headers !== undefined ? init.headers.cookie || '' : ''))
-    return new Response(JSON.stringify({ code: 0, data: { balance: 5 } }), { status: 200 })
-  }
-  try {
-    const out = await mimo.fetch({}, undefined, { mimoCookie: 'uid=1; serviceToken=B; userId=1B' }, { frozenCredential: null })
-    check('F2.4 未采样时读 cfg 并发送', sent.length === 1 && sent[0].indexOf('serviceToken=B; userId=1B') !== -1, sent)
-    check('F2.4 未采样时结果正常', out.error === undefined, out)
-  } finally {
-    globalThis.fetch = realFetch
-  }
-}
-
-// ===========================================================================
-// F2.5 — MiMo 收到不支持的冻结状态（ref）：安全拒绝
-// ===========================================================================
-{
-  const realFetch = globalThis.fetch
-  let requests = 0
-  globalThis.fetch = async () => {
-    requests += 1
-    return new Response(JSON.stringify({ code: 0, data: { balance: 17.55 } }), { status: 200 })
-  }
-  try {
-    const out = await mimo.fetch({}, undefined, { mimoCookie: 'uid=1; serviceToken=B; userId=1B' }, {
-      frozenCredential: { kind: 'ref', value: 'cookie-A' },
-    })
-    check('F2.5 不支持的冻结状态零请求', requests === 0, requests)
-    check('F2.5 不支持的冻结状态返回缺凭据', out.error === 'no-key', out)
-  } finally {
-    globalThis.fetch = realFetch
-  }
-}
-
-// ===========================================================================
-// F2.6 — 真实 apply：MiMo 冻结 none 后配置变成 Cookie B，不得把 B 的成功
-//        写进「无凭据」身份（复核复现的缓存污染）
-// ===========================================================================
-{
-  const realFetch = globalThis.fetch
-  const sent = []
-  globalThis.fetch = async (url, init) => {
-    sent.push(String(init !== undefined && init.headers !== undefined ? init.headers.cookie || '' : ''))
-    return new Response(JSON.stringify({ code: 0, data: { balance: 17.55 } }), { status: 200 })
-  }
-  try {
-    const override = {}
-    const configEditor = {
-      configuration() {
-        return [{ entry: { options: { id: 'plan-usage' } }, override: Object.assign({}, override), inherited: {} }]
-      },
-    }
-    // 自定义条目负责把 identify 拖住：慢引用 2100ms，期间把 MiMo 的 Cookie 换成 B。
-    const credentials = {
-      resolve: async (ref) => {
-        if (ref === 'SLOW_REF') {
-          await sleep(2100)
-          return { value: 'ref-value' }
-        }
-        return { value: '' }
-      },
-    }
-    const tools = toolsService()
-    const ctx = makeCtx({ tools: tools.service, systemPrompt: fakeSystemPrompt(), configEditor, credentials })
-    apply(ctx, new Config(Object.assign({}, disabledAll, {
-      enabled: true,
-      mimoEnabled: true,
-      customBalances: [customEntry({ id: 'custom:slowref0002', url: 'https://public.example/slow', credentialRef: 'SLOW_REF' })],
-      customKeys: {},
-    })))
-    const def = tools.holder.def
-
-    // 第一次：MiMo 没有 Cookie → identify 冻结 none；期间配置出现 Cookie B。
-    const pending = def.execute({ ids: ['mimo', 'custom:slowref0002'] })
-    await sleep(200)
-    override.mimoCookie = 'uid=1; serviceToken=B; userId=1B'
-    const first = await pending
-    const mimoFirst = first.channels.find((c) => c.id === 'mimo')
-    // 自定义条目会走真实 DNS 校验（public.example 解析桩不可用），这里不关心它的结果。
-    // [0.10.0 甲方决定] MiMo 是**账号/会话型**渠道，凭据不冻结（与 deepseek / codex / workbuddy 一致）：
-    // 原「冻结 none 后绝不允许使用后来出现的 Cookie B」这条前提作废。改为守三条有价值的不变量：
-    //   ① 新鲜值可以来自**当前配置**（B 一旦存在就允许成功），但必须是本轮真实取数、不是缓存命中；
-    //   ② 不跨身份缓存污染：清空 Cookie + config-reload 后再查同一 ids，必须仍报 no-credential，
-    //      且那一阶段**没有任何** MiMo 请求携带 serviceToken；
-    //   ③ 单飞/作废语义：身份变化后不得把旧值当作「当前身份」的余额发布（由 ② 的 no-credential 覆盖）。
-    // [0.10.5] MiMo 的旧 Cookie 通道已在 0.10.2 移除：现在**只有**本机显示会话一条通道，
-    // 没有显示快照时固定为缺失态且**零上游请求**（不再读写 mimoCookie）。下面三条守这一点。
-    check('F2.6a 无显示快照 ⇒ mimo 为缺失态（不再读 Cookie）',
-      mimoFirst !== undefined
-        && mimoFirst.errorCode === 'missing'
-        && mimoFirst.availability === 'error'
-        && (mimoFirst.cached === undefined || mimoFirst.cached === false), mimoFirst)
-    check('F2.6b 整个过程零 Cookie 请求（单通道后不再带 serviceToken）',
-      sent.every((cookie) => cookie.indexOf('serviceToken') === -1), sent)
-
-    // 清空 Cookie + 单次 reload 使配置缓存失效，再查同一 ids：
-    // 「无凭据」身份里不得出现 B 的成功余额。
-    delete override.mimoCookie
-    ctx.emit('app-boot/config-reload')
-    await sleep(60)
-    const second = await def.execute({ ids: ['mimo'] })
-    const mimoSecond = second.channels.find((c) => c.id === 'mimo')
-    const sentBeforeReload = sent.length
-    check('F2.6c 清空 Cookie + reload 后仍是缺失态（结论不因 Cookie 变化而变）',
-      mimoSecond !== undefined && mimoSecond.errorCode === 'missing', mimoSecond)
-    check('F2.6d 清空后这一阶段没有任何 MiMo 请求携带 serviceToken（也不回填 B 的缓存值）',
-      sent.slice(sentBeforeReload).every((cookie) => cookie.indexOf('serviceToken') === -1),
-      sent.slice(sentBeforeReload))
-  } finally {
-    globalThis.fetch = realFetch
-  }
 }
 
 console.log('\n' + (passCount + failCount) + ' 项：' + passCount + ' 通过, ' + failCount + ' 失败')

@@ -53,7 +53,7 @@ function makeCtx(services) {
 
 const DISABLED = {
   opencodeGoEnabled: false, deepseekEnabled: false, codexEnabled: false,
-  mimoEnabled: false, workbuddyEnabled: false, workbuddyAiEnabled: false,
+  mimoEnabled: false, deepseekEnabled: false, workbuddyAiEnabled: false,
 }
 
 /**
@@ -107,34 +107,34 @@ function fakeRes() {
   }
 }
 
-const wbPlan = PLANS.find((p) => p.id === 'workbuddy')
-const originalFetch = wbPlan.fetch
+const dsPlan = PLANS.find((p) => p.id === 'deepseek')
+const originalFetch = dsPlan.fetch
 
 // ===========================================================================
 // A01 — 成功采集必须进入提示词（原缺陷：projectUsage 未导入，整条链被吞）
 // ===========================================================================
 {
-  wbPlan.fetch = async () => ({ id: 'workbuddy', name: 'WorkBuddy', creditsTotal: 123 })
+  dsPlan.fetch = async () => ({ id: 'deepseek', name: 'DeepSeek', balance: 123 })
   const app = boot({
-    workbuddyEnabled: true,
+    deepseekEnabled: true,
     quotaPolicyEnabled: true,
-    quotaFocusChannels: '["workbuddy"]',
-    quotaWarningCreditsThreshold: 1000,
-    quotaClosingCreditsThreshold: 500,
+    quotaFocusChannels: '["deepseek"]',
+    quotaWarningBalanceThreshold: 1000,
+    quotaClosingBalanceThreshold: 500, quotaBalanceCurrency: 'CNY',
   })
   // 注入路由观察：直接走真实的 agents 服务路径太依赖宿主，这里用合法公开方式
   // —— 通过 agents.list() 提供一个 Agent 对象，并用它的 ctx 触发 agent/request。
   const res = fakeRes()
   await app.routes['/api/plan-usage']({ method: 'GET' }, res)
   const body = JSON.parse(res.state.body)
-  check('A01a GUI 路由仍返回成功数值', body.ok === true && body.data.plans[0].creditsTotal === 123,
+  check('A01a GUI 路由仍返回成功数值', body.ok === true && body.data.plans[0].balance === 123,
     body.data && body.data.plans && body.data.plans[0])
 
   // GUI 发布后，观察应已存在；此时把路由观察准备好再读 context。
   const text = app.systemPrompt.text(null)
   check('A01b 无路由观察时不投放（不猜渠道）', text === '', text)
   app.close()
-  wbPlan.fetch = originalFetch
+  dsPlan.fetch = originalFetch
 }
 
 // ===========================================================================
@@ -172,36 +172,36 @@ const originalFetch = wbPlan.fetch
 {
   const cfg = {
     quotaPolicyEnabled: true,
-    quotaFocusChannels: '["workbuddy"]',
-    quotaWarningCreditsThreshold: 1000,
-    quotaClosingCreditsThreshold: 500,
+    quotaFocusChannels: '["deepseek"]',
+    quotaWarningBalanceThreshold: 1000,
+    quotaClosingBalanceThreshold: 500, quotaBalanceCurrency: 'CNY',
   }
-  const channel = { id: 'workbuddy', name: 'WorkBuddy', availability: 'ok', unit: 'credits', balance: 123 }
+  const channel = { id: 'deepseek', name: 'DeepSeek', availability: 'ok', unit: 'currency', currency: 'CNY', balance: 123 }
   const readChannel = () => channel
-  const readObservation = () => ({ status: 'ok', identity: 'id-1', sampledAt: 1000 })
+  const readObservation = () => ({ status: 'ok', identity: 'id-1', sampledAt: 1000, source: 'api' })
 
   const base = buildQuotaView({
-    cfg, observation: { provider: 'workbuddy' }, readChannel, readObservation,
+    cfg, observation: { provider: 'deepseek-official' }, readChannel, readObservation,
     pickSmallestWindow, identityOf: () => 'id-1',
   })
   check('A02a 正常工作：closing', base.stage === STAGE_CLOSING, base)
 
   const globalOff = buildQuotaView({
     cfg: Object.assign({}, cfg, { enabled: false }),
-    observation: { provider: 'workbuddy' }, readChannel, readObservation,
+    observation: { provider: 'deepseek-official' }, readChannel, readObservation,
     pickSmallestWindow, identityOf: () => 'id-1',
   })
   check('A02b 全局 enabled=false 时不投放', globalOff.enabled === false, globalOff)
 
   const channelOff = buildQuotaView({
-    cfg: Object.assign({}, cfg, { workbuddyEnabled: false }),
-    observation: { provider: 'workbuddy' }, readChannel, readObservation,
+    cfg: Object.assign({}, cfg, { deepseekEnabled: false }),
+    observation: { provider: 'deepseek-official' }, readChannel, readObservation,
     pickSmallestWindow, identityOf: () => 'id-1',
   })
   check('A02c 单渠道停用时不投放', channelOff.channelId === null, channelOff)
 
   const identityChanged = buildQuotaView({
-    cfg, observation: { provider: 'workbuddy' }, readChannel, readObservation,
+    cfg, observation: { provider: 'deepseek' }, readChannel, readObservation,
     pickSmallestWindow, identityOf: () => 'id-2',
   })
   check('A02d 身份变化时旧额度立即失效', identityChanged.channelId === null, identityChanged)
@@ -209,7 +209,7 @@ const originalFetch = wbPlan.fetch
   const sourceMismatch = buildQuotaView({
     cfg: {
       quotaPolicyEnabled: true, quotaFocusChannels: '["deepseek"]',
-      quotaWarningBalanceThreshold: 10, quotaClosingBalanceThreshold: 5, quotaBalanceCurrency: 'CNY',
+      quotaWarningBalanceThreshold: 10, quotaClosingBalanceThreshold: 5, quotaBalanceCurrency: 'CNY', quotaBalanceCurrency: 'CNY',
     },
     observation: { provider: 'deepseek-official' },
     readChannel: () => ({ id: 'deepseek', name: 'DeepSeek', availability: 'ok', unit: 'currency', currency: 'CNY', balance: 1 }),
@@ -400,8 +400,8 @@ const originalFetch = wbPlan.fetch
 // ===========================================================================
 {
   const cfg = {
-    quotaPolicyEnabled: true, quotaFocusChannels: '["workbuddy"]',
-    quotaWarningCreditsThreshold: 1000, quotaClosingCreditsThreshold: 500,
+    quotaPolicyEnabled: true, quotaFocusChannels: '["deepseek"]',
+    quotaWarningBalanceThreshold: 1000, quotaClosingBalanceThreshold: 500, quotaBalanceCurrency: 'CNY',
     quotaTrustRouteOrder: false,
   }
   // 闸门在 index.js 的观察器里生效；这里验证配置项本身被正确解析与默认值。
@@ -421,10 +421,10 @@ const originalFetch = wbPlan.fetch
 
   const th = thresholdsOf({
     quotaWarningPercentThreshold: 40, quotaClosingPercentThreshold: 20,
-    quotaWarningCreditsThreshold: 1000, quotaClosingCreditsThreshold: 500,
+    quotaWarningBalanceThreshold: 1000, quotaClosingBalanceThreshold: 500, quotaBalanceCurrency: 'CNY',
   })
-  check('积分阈值独立于金额', th.warningCredits === 1000 && th.closingCredits === 500, th)
-  check('未配置金额阈值时 balance 为 null', th.warningBalance === null && th.closingBalance === null, th)
+  check('金额阈值被独立解析', th.warningBalance === 1000 && th.closingBalance === 500, th)
+  check('积分阈值不再由内置渠道提供（null）', th.warningCredits === null && th.closingCredits === null, th)
 }
 
 // ===========================================================================
@@ -444,13 +444,13 @@ const originalFetch = wbPlan.fetch
 // ===========================================================================
 {
   // 成功采集后，GUI 条目必须带 effectiveStatus / failCount，供客户端直接消费。
-  wbPlan.fetch = async () => ({ id: 'workbuddy', name: 'WorkBuddy', creditsTotal: 500 })
+  dsPlan.fetch = async () => ({ id: 'deepseek', name: 'DeepSeek', balance: 500 })
   const app = boot({
-    workbuddyEnabled: true,
+    deepseekEnabled: true,
     quotaPolicyEnabled: true,
-    quotaFocusChannels: '["workbuddy"]',
-    quotaWarningCreditsThreshold: 1000,
-    quotaClosingCreditsThreshold: 500,
+    quotaFocusChannels: '["deepseek"]',
+    quotaWarningBalanceThreshold: 1000,
+    quotaClosingBalanceThreshold: 500, quotaBalanceCurrency: 'CNY',
   })
   const res = fakeRes()
   await app.routes['/api/plan-usage']({ method: 'GET' }, res)
@@ -458,10 +458,10 @@ const originalFetch = wbPlan.fetch
   const entry = body.data.plans[0]
   check('A04a 成功条目带 effectiveStatus=ok', entry.effectiveStatus === 'ok', entry.effectiveStatus)
   check('A04b 成功条目带 failCount=0', entry.failCount === 0, entry.failCount)
-  check('A04c 成功条目保留真实数值', entry.creditsTotal === 500, entry.creditsTotal)
+  check('A04c 成功条目保留真实数值', entry.balance === 500, entry.balance)
 
   // 连续失败：前 4 次为 cached（保留旧值），第 5 次 failed（移除数值）
-  wbPlan.fetch = async () => ({ id: 'workbuddy', name: 'WorkBuddy', error: 'exec', transient: true })
+  dsPlan.fetch = async () => ({ id: 'deepseek', name: 'DeepSeek', error: 'exec', transient: true })
   const states = []
   for (let i = 1; i <= 5; i += 1) {
     const r = fakeRes()
@@ -472,10 +472,10 @@ const originalFetch = wbPlan.fetch
   check('A04d 第 1~4 次为 cached', states.slice(0, 4).every((s) => s.effectiveStatus === 'cached'),
     states.slice(0, 4).map((s) => s.effectiveStatus))
   check('A04e 第 5 次为 failed', states[4].effectiveStatus === 'failed', states[4].effectiveStatus)
-  check('A04f 第 5 次不再带数值', states[4].creditsTotal === undefined, states[4].creditsTotal)
+  check('A04f 第 5 次不再带数值', states[4].balance === undefined, states[4].balance)
   check('A04g 第 5 次 failCount 达到阈值', states[4].failCount >= 5, states[4].failCount)
   app.close()
-  wbPlan.fetch = originalFetch
+  dsPlan.fetch = originalFetch
 }
 
 // ===========================================================================

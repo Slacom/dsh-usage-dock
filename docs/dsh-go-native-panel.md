@@ -4,6 +4,11 @@
 > dsh-go-bridge 0.4.0 / dsh-usage-dock 0.10.5）。范围只覆盖 **dsh-go 手机 App 的原生界面**；
 > Web / 桌面端行为不变。
 
+> ⚠️ **2026-11-24 更新（0.12.0）**：MiMo 扫码登录 / 记住登录已**彻底删除**，`mimo-login` 面板已移除，
+> `dshGo.contributes.panels` 现在只有 **`quota` / `settings` 2 个**。本文涉及 MiMo 登录、扫码、
+> 二维码、登录持久化、`mimoRememberLogin` 的段落**仅作历史**，不再作为现行能力；现行 MiMo
+> **只用 API Key 余额**，原生设置页的 MiMo 分组只剩渠道开关、余额提醒与额度策略。
+
 ## 1. 结论与映射
 
 dsh-go 的左侧聊天记录抽屉不开放插件座位；详情卡片的原生落点是**插件面板**：
@@ -13,6 +18,7 @@ dsh-go 的左侧聊天记录抽屉不开放插件座位；详情卡片的原生�
 | 侧栏底部胶囊（余额摘要） | `composer.strip` 状态条 | **未做**（下一轮） |
 | 点开的额度详情卡片 | `panels`：`session.tab`（对话详情 › 插件页签）+ `features`（全部功能） | ✅ 本轮 |
 | 设置页渠道开关/Key | 沿用 Web 设置页；原生面板只读展示 | ✅ 不新增 |
+| MiMo 扫码登录 / 记住登录 | 曾用 `mimo-login` 原生面板 + 设置页入口 | ❌ **已删除（0.12.0）**；MiMo 只剩 API Key 余额 |
 | `usage_status` 模型工具 | 不变 | ✅ 不受影响 |
 
 `package.json` 里 `dsh`（Web 半）与 `dshGo`（原生半）并存，互不影响：
@@ -34,8 +40,8 @@ dsh-go 的左侧聊天记录抽屉不开放插件座位；详情卡片的原生�
 | 文件 | 职责 |
 |---|---|
 | `plans/dsh-go-native.js` | 原生半的全部纯逻辑：视图骨架、数据投影、失败回退、复制摘要、`ctx.dshGo.panel()` 注册 |
-| `index.js` | 在 `apply` 最前面注册原生面板；提供 `loadConfig`（复用 `liveConfig` + `unpackConfig`）与 `collect`（复用各 provider、MiMo 显示快照、自定义余额取数） |
-| `tools/test-dsh-go-native.mjs` | 37 项离线契约测试（清单 / 视图 / 数据 / 动作 / 设置页 / MiMo 登录 / strip 注册 / 无桥接回归） |
+| `index.js` | 在 `apply` 最前面注册原生面板；提供 `loadConfig`（复用 `liveConfig` + `unpackConfig`）与 `collect`（复用各 provider 与自定义余额取数；**不再有 MiMo 登录 / 显示快照**） |
+| `tools/test-dsh-go-native.mjs` | 37 项离线契约测试（清单 / 视图 / 数据 / 动作 / 设置页 / strip 注册 / 无桥接回归；当时含 MiMo 登录，现已删除） |
 | `tools/test-dsh-go-strip.mjs` | 17 项 strip 纯函数（会话路由 / provider 映射 / 文本 / 截断 / 隐藏） |
 
 数据流（面板打开时才启动，关闭即取消）：
@@ -43,7 +49,7 @@ dsh-go 的左侧聊天记录抽屉不开放插件座位；详情卡片的原生�
 ```
 面板打开 → view(scope, caps)：读 liveConfig，按当前启用渠道生成静态骨架（中文/英文）
         → data(scope, emit)：先推占位「正在读取…」，随后
-             liveConfig → collect()（provider / MiMo 显示快照 / 自定义余额，全部 Host 进程内）
+             liveConfig → collect()（各 provider / 自定义余额，全部 Host 进程内；无 MiMo 登录快照）
              → projectUsage()（白名单投影、窗口百分比统一成「剩余」口径）
              → buildNativeData()（金额/窗口/重置时间/失败回退/自定义行）
              → emit 完整数据对象（桥接算差量）
@@ -90,16 +96,18 @@ node /root/.dsh/skills/dsh-go-plugin/kit/bin/check.mjs . --load
 
 **按渠道分组 + 策略输入条件显示（2026-11-14 第二轮返工）**
 
-设置页用 6 个分组，每个渠道标题下紧跟它自己的开关 / 来源选择 / 登录入口 / 额度策略：
+设置页用 6 个分组（**0.11.0 当时**；WorkBuddy 与 MiMo 登录退场后，0.12.0 只剩 4 个渠道分组），
+每个渠道标题下紧跟它自己的开关 /（当时的）来源选择 / 登录入口 / 额度策略
+（**0.11.0 历史分组**；0.12.0 已删除来源选择与 MiMo 登录入口）：
 
 | 分组 | 内容 |
 |---|---|
 | 通用 | 插件总开关、启用额度策略；**策略总开关打开后**才显示「允许路由观察」与说明 |
 | OpenCode Go | 渠道开关、关注额度策略；**关注打开后才显示** 5 小时/周/月 策略，每个窗口**一行两个框**（预警% / 收尾%），共 3 行（用 `grid columns: 2` 固定两列；`row` 在 form 里会按 160dp 最小宽压成一列，v2 `style.columns` 在部分 App 版本不生效）。标签压成单行（`5 小时 预警%`，不再换行显示 `（%）`）以降低卡片高度；`2/256` 计数器是 App 对 number/textField 的内置行为（`counterText` 固定渲染），插件侧无法关闭 |
 | DeepSeek | 渠道开关、余额提醒（元）、关注额度策略；打开后显示 预警/收尾 金额 + 币种 |
-| Codex | 渠道开关、额度来源（Connect / Subscription）、关注额度策略；打开后显示 5 小时/周/月 各一行两框 |
-| MiMo | 渠道开关、余额提醒（元）、关注额度策略；打开后显示 预警/收尾 金额 + 币种；另含扫码登录 |
-| WorkBuddy | 渠道开关、关注额度策略；打开后显示 预警/收尾 积分 |
+| Codex | 渠道开关、关注额度策略（0.11.0 当时还有「额度来源 Connect / Subscription」；**0.12.0 已删除来源选择**）；打开后显示窗口策略 |
+| MiMo | 渠道开关、余额提醒（元）、关注额度策略；打开后显示 预警/收尾 金额 + 币种；**无登录 / 扫码 / 记住登录入口（0.12.0 已删除）** |
+| WorkBuddy | **已退场（0.12.0）**：渠道开关、积分策略分组已随 `plans/workbuddy.js` 删除 |
 
 - 「启用额度策略」「关注额度策略」是 **onChange 即时保存 + refresh 重建视图**：打开就出现输入框、
   关闭就收起（视图由 Host 按已保存配置生成）。注意这会在切换开关时重建表单，未保存的其它编辑会被刷新。
@@ -107,7 +115,11 @@ node /root/.dsh/skills/dsh-go-plugin/kit/bin/check.mjs . --load
 - 写回时 `quotaFocusChannels` 按 5 个关注开关重建（保留未知 id）；`quotaChannelThresholds`
   按渠道合并（windows / balance+currency / credits），保留其它渠道条目；收尾必须小于预警。
 
-**MiMo 扫码登录（后端复用 0.10.5 的 Host 流程）**
+**（已删除，仅历史）MiMo 扫码登录（后端复用 0.10.5 的 Host 流程）**
+
+> ⛔ **0.12.0 起本节只作历史**：`mimo-login` 面板、扫码 / 轮询 / 二维码 / 记住登录 /
+> `mimoRememberLogin` 与相关 Host 流程已全部删除。MiMo 现行只有 API Key 余额，不要再按本节实现或验收。
+> 以下保留当时的实现与真机记录。
 
 - 扫码后宿主读完余额会等待「确认账号匹配」约 100 秒；原生面板没有确认控件，
   现在检测到 `awaitingBalanceMatch` 时自动回 `later`，登录几秒内完成；
@@ -181,7 +193,7 @@ strip id 与面板 id 不重复（面板仍叫 `quota`）。每插件只有 1 �
 | OpenCode Go | `OpenCode Go 96% 79% 90%` | **渠道全名** + 数值按 5 小时→周→月依次（不是取最紧窗口） |
 | Codex | `Codex 58%` | wire 是 remaining，不写成已用 |
 | DeepSeek | `DeepSeek ¥12.34` | 余额 + 币种符号 |
-| MiMo | `MiMo ¥8.50` | 账户余额（含 legacy 扫码登录后的余额） |
+| MiMo | `MiMo ¥8.50` | API Key 查询的账户余额（0.12.0 起；不再含 legacy 扫码登录后的余额） |
 | WorkBuddy | `WorkBuddy 3,200 分` | 积分，不与金额混比 |
 | 自定义 | `<名称> ¥xx` | 名称截断，保证数字可见 |
 
@@ -216,8 +228,9 @@ strip id 与面板 id 不重复（面板仍叫 `quota`）。每插件只有 1 �
 - 视图骨架在面板打开时生成：运行中改配置/排序后，**重新打开面板**才会更新分块。
 - DeepSeek 峰谷条、充值入口、赠金明细、Codex Subscription 适配入口等 Web 卡片细节未搬到原生
   面板（本轮只做额度总览）。
-- MiMo「登录不可用（需要新版宿主）」与 Codex Subscription 版本/补丁问题仍按
-  `docs/backlog.md` §2 单独处理，与本面板无耦合。
+- MiMo「登录不可用（需要新版宿主）」是**已删除功能的历史问题**：0.12.0 不再有登录 / 扫码，
+  只用 API Key 余额，因此不需要再按 `docs/backlog.md` §2 处理；Codex Subscription 的版本 / 补丁问题
+  也随来源退场只属历史记录（不再有入口）。
 - 版本号未动；按 AGENTS.md 的推送闸门，**用户真机确认前不 push / 不发版**。
 
 ## WorkBuddy 在手机端显示「渠道配置有误」（2026-11-17 修复）

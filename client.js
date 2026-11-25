@@ -124,31 +124,34 @@ var PLANS = [
   // balanceThreshold 仅作「余额类渠道」的标记与兜底默认；实际阈值取 host 返回的
   // warnThreshold（来自配置 deepseekWarnThreshold，默认 10 元）。
   { id: 'deepseek', name: 'DeepSeek', credentialHint: 'DEEPSEEK', balanceThreshold: 10, thresholdField: 'deepseekWarnThreshold', fields: { enabled: 'deepseekEnabled', apiKey: 'deepseekApiKey' } },
-  // 复用登录插件（Codex Connect / Codex Subscription）的 ChatGPT 登录，无需另填 API Key。
-  // [2026-11-11 Codex 双来源] `source` 指向 Config 里的来源字段（Host schema 提供）：
-  // 同一渠道两个来源可选，只取所选的那个。`credentialNote` 仅作连接态兜底文案，
-  // 设置页实际显示哪段说明由 `codexSourceNoteText(当前来源)` 决定（不再固定讲 Connect）。
-  { id: 'codex', name: 'OpenAI Codex', noCredential: true, percentMode: 'remaining', source: 'codexSource', credentialNote: '复用 Codex Connect 的 ChatGPT 登录；请先在 Codex Connect 配置中完成登录。', fields: { enabled: 'codexEnabled' } },
-  // [local patch 0.8.0] 小米 MiMo：控制台 Cookie 鉴权（非 API Key），只显示 API 余额。
-  // cookieHint 触发设置页的 Cookie 输入框（role secret，与 kimi-auth 同款先例）；
-  // balanceThreshold 标记「余额类渠道」，阈值取 host 返回的 warnThreshold（mimoWarnThreshold）。
-  // [0.11.2] MiMo 新增 API Key 通道（与 DeepSeek 同构，优先于控制台 Cookie）：
-  // 填了 Key 就调 `GET https://api.xiaomimimo.com/v1/platform/balance`；留空回退旧 Cookie 通道。
-  { id: 'mimo', name: 'Xiaomi MiMo', credentialHint: 'MIMO', balanceThreshold: 10, thresholdField: 'mimoWarnThreshold', fields: { enabled: 'mimoEnabled', apiKey: 'mimoApiKey', cookie: 'mimoCookie' } },
-  // [local patch 0.8.1] WorkBuddy 剩余积分：借用 dsh-workbuddy-connect 的登录态
-  //（与 Codex 渠道同款模式），本插件零凭据；未安装/未登录由 host 返回语义提示。
-  // [0.8.3] 拆成两个独立渠道：国内版与国际版积分不通用，各自开关/排序
-  //（用户 2026-10-17 要求，与 DeepSeek/MiMo 等渠道完全同权）。
-  { id: 'workbuddy', name: 'WorkBuddy', noCredential: true, creditMode: true, credentialNote: '读取「设置 → 模型」中 workbuddy 网关配置并复用它的 API Key，通过该网关的客户端接口 GET /v1/credits 读取积分，只统计国内（cn）积分；该接口没有稳定的账号 ID，因此暂不支持按账号筛选。不需要在此安装或登录 WorkBuddy Connect。', fields: { enabled: 'workbuddyEnabled' } },
-
+  /**
+   * [2026-11-23 用户定稿] Codex **只保留本插件自己的 ChatGPT 账号登录**（设备码流程，
+   * 支持保存多个账户并切换）。原先的「来源三选一」（Connect / Subscription / account）
+   * 已退场：卡片里不再有来源单选、来源摘要/说明，也不再渲染「应用本地适配」块，
+   * 账号的一切（添加 / 重新登录 / 切换 / 退出）都在 `CodexAccountBlock` 里。
+   * `credentialNote` 只对**其它**无凭据渠道生效（Codex 自己渲染账号卡片）。
+   */
+  { id: 'codex', name: 'OpenAI Codex', noCredential: true, percentMode: 'remaining', credentialNote: '本插件直接登录 ChatGPT 账号并读取 Codex 额度；登录凭据由本插件私有保存。', fields: { enabled: 'codexEnabled' } },
+  // 小米 MiMo：**只有 API Key 通道**，余额来自
+  // `GET https://api.xiaomimimo.com/v1/platform/balance`（请求头 `api-key`）。
+  // `balanceThreshold` 标记「余额类渠道」，阈值取 host 返回的 warnThreshold（mimoWarnThreshold）。
+  { id: 'mimo', name: 'Xiaomi MiMo', credentialHint: 'MIMO', balanceThreshold: 10, thresholdField: 'mimoWarnThreshold', fields: { enabled: 'mimoEnabled', apiKey: 'mimoApiKey' } },
+  // [2026-11-23 用户定稿] WorkBuddy **不再**是本插件的原生/内置渠道：
+  // 内置渠道只保留 DeepSeek / Xiaomi MiMo / OpenAI Codex / OpenCode Go。
+  // 以后要用 WorkBuddy，只能通过「自定义余额渠道」自行添加（HTTPS 余额 URL +
+  // JSON 键路径），不再有内置卡片、胶囊行或积分渲染；其 id 已进 `PLAN_RETIRED_IDS`，
+  // 旧配置/旧 Host 残留的条目一律不画行。
 ]
 
 /**
  * [0.9.0] 已退场的内置渠道 id（与 Host 的 RETIRED_PLAN_IDS 一致）。
  * 只用于两件事：① 旧 `planOrder` 里的这些 id 不占排序槽位；② 万一 Host 仍返回
  * 这些条目（旧 Host + 新客户端），客户端直接丢弃，不画行。
+ *
+ * [2026-11-23] `workbuddy` / `workbuddy-ai` 加入：用户定稿不再把它们当内置渠道，
+ * 改由「自定义余额渠道」按需添加；此处只为**防复活**，不要据此恢复内置卡片。
  */
-var PLAN_RETIRED_IDS = ['kimi-code', 'glm-zhipu', 'glm-zai']
+var PLAN_RETIRED_IDS = ['kimi-code', 'glm-zhipu', 'glm-zai', 'workbuddy-ai', 'workbuddy']
 
 function isRetiredPlanId(id) {
   return PLAN_RETIRED_IDS.indexOf(id) !== -1
@@ -161,76 +164,88 @@ function planMeta(id) {
   return { id: id, name: id, credentialHint: id }
 }
 
+/**
+ * [2026-11-23 B1] 该 id 是否仍是 `PLANS` 里的原生/内置渠道。
+ *
+ * 渲染过滤不能只依赖退场清单：旧 Host 可能返回清单之外的 id（例如漏记的
+ * `workbuddy-ai`），`planMeta()` 会把未知 id 回退成「id 当名字」，`meta.fields`
+ * 为 undefined 又让渠道开关检查恒为 true —— 于是画出一条假的「获取失败」行。
+ * 因此过滤规则改为白名单：**必须在 `PLANS` 里，或是 `custom:*` 自定义条目**。
+ */
+function isBuiltInPlanId(id) {
+  for (var i = 0; i < PLANS.length; i++) {
+    if (PLANS[i].id === id) return true
+  }
+  return false
+}
+
 // ===========================================================================
-// [2026-11-11 Codex 双来源] 来源身份 / 默认值 / 只读元数据
+// [2026-11-11 Codex 来源字段] 只保留**跨端口径兼容**，来源选择 UI 已退场
 // ===========================================================================
 //
-// 用户要求：同一个 OpenAICodex 渠道下**两个来源可选**——
-//   - `connect`      ：旧适配 dsh-codex-connect（**默认**，保持既有行为）；
-//   - `subscription` ：dsh-codex-subscription。
-// 规则：
-//   ① 只取**所选**来源，两来源不合并；失败也**不静默回退**到另一个来源；
-//   ② **没有 auto**：自动发现只影响「哪一行可选」，绝不自动改用户的选择；
-//   ③ 字段缺失/非法一律按 `connect` 处理（老配置 / 老 Host / 老 wire 全兼容）；
-//   ④ 来源只影响取数身份，不改变渠道开关、凭据字段或任何 secret。
+// [2026-11-23 用户定稿] Codex 只保留本插件自己的 ChatGPT 账号登录（多账户保存/切换），
+// 设置页的「来源单选 / 来源摘要 / 应用本地适配」全部移除：
+//   - 不再请求 `GET /api/plan-usage/codex-sources`（也不再渲染来源行）；
+//   - 不再渲染 `CodexSubscriptionPatchBlock`，也不再读 `…/codex-subscription/patch-state`；
+//   - 渲染层**不再按来源过滤** Codex 行：Host 的取数已恒走 `account`，并对每条 wire
+//     写 `codexSource:'account'`；若继续比较「wire 来源 ≠ 配置里的来源」，默认配置
+//     （或残留 connect/subscription 的老配置）会把**唯一的 Codex 行整个丢掉**。
+//     旧值作废改由「配置摘要（含来源片段）+ 逐条身份」两道路径保证。
+//
+// 但**下面这几个函数不能删**：它们参与「配置摘要 / wire 身份 / 旧值作废」的跨端契约。
+// Host 仍可能带 `codexSource` 字段（老配置、老 wire），两端必须对同一个字段算出同样的
+// 16 位摘要与身份，否则界面会永远显示「配置生效中」/「—」：
+//   ① 字段缺失或非法 ⇒ `connect`（与 Host 同规则）；
+//   ② 只有非 `connect` 才追加摘要片段（保旧摘要、老证明继续有效）。
 var CODEX_PLAN_ID = 'codex'
-var CODEX_SOURCE_IDS = ['connect', 'subscription']
+var CODEX_SOURCE_IDS = ['connect', 'subscription', 'account']
 var CODEX_SOURCE_DEFAULT = 'connect'
-var CODEX_SOURCE_LABELS = { connect: 'Codex Connect', subscription: 'Codex Subscription' }
-/** Host 侧只读元数据端点（0 上游：不求额度、不读凭据）。 */
-var CODEX_SOURCES_ROUTE = '/api/plan-usage/codex-sources'
 
 /**
- * 规范化来源：只有显式 `subscription` 才是新来源，其余（缺失/非法/空）都是 `connect`。
+ * 规范化来源：只有三个白名单 id 才算已知，其余（缺失/非法/空）都是 `connect`。
  *
  * [N1 整改] **逐字镜像** Host `plans/codex-sources.js#normalizeCodexSource`：
- * `typeof value === 'string' ? value.trim().toLowerCase() : ''` 再比较。
+ * `typeof value === 'string' ? value.trim().toLowerCase() : ''`，再按白名单比较。
  * 之前只做 `raw === 'subscription'` 严格等值，于是手改 YAML 写成 `" Subscription "` 时
  * Host 用 subscription、客户端算 connect —— 摘要（B1 同根）与渲染层来源过滤都会分叉。
+ *
+ * [2026-11-22 第三来源] 白名单增加 `account`。注意：Host 侧必须**同步**接受 `account`，
+ * 否则 `" Account "` 在两端会分叉（同 N1 的坑）。
  */
 function normalizeCodexSource(raw) {
   var text = typeof raw === 'string' ? raw.trim().toLowerCase() : ''
-  return text === 'subscription' ? 'subscription' : CODEX_SOURCE_DEFAULT
-}
-
-/** 来源显示名（未知来源按默认来源显示，不把未识别的原始值回显到界面）。 */
-function codexSourceLabel(id) {
-  return CODEX_SOURCE_LABELS[normalizeCodexSource(id)]
+  return CODEX_SOURCE_IDS.indexOf(text) === -1 ? CODEX_SOURCE_DEFAULT : text
 }
 
 /**
- * Host wire 上携带的来源。老 Host 不带 `codexSource`：按 `connect` 兼容处理
- * （只用于「这条旧值属于哪个来源」，不用于猜测用户选择）。
+ * Host wire 上携带的来源。老 Host 不带 `codexSource`：按 `connect` 兼容处理。
+ *
+ * [2026-11-23] 只用于①错误行溯源（原样保留 wire 的来源标记）与②离线回归断言；
+ * **不**再参与「该不该显示这一行」的判定（见本段头注释）。
  */
 function codexSourceFromWire(plan) {
   if (plan === null || plan === undefined || typeof plan !== 'object') return CODEX_SOURCE_DEFAULT
   return normalizeCodexSource(plan.codexSource)
 }
 
-/** 某一来源对应的「去哪个插件登录」说明（设置页按 saved/draft 来源显示）。 */
-function codexSourceNoteText(id) {
-  if (normalizeCodexSource(id) === 'subscription') {
-    return 'Subscription 来源复用 Codex Subscription 插件的登录态；请先在该插件里完成登录。'
-  }
-  return 'Connect 来源复用 Codex Connect 的 ChatGPT 登录；请先在 Codex Connect 配置中完成登录。'
-}
-
 /**
  * [跨端字串契约] 配置摘要里的来源片段。
  *
  * 与 Host 的 `configDigestOf()` **逐字同构**：`connect`（含字段缺失）**不追加**任何片段，
- * 因此保旧摘要、老证明继续有效；只有 `subscription` 追加
- * `'builtin:codex-source\u0002subscription'`，再算 16 位摘要。
+ * 因此保旧摘要、老证明继续有效；**任何其它来源**（`subscription` / `account` / 将来新增的）
+ * 一律追加 `'builtin:codex-source\u0002' + source`，再算 16 位摘要。
+ *
  * ⚠️ 这段字串由父代理与 Host 侧同步；**不要**单方面改动，否则双端证明永远对不上
- * （表现为界面只剩「—」/「配置生效中」）。
+ * （表现为界面只剩「—」/「配置生效中」）。Host 侧同一函数也必须写成
+ * 「非 connect ⇒ `'builtin:codex-source\u0002' + source`」，不要按来源逐个写字面量。
  */
 function codexSourceDigestPart(config) {
   var source = normalizeCodexSource(config !== null && config !== undefined ? config.codexSource : undefined)
-  return source === 'subscription' ? 'builtin:codex-source\u0002subscription' : ''
+  return source === CODEX_SOURCE_DEFAULT ? '' : 'builtin:codex-source\u0002' + source
 }
 
 /**
- * 内置 Codex 在**当前配置**下的公开身份（用于 UI 缓存 prune）。
+ * 内置 Codex 在**当前配置**下的来源身份（用于 UI 缓存 prune）。
  *
  * 自定义条目有自己的逐条身份；内置渠道原本没有身份概念，于是「切来源后 Host 迟到的
  * 旧来源结果」无法按身份作废。这里补一个只含来源的内置身份
@@ -241,275 +256,1245 @@ function codexSourceIdentity(config) {
     + normalizeCodexSource(config !== null && config !== undefined ? config.codexSource : undefined)
 }
 
-/** 逐条配置身份：自定义条目 + 内置 Codex 来源（只用于本页的 prune/证明，不参与摘要）。 */
+/**
+ * [2026-11-23 多账户] 逐条配置身份：自定义条目 + 内置 Codex 的**来源 + 生效账户**。
+ *
+ * 只用于本页的 prune（与 `applied.entries` 比对），**不参与**配置摘要：Host 的
+ * `configDigestOf()` 不认识账户身份，往摘要里加它会让双端证明永远对不上。
+ *
+ * 为什么必须拼账户：Host 的 wire 身份 `acct=…` 已经随切换立即变化，但客户端逐条身份
+ * 此前只有「配置来源」，于是切换账户后旧 wire 仍被当成同一身份沿用 —— 胶囊最多把
+ * 上一个账户的百分比保留一整个轮询周期（30 秒）。账户身份见下面的账号登录段
+ * （`codexAccountUiIdentity` / `codexAccountIdentityPart`）。
+ */
 function configIdentityMap(config) {
   var map = customConfigSignatureMap(config)
-  map[CODEX_PLAN_ID] = codexSourceIdentity(config)
+  map[CODEX_PLAN_ID] = codexSourceIdentity(config) + codexAccountIdentityPart()
   return map
 }
 
+// ===========================================================================
+// [2026-11-22 Codex 账号] 本插件自己登录 ChatGPT 账号（设备码）+ **多账户保存/切换**
+// ===========================================================================
+//
+// 分工：**Host**（另一路实现）负责设备码流程、令牌保管、账户记录的 upsert/选中与
+// `/wham/usage` 取数；浏览器只做「展示 + 触发」，进程内不接触任何 access/refresh token。
+//
+// 路由（全部同源、相对路径、**无 body**、**无 authorization**）：
+//   GET  /api/plan-usage/codex-account/state              当前登录态 + 账户列表
+//   POST /api/plan-usage/codex-account/login              添加/重登（Host 授权成功后自动 upsert 并选中）
+//   GET  /api/plan-usage/codex-account/login/status       轮询等待结果（每 2 秒）
+//   POST /api/plan-usage/codex-account/login/cancel       取消
+//   POST /api/plan-usage/codex-account/select?id=<cred>   切换选中账户
+//   POST /api/plan-usage/codex-account/logout?id=<cred>   移除该账户（最后一个 ⇒ 整体退出）
+//
+// wire 白名单（客户端只认下面这些字段，其余一律丢弃；**绝不**渲染上游原文）：
+//
+//   state : { ok:true, data:{
+//              configured:boolean, canLogin:boolean, activeAccountId?:string,
+//              account?:{ label, planType?, maskedId? },
+//              accounts?:[{ id, label, planType?, maskedId?, active:boolean }],
+//              expiresAt?:number, revision?:number, reason?:string } }
+//   login : { ok:true, data:{ status:'pending', userCode|user_code,
+//                             verificationUri|verification_uri, expiresInSec? } }
+//   status: { ok:true, data:{ status:'waiting'|'authorized'|'failed'|'expired'|'cancelled' } }
+//
+// 「谁说了算」：**Host 的 `state` 路由是唯一权威**。选中/退出/添加/取消之后一律重新 GET
+// state（Host 负责返回新的 active），绝不把本地推断当结果——这样「已登录用户」不会被
+// 显示成未登录，也不会出现两处互相矛盾的账户列表。
+//
+// 兼容老 Host：`accounts` 缺失时用 `account` 摘要渲染**单个**兼容行；`configured` /
+// `status|state` / `reason` 的老词汇原样接受（见 `parseCodexAccountState`）。
+//
+// 安全约束：
+//   - 账户 id 只接受 `[A-Za-z0-9-]{1,100}`（`codexAccountSafeId`），不合规项**整行丢弃**，
+//     也绝不会拼进 select/logout 的查询串；
+//   - 账号名/订阅类型走文本白名单（去控制字符 + 截断）；`maskedId` 不渲染、不保留；
+//   - `user_code` 只允许 `[A-Za-z0-9-]{4,32}`，不合规就**不渲染**（更不复制）；
+//   - 登录链接只允许 `https://auth.openai.com/` 开头，否则不渲染按钮、不 window.open；
+//   - `window.open(url,'_blank','noopener,noreferrer')`；无 window.open 时退化为显示 URL 文本；
+//   - 复制走 `navigator.clipboard.writeText`，失败降级为「请手动选择」提示；
+//   - hooks 全部在组件顶部无条件调用；卸载 / 取消后不再 setState、不再轮询；
+//   - 失败只显示**固定中文文案**，不回显错误码 / 上游正文 / 堆栈 / token。
+/** Host 侧账号端点（相对路径，不含任何凭据）。 */
+var CODEX_ACCOUNT_STATE_ROUTE = '/api/plan-usage/codex-account/state'
+var CODEX_ACCOUNT_LOGIN_ROUTE = '/api/plan-usage/codex-account/login'
+var CODEX_ACCOUNT_LOGIN_STATUS_ROUTE = '/api/plan-usage/codex-account/login/status'
+var CODEX_ACCOUNT_LOGIN_CANCEL_ROUTE = '/api/plan-usage/codex-account/login/cancel'
+/** [2026-11-23 多账户] 切换选中账户 / 移除账户：**用 query 传 id，绝不用 body**。 */
+var CODEX_ACCOUNT_SELECT_ROUTE = '/api/plan-usage/codex-account/select'
+var CODEX_ACCOUNT_LOGOUT_ROUTE = '/api/plan-usage/codex-account/logout'
+/** 等待授权期间的轮询间隔（用户要求 2 秒）。 */
+var CODEX_ACCOUNT_POLL_MS = 2000
+/** 唯一允许打开的登录页前缀（含结尾斜杠，天然排除 `auth.openai.com.evil.tld`）。 */
+var CODEX_ACCOUNT_AUTH_PREFIX = 'https://auth.openai.com/'
+/** 设备码形态白名单：4–32 位字母/数字/连字符。 */
+var CODEX_ACCOUNT_USER_CODE_RE = /^[A-Za-z0-9-]{4,32}$/
+/** 账号标签等短文本的上限（防止 Host 侧异常长文本撑破布局）。 */
+var CODEX_ACCOUNT_TEXT_MAX = 120
+/** `expiresAt` 只接受 ISO-8601 形态（日期或日期时间，可带 Z/偏移）。 */
+var CODEX_ACCOUNT_DATE_RE = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d{1,6})?(?:Z|[+-]\d{2}:?\d{2})?)?$/
+
+/** 固定中文文案：**唯一**允许进入 DOM 的说明文字来源。 */
+var CODEX_ACCOUNT_TEXT = {
+  signedOut: '尚未登录 ChatGPT 账号。点上面的「添加账户」获取一次性登录代码，然后在登录页输入它完成授权。',
+  waiting: '请在打开的登录页里输入下面的代码完成授权（本页会自动刷新状态）。',
+  starting: '正在请求登录代码…',
+  loading: '正在读取账号状态…',
+  unavailable: '账号登录服务暂不可用（Host 未提供该能力），请更新插件后再试。',
+  badRecord: '本机保存的登录记录无法识别（可能已损坏，或由更新/更旧版本的插件写入）。可以重新登录覆盖它，或退出账号清除后再登录。',
+  loginFailed: '登录失败，请稍后重试。',
+  statusFailed: '无法读取登录状态，请稍后重试。',
+  expired: '登录代码已过期，请重新登录。',
+  cancelled: '已取消登录。',
+  copied: '已复制登录代码。',
+  copyHint: '无法自动复制，请手动选择上面的代码。',
+  openHint: '无法直接打开浏览器，请手动复制下面的登录地址。',
+  // [2026-11-23 用户定稿] 已登录时不再显示整句说明：只显示「账号名 · 订阅类型」，
+  // 账号字段缺失时才用这句极简兜底（不编造账号/计划）。
+  signedInOnly: '已登录 ChatGPT 账号',
+  loggedOut: '已退出账号。',
+  logoutFailed: '退出账号失败，请稍后重试。',
+  signingOut: '正在退出…',
+  // [2026-11-23 多账户] 添加账户 / 切换失败（固定文案，不回显错误码）。
+  addAccount: '添加账户',
+  selectFailed: '切换账户失败，请稍后重试。',
+  relogin: '重新登录',
+  logout: '退出账号',
+  cancel: '取消',
+  copy: '复制',
+  open: '打开登录页',
+  retry: '重试',
+  waitingStatus: '状态：等待授权',
+}
+
+var codexAccountRowStyle = { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }
+var codexAccountCodeStyle = {
+  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+  fontSize: 20,
+  fontWeight: 600,
+  letterSpacing: 2,
+  padding: '4px 10px',
+  borderRadius: 8,
+  border: '1px dashed var(--dsw-alias-border-l2)',
+  background: 'var(--dsw-alias-bg-layer-3)',
+  color: 'var(--dsw-alias-label-primary)',
+  userSelect: 'all',
+  wordBreak: 'break-all',
+}
+var codexAccountUriStyle = {
+  margin: 0,
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 12,
+  lineHeight: '18px',
+  wordBreak: 'break-all',
+}
 /**
- * 解析 `GET /api/plan-usage/codex-sources` 的只读 metadata。
+ * [2026-11-23 多账户] 账户行：**一行 flex、不换行**，形如
+ *   `(radio) shangsilcom@gmail.com · Plus ... [重新登录] [退出账号]`
  *
- * 只认固定 schema，**绝不**把上游文本/错误正文带进界面：
- *   `{ ok:true, data:{ sources:[{ id, label, enabled, compatible }], selected } }`
+ * 排版契约（用户定稿）：
+ *   - 行容器 `display:flex / alignItems:center / gap:8 / flexWrap:nowrap`；
+ *   - 名称区 `flex:1 1 auto; minWidth:0`（只负责占满剩余宽度、允许收缩）；
+ *   - 省略号挂在**账号名那个文本子项**上：`display:flex` 的容器不参与 inline 文本溢出
+ *     计算，把 `textOverflow` 写在外层永远不生效（长账号名会溢出而不是省略）。子项同时
+ *     要有 `minWidth:0`，否则 flex 子项默认 `min-width:auto`，缩不到内容宽度以下；
+ *   - 「重新登录 / 退出账号」**每一行都显示**（不再只在选中行），并靠 `marginLeft:auto`
+ *     贴到该行最右端；「退出账号」只移除该行自己的账户。
  *
- * 返回 `{ state:'ok'|'error', sources:{connect?:{enabled,compatible}, …}, selected }`。
- * `enabled` / `compatible` 必须**显式为布尔**才算已知；其它一律按「未知」处理，
- * 界面显示「状态暂不可用」——绝不猜成「未启用」。
+ * 字号：账号名是主体信息（14px / primary / 500），订阅类型次之（13px / secondary），
+ * 分隔点最弱（tertiary）。到期时间**不显示**——它是 access token 的过期时间，
+ * 不是套餐到期，展示出来会误导用户。
  */
-function parseCodexSourcesPayload(body) {
-  var empty = { state: 'error', sources: {}, selected: null }
-  if (body === null || body === undefined || typeof body !== 'object') return empty
-  if (body.ok !== true) return empty
-  var data = body.data
-  if (data === null || data === undefined || typeof data !== 'object' || Array.isArray(data)) return empty
-  if (!Array.isArray(data.sources)) return empty
-  var sources = {}
-  for (var i = 0; i < data.sources.length; i++) {
-    var row = data.sources[i]
-    if (row === null || row === undefined || typeof row !== 'object') continue
-    if (CODEX_SOURCE_IDS.indexOf(row.id) === -1) continue
-    if (sources[row.id] !== undefined) continue
-    sources[row.id] = {
-      enabled: row.enabled === true ? true : (row.enabled === false ? false : null),
-      compatible: row.compatible === true ? true : (row.compatible === false ? false : null),
-    }
-  }
-  var selected = CODEX_SOURCE_IDS.indexOf(data.selected) !== -1 ? data.selected : null
-  return { state: 'ok', sources: sources, selected: selected }
+var codexAccountListRowStyle = { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'nowrap', minWidth: 0 }
+var codexAccountNameStyle = {
+  display: 'flex',
+  alignItems: 'baseline',
+  gap: 6,
+  flex: '1 1 auto',
+  minWidth: 0,
+}
+var codexAccountActionsStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  marginLeft: 'auto',
+  flex: '0 0 auto',
+}
+var codexAccountLabelStyle = {
+  fontSize: 14,
+  fontWeight: 500,
+  color: 'var(--dsw-alias-label-primary)',
+  // [2026-11-23 终审] 长账号名的省略发生在这里（文本子项），不在外层 flex 容器。
+  minWidth: 0,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+var codexAccountPlanStyle = {
+  fontSize: 13,
+  color: 'var(--dsw-alias-label-secondary)',
+  whiteSpace: 'nowrap',
+}
+var codexAccountSeparatorStyle = {
+  fontSize: 13,
+  color: 'var(--dsw-alias-label-tertiary)',
+}
+/** 「添加账户」占满整行（在账户列表**上方**，无账户时也显示）。 */
+var codexAccountAddStyle = { width: '100%', boxSizing: 'border-box', textAlign: 'center' }
+
+/** Codex 订阅类型的显示名（Host 给的是小写 `plan`/`planType`）。 */
+var CODEX_ACCOUNT_PLAN_LABELS = {
+  plus: 'Plus',
+  pro: 'Pro',
+  team: 'Team',
+  enterprise: 'Enterprise',
+  free: 'Free',
 }
 
 /**
- * 单行来源的可读状态，只由 metadata 决定（不掺任何上游错误文本）：
- *   ready        enabled:true  + compatible:true  → 可选中
- *   not-enabled  enabled:false                    → 未启用（不区分未安装/未开启）
- *   incompatible enabled:true  + compatible:false → 接口暂不可用（需适配）
- *   unknown      没拿到可信 metadata              → 状态暂不可用
+ * 订阅类型显示名：已知值走映射表；未知值把首字母大写后原样显示
+ * （输入已由 `parseCodexAccountInfo` 按 40 字截断，这里不引入新的注入面）。
  */
-/** [0.10.6] 只读补丁状态路由（GET，0 上游：只统计本机第三方包与已收录清单）。 */
-var CODEX_PATCH_STATE_ROUTE = '/api/plan-usage/codex-subscription/patch-state'
-/** [0.10.2] 一键应用补丁（POST，空 body）。 */
-var CODEX_PATCH_APPLY_ROUTE = '/api/plan-usage/codex-subscription/apply-patch'
+function codexAccountPlanLabel(raw) {
+  if (typeof raw !== 'string') return ''
+  var text = raw.trim()
+  if (text === '') return ''
+  var known = CODEX_ACCOUNT_PLAN_LABELS[text.toLowerCase()]
+  if (known !== undefined) return known
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
 
-/**
- * [0.10.6] 版本号白名单：只接受「包版本」形态的短字符串（3.2.17 / 3.2.17-beta.1）。
- *
- * patch-state 的 version / covered 来自本机第三方包清单，理论上可信；但这段文字会直接
- * 进入界面，因此仍然按**白名单**过滤——任何不符合形态的值一律降级为 null（显示不带版本
- * 号的原句），绝不把任意上游文本渲染给用户。
- */
-function safePatchVersion(raw) {
+/** 文本白名单：必须是字符串，去掉控制字符，限制长度；否则 null（不渲染）。 */
+function codexAccountSafeText(raw, maxLength) {
+  if (typeof raw !== 'string') return null
+  var text = raw.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim()
+  if (text === '') return null
+  var limit = typeof maxLength === 'number' && maxLength > 0 ? maxLength : CODEX_ACCOUNT_TEXT_MAX
+  return text.length > limit ? text.slice(0, limit) : text
+}
+
+/** 设备码：严格白名单，不合规返回 null（不渲染、不复制）。 */
+function codexAccountSafeUserCode(raw) {
   if (typeof raw !== 'string') return null
   var text = raw.trim()
-  if (text.length === 0 || text.length > 32) return null
-  return /^[0-9A-Za-z][0-9A-Za-z._+-]*$/.test(text) ? text : null
+  return CODEX_ACCOUNT_USER_CODE_RE.test(text) ? text : null
 }
 
-/** 已收录清单：逐项白名单过滤 + 去重，最多显示 8 个（防止长列表撑爆设置页）。 */
-function safePatchCovered(raw) {
-  if (!Array.isArray(raw)) return []
+/** 登录页 URL：必须是 `https://auth.openai.com/` 开头，且不含空白/控制字符。 */
+function codexAccountSafeAuthUrl(raw) {
+  if (typeof raw !== 'string') return null
+  var text = raw.trim()
+  if (text === '' || text.length > 2048) return null
+  if (text.indexOf(CODEX_ACCOUNT_AUTH_PREFIX) !== 0) return null
+  if (/[\s\u0000-\u001f\u007f]/.test(text)) return null
+  return text
+}
+
+/** ISO-8601 形态的到期时间；不合规返回 null。 */
+function codexAccountSafeDate(raw) {
+  if (typeof raw !== 'string') return null
+  var text = raw.trim()
+  return CODEX_ACCOUNT_DATE_RE.test(text) ? text : null
+}
+
+/** 秒数：1..3600 的有限数，否则 null。 */
+function codexAccountSafeSeconds(raw) {
+  if (typeof raw !== 'number' || isFinite(raw) !== true) return null
+  if (raw < 1 || raw > 3600) return null
+  return Math.floor(raw)
+}
+
+/**
+ * 毫秒时间戳（Host 的 `expiresAt` 就是 ms epoch）→ `YYYY-MM-DD HH:mm`（**本地时间**）。
+ * 只接受 2001..2096 之间的合理值，其它一律 null（不猜、不抛）。
+ */
+function codexAccountTimestampText(raw) {
+  if (typeof raw !== 'number' || isFinite(raw) !== true) return null
+  if (raw < 1e11 || raw > 4e12) return null
+  try {
+    var date = new Date(raw)
+    if (isFinite(date.getTime()) !== true) return null
+    var pad = function (n) { return n < 10 ? '0' + n : String(n) }
+    return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate())
+      + ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes())
+  } catch (err) {
+    return null
+  }
+}
+
+/**
+ * 账号信息（只认 Host 给的**可展示**字段）。
+ *
+ * `hint` 是同一份 data：Host 的 `codexAccountState()` 把 `expiresAt` 放在**顶层**，
+ * 而登录快照的 `account` 只有 `label/planType/maskedId`，所以到期时间的兜底从顶层取。
+ * 全空 ⇒ null（宁可不显示，也不编造）。
+ */
+function parseCodexAccountInfo(raw, hint) {
+  if (raw === null || raw === undefined || typeof raw !== 'object' || Array.isArray(raw)) return null
+  var top = hint !== null && hint !== undefined && typeof hint === 'object' && !Array.isArray(hint) ? hint : {}
+  var label = codexAccountSafeText(
+    raw.label !== undefined ? raw.label : (raw.accountLabel !== undefined ? raw.accountLabel : raw.email)
+  )
+  var plan = codexAccountSafeText(raw.plan !== undefined ? raw.plan : raw.planType, 40)
+  var expiresAt = codexAccountSafeDate(raw.expiresAt !== undefined ? raw.expiresAt : raw.expires_at)
+  if (expiresAt === null) {
+    expiresAt = codexAccountTimestampText(top.expiresAt !== undefined ? top.expiresAt : top.expires_at)
+  }
+  if (label === null && plan === null && expiresAt === null) return null
+  return { label: label, plan: plan, expiresAt: expiresAt }
+}
+
+/**
+ * 统一信封：必须是 `{ ok:true, data:{…} }` 的普通对象。
+ * 兼容「Host 直接把快照放在顶层」的写法（`{ ok:true, state:'waiting', … }`）——
+ * 字段仍然逐个白名单校验，所以放宽信封不会放宽安全边界。
+ */
+function codexAccountData(body) {
+  if (body === null || body === undefined || typeof body !== 'object' || Array.isArray(body)) return null
+  if (body.ok !== true) return null
+  var data = body.data
+  if (data !== null && data !== undefined && typeof data === 'object' && !Array.isArray(data)) return data
+  return body
+}
+
+/**
+ * 状态字段：`data.status`（本插件的路由约定）或 `data.state`
+ * （Host `createCodexAccountLogin().status()` 与 `codexAccountState()` 的词汇）都接受。
+ */
+function codexAccountStatusText(data) {
+  var raw = data.status !== undefined ? data.status : data.state
+  return typeof raw === 'string' ? raw.trim().toLowerCase() : ''
+}
+
+/**
+ * [2026-11-23 多账户] 账户 id 白名单：只接受 `[A-Za-z0-9-]{1,100}`。
+ *
+ * `id` 是 Host 的 `credentialId`（安全短串），但客户端**仍然自己再校验一次**——
+ * 因为它会被拼进 `select?id=` / `logout?id=` 的查询串。放行 `?&/#%` 或空白就相当于
+ * 允许 wire 改写请求目标，所以这里按白名单而不是「过滤危险字符」。
+ */
+var CODEX_ACCOUNT_ID_RE = /^[A-Za-z0-9-]{1,100}$/
+/** 账户列表上限：Host 异常时也不让设置页被撑爆（多余项丢弃）。 */
+var CODEX_ACCOUNT_LIST_MAX = 24
+
+/** 账户 id：形态不合规 / 非字符串 ⇒ null（调用方因此**不渲染**该行、也不会发 select/logout）。 */
+function codexAccountSafeId(raw) {
+  if (typeof raw !== 'string') return null
+  var text = raw.trim()
+  return CODEX_ACCOUNT_ID_RE.test(text) ? text : null
+}
+
+// ---------------------------------------------------------------------------
+// [2026-11-23 多账户] 客户端侧的「当前生效账户身份」
+// ---------------------------------------------------------------------------
+//
+// 只服务于**旧值作废**：Host 的 wire 身份 `acct=…` 已随切换立即变化，但客户端的逐条
+// 身份（`configIdentityMap`）此前只拼「配置来源」。于是切换账户后，上一个账户的胶囊
+// 数值会一直被当成「同一身份」沿用，最多残留一整个轮询周期（30 秒）。
+//
+// 取值：
+//   - `'unknown'`：本次页面生命周期内还没读到过可信 state。此时**不**追加身份片段，
+//     也**不**因「unknown → 已知」触发失效（否则光是打开设置页就会把胶囊的值清一次）；
+//   - `'none'`：已知没有生效账户（未登录 / 记录不可读）；
+//   - 其它：`codexAccountIdentityOf()` 给出的短串 —— `id + 修订号` 的 16 位摘要，
+//     **不含** token，也不把明文 accountId 写进任何身份串（身份串只用于本页比较）。
+var CODEX_ACCOUNT_IDENTITY_UNKNOWN = 'unknown'
+var CODEX_ACCOUNT_IDENTITY_NONE = 'none'
+var codexAccountUiIdentity = CODEX_ACCOUNT_IDENTITY_UNKNOWN
+
+/**
+ * 账户身份短串：`accountId + revision` 的 16 位摘要（不可逆，不泄露明文 id）。
+ * id 不合规（不可能出现在已渲染列表里）时退化为 `'none'`。
+ */
+function codexAccountIdentityOf(accountId, revision) {
+  var id = codexAccountSafeId(accountId)
+  if (id === null) return CODEX_ACCOUNT_IDENTITY_NONE
+  var rev = typeof revision === 'number' && isFinite(revision) === true && revision >= 0
+    ? Math.floor(revision)
+    : 0
+  return 'acct\u0002' + dshDigest16(id + '\u0002' + String(rev))
+}
+
+/** 更新客户端账户身份；返回是否真的变了（调用方据此决定要不要失效旧值）。 */
+function setCodexAccountUiIdentity(next) {
+  var value = typeof next === 'string' && next.length > 0 ? next : CODEX_ACCOUNT_IDENTITY_NONE
+  if (value === codexAccountUiIdentity) return false
+  codexAccountUiIdentity = value
+  return true
+}
+
+/**
+ * 逐条身份里的账户片段。`'unknown'` ⇒ 空串（还没读过 state，不宣称任何账户），
+ * 其它（含 `'none'`）都追加，这样「退出账号」也能把上一个账户的旧值作废。
+ */
+function codexAccountIdentityPart() {
+  if (codexAccountUiIdentity === CODEX_ACCOUNT_IDENTITY_UNKNOWN) return ''
+  return '\u0003acct\u0002' + codexAccountUiIdentity
+}
+
+/**
+ * 解析 `data.accounts`（Host 契约：每项 `{ id, label, planType?, maskedId?, active }`）。
+ *
+ * 返回 `null` =「wire 里没有 accounts 数组」（老 Host，调用方走单账户兼容渲染）；
+ * 返回 `[]` =「明确为空」（没有已保存的账户）。
+ * 每项只保留白名单字段 `id / label / plan / active`：`maskedId` 既不渲染也不保留。
+ */
+function parseCodexAccountList(raw) {
+  if (raw === null || raw === undefined || !Array.isArray(raw)) return null
   var out = []
-  for (var i = 0; i < raw.length && out.length < 8; i++) {
-    var version = safePatchVersion(raw[i])
-    if (version !== null && out.indexOf(version) === -1) out.push(version)
+  var seen = {}
+  for (var i = 0; i < raw.length && out.length < CODEX_ACCOUNT_LIST_MAX; i++) {
+    var row = raw[i]
+    if (row === null || row === undefined || typeof row !== 'object' || Array.isArray(row)) continue
+    var id = codexAccountSafeId(row.id)
+    if (id === null || seen[id] === true) continue
+    seen[id] = true
+    out.push({
+      id: id,
+      label: codexAccountSafeText(row.label),
+      plan: codexAccountSafeText(row.plan !== undefined ? row.plan : row.planType, 40),
+      active: row.active === true,
+    })
   }
   return out
 }
 
 /**
- * [0.10.6] 解析 `GET …/patch-state`：只接受**闭集**状态 + 安全版本字段。
- * 信封不对 / state 不在三态之内 / data 不是对象 → null，调用方走原有兜底（显示按钮）。
+ * 解析 `GET …/codex-account/state`（多账户）。
  *
- * `manifestVersion` = 与已装版本**精确匹配**的清单版本（Host 语义：清单命中但文件与基线不符时
- * 它仍等于已装版本；完全没有清单才为 null）。客户端据此区分 unsupported 的两种真实原因，
- * 避免拼出「暂无适配清单（已收录：…含本版本）」这种自相矛盾的话。字段非法按缺失处理。
+ * 返回：
+ *   `{ signedIn:true|false|null, canLogin, accounts:[{id,label,plan,active}], activeAccountId,
+ *      account:{label,plan,expiresAt}|null, reason }`
+ *   - `signedIn:true`  ⇒ 已登录；`accounts` 是已保存账户（可能为空 = 老 Host 没给列表，
+ *     此时用 `account` 摘要渲染单个兼容行）；
+ *   - `signedIn:false` ⇒ 未登录（accounts 恒为空）；
+ *   - `signedIn:null` **且带 `reason`** ⇒ 「已知的不可知」（坏记录 `incompatible` /
+ *     不可读 `unavailable` / 无凭据服务 `no-credentials`）：固定文案 + 恢复入口；
+ *   - `null`（整个返回值）⇒ 信封不可信，界面显示「暂不可用」+ 重试。
+ *
+ * `activeAccountId` 的确定顺序（全部经白名单校验）：`data.activeAccountId` 命中列表 →
+ * 列表里 `active:true` 的第一项 → 列表第一项。因此**永远只有一个** active，且它一定在列表里。
+ *
+ * 兼容信号：`status|state` / `signedIn` / `configured`（老 Host 词汇原样接受）。
+ *
+ * [2026-11-23 多账户] 解析成功（含「明确未登录 / 已知不可知」）时会顺带更新模块级的
+ * `codexAccountUiIdentity`（active 账户 id + `revision` 的短摘要，见 `codexAccountIdentityOf`），
+ * 让逐条身份 `configIdentityMap` 能反映「现在是谁在生效」。信封不可信（返回 null）时不动它 ——
+ * 那种情况没有任何账户信息，不能凭空宣称「切换了」。
  */
-function parseCodexPatchState(body) {
-  if (body === null || body === undefined || typeof body !== 'object' || body.ok !== true) return null
-  var data = body.data
-  if (data === null || data === undefined || typeof data !== 'object' || Array.isArray(data)) return null
-  var state = data.state
-  if (state !== 'patched' && state !== 'appliable' && state !== 'unsupported') return null
+function parseCodexAccountState(body) {
+  var data = codexAccountData(body)
+  if (data === null) return null
+  var canLogin = data.canLogin === true ? true : (data.canLogin === false ? false : null)
+  var listed = parseCodexAccountList(data.accounts)
+  var accounts = listed === null ? [] : listed
+  var activeAccountId = codexAccountSafeId(data.activeAccountId)
+  if (activeAccountId !== null) {
+    var present = false
+    for (var k = 0; k < accounts.length; k++) {
+      if (accounts[k].id === activeAccountId) present = true
+    }
+    // 指向不存在的账户 ⇒ 视为不可信，按下面的顺序重新确定（不渲染「幽灵选中项」）。
+    if (present !== true) activeAccountId = null
+  }
+  if (activeAccountId === null) {
+    for (var a = 0; a < accounts.length && activeAccountId === null; a++) {
+      if (accounts[a].active === true) activeAccountId = accounts[a].id
+    }
+  }
+  if (activeAccountId === null && accounts.length > 0) activeAccountId = accounts[0].id
+  for (var f = 0; f < accounts.length; f++) accounts[f].active = accounts[f].id === activeAccountId
+
+  // active 的摘要：优先 `data.account`，缺失时用 active 那一行的白名单字段补。
+  var summary = parseCodexAccountInfo(data.account, data)
+  if (summary === null && activeAccountId !== null) {
+    for (var s = 0; s < accounts.length; s++) {
+      if (accounts[s].id === activeAccountId) {
+        summary = { label: accounts[s].label, plan: accounts[s].plan, expiresAt: null }
+        break
+      }
+    }
+  }
+
+  var statusText = codexAccountStatusText(data)
+  var signedIn = null
+  if (statusText === 'signed-in' || statusText === 'signed_in' || statusText === 'authorized') signedIn = true
+  else if (statusText === 'signed-out' || statusText === 'signed_out' || statusText === 'unauthorized'
+    || statusText === 'none') signedIn = false
+  if (signedIn === null && typeof data.signedIn === 'boolean') signedIn = data.signedIn === true
+  // Host 契约：已登录时 accounts 至少一个 ⇒ 有列表就以列表为准（不让互相矛盾的字段把
+  // 已登录用户显示成「未登录」，那会让用户的账户行整个消失）。
+  if (accounts.length > 0) signedIn = true
+  if (signedIn === null && typeof data.configured === 'boolean') {
+    if (data.configured === true) signedIn = true
+    else {
+      var reason = typeof data.reason === 'string' ? data.reason.trim().toLowerCase() : ''
+      if (CODEX_ACCOUNT_UNKNOWN_REASONS.indexOf(reason) !== -1) {
+        // 「已知的不可知」：如实回 `signedIn:null` + 原因，让界面显示固定文案**并给出恢复入口**
+        // （坏记录 ⇒ 重新登录覆盖 / 退出账号清除），而不是当成未登录。
+        // `no-credentials`（Host 没有凭据服务）也走这里：界面因此不会给出可点的登录按钮。
+        // 账户身份按「没有可用账户」处理：这条记录读不出来，就不能继续拿上一个账户的值。
+        setCodexAccountUiIdentity(CODEX_ACCOUNT_IDENTITY_NONE)
+        return {
+          signedIn: null, canLogin: canLogin, accounts: [], activeAccountId: null,
+          account: null, reason: reason,
+        }
+      }
+      signedIn = false
+    }
+  }
+  if (signedIn === null) return null
+  if (signedIn !== true) {
+    setCodexAccountUiIdentity(CODEX_ACCOUNT_IDENTITY_NONE)
+    return {
+      signedIn: false, canLogin: canLogin, accounts: [], activeAccountId: null,
+      account: null, reason: null,
+    }
+  }
+  // 生效账户身份（id + 修订号 ⇒ 16 位摘要）。老 Host 没有 accounts/id 时退化为 `'none'`：
+  // 那种部署本来就不可能多账户切换，不能编一个身份出来。
+  setCodexAccountUiIdentity(codexAccountIdentityOf(activeAccountId, data.revision))
   return {
-    state: state,
-    version: safePatchVersion(data.version),
-    covered: safePatchCovered(data.covered),
-    manifestVersion: safePatchVersion(data.manifestVersion),
+    signedIn: true, canLogin: canLogin, accounts: accounts,
+    activeAccountId: activeAccountId, account: summary, reason: null,
   }
 }
 
 /**
- * [0.10.6] 「需适配」时的一句话。按 `manifestVersion` 区分两种 unsupported：
- *   - 有清单（`manifestVersion === version`）：本机第三方文件与已知基线不一致，**不能说**
- *     「暂无适配清单」——改为说明基线不一致并建议重装/升级或走命令行检查；
- *   - 无匹配清单（`manifestVersion !== version`）：显示已装版本 + 本插件已收录清单。
- * 任一关键字段缺失/非法 → 统一退化成不带版本号的原句（无法可靠判断是哪种原因，不猜）。
- * 两种 unsupported 都**不给**「应用本地适配」按钮（Host 端同样会拒绝）。
+ * Host `codexAccountState()` 里「已知的不可知」的 `reason` 白名单。
+ *
+ * [终审 P1] `no-credentials`：Host **没有凭据服务**（`ctx.credentials` 缺失）时
+ * `index.js` 会回 `{configured:false, canLogin:false, reason:'no-credentials'}`。
+ * 这种情形既不是「未登录」也不是「已登录」，必须走 unknown（显示固定文案 + 不给可点的登录按钮），
+ * 否则界面会显示「尚未登录 + 登录按钮」，点下去必然失败。
  */
-function codexPatchUnsupportedText(info) {
-  var version = info !== null && info !== undefined ? info.version : null
-  var manifestVersion = info !== null && info !== undefined ? info.manifestVersion : null
-  var covered = info !== null && info !== undefined && Array.isArray(info.covered) ? info.covered : []
-  /**
-   * [0.11.2] 修正 0.10.6 的分支顺序：Host 的 `manifestVersion === null` **正是**「本包没有
-   * 已装版本的清单」这一种情况（有清单但基线不符时它是等于已装版本的）。旧写法把 null 一起
-   * 并进兜底，于是最有用的那条信息（装的是哪个版本、本包收录了哪些）被吞掉，只留一句
-   * 「请升级本插件」——看起来像插件太旧，实际是版本没被收录。
-   */
-  if (version !== null && manifestVersion !== null && manifestVersion === version) {
-    return '第三方插件 ' + version + ' 已收录，但本机第三方文件与已知基线不一致，无法一键适配；'
-      + '建议重装或升级该第三方插件，或用命令行工具检查。'
+var CODEX_ACCOUNT_UNKNOWN_REASONS = [
+  'incompatible',
+  'unavailable',
+  'unknown',
+  'no-credentials',
+  'credentials-unavailable',
+]
+
+/**
+ * 解析 `POST …/codex-account/login` 的设备码响应。
+ * 返回 `{ userCode, verificationUri, expiresInSec }`（合规字段各为 string/number|null）；全空 ⇒ null。
+ *
+ * Host 快照的 `verificationUrl` + 毫秒 `expiresAt` 也在这里换算：
+ * 剩余秒数由 `expiresAt - now` 得出（1..3600 之内才采信，否则显示「剩余未知」）。
+ */
+function parseCodexAccountLoginStart(body) {
+  var data = codexAccountData(body)
+  if (data === null) return null
+  var code = codexAccountSafeUserCode(data.userCode !== undefined ? data.userCode : data.user_code)
+  var uri = codexAccountSafeAuthUrl(
+    data.verificationUri !== undefined
+      ? data.verificationUri
+      : (data.verification_uri !== undefined
+        ? data.verification_uri
+        : (data.verificationUrl !== undefined ? data.verificationUrl : data.verification_url))
+  )
+  var expiresInSec = codexAccountSafeSeconds(
+    data.expiresInSec !== undefined ? data.expiresInSec : (data.expires_in !== undefined ? data.expires_in : data.expiresIn)
+  )
+  if (expiresInSec === null) {
+    var deadline = data.expiresAt !== undefined ? data.expiresAt : data.expires_at
+    if (typeof deadline === 'number' && isFinite(deadline) === true) {
+      var diff = Math.round((deadline - Date.now()) / 1000)
+      if (diff >= 1 && diff <= 3600) expiresInSec = diff
+    }
   }
-  if (version !== null && covered.length > 0) {
-    return '第三方插件 ' + version + ' 暂无适配清单（本插件已收录：' + covered.join(' / ') + '）。'
-  }
-  if (version !== null) return '第三方插件 ' + version + ' 暂无适配清单。'
-  return '当前第三方插件版本暂不支持一键适配，请升级本插件。'
+  if (code === null && uri === null) return null
+  return { userCode: code, verificationUri: uri, expiresInSec: expiresInSec }
 }
 
 /**
- * [0.10.2] 「应用本地适配」块：Codex Subscription 未适配时，让用户**一键**打上第三方插件所需的
- * 本地只读接口补丁（对应 Host 路由 POST /api/plan-usage/codex-subscription/apply-patch）。
+ * 解析 `GET …/codex-account/login/status`。
+ * 返回 `{ status:'pending'|'authorized'|'failed'|'expired'|'cancelled', account }`；
+ * 信封或状态值不可信 ⇒ null（调用方显示固定文案并停止轮询）。
  *
- * [0.10.6] 版本感知：挂载（active 为 true）时先读一次 GET `…/patch-state`，据此区分三态：
- *   - patched     → 「已适配，重启 DSH 后可读取订阅额度」，不给按钮；
- *   - appliable   → 显示已装版本 + 「应用本地适配」按钮；
- *   - unsupported → 按 `manifestVersion` 区分「无匹配清单」与「有清单但基线不一致」两种文案，
- *                   **都不给**按钮（Host 端同样会拒绝）。
- * GET 失败 / 字段不可信 → 保持原有兜底（直接显示按钮，POST 后按固定文案分流）。
- *
- * 关键约束：
- *   - hooks 必须在组件**顶部无条件**调用，`active` 只影响返回值、不影响 hook 顺序（否则白屏级事故）；
- *   - GET 只发**一次**（不重试、不轮询），POST 同样只发一次（空 body）；
- *   - 卸载后不再 setState（mounted ref）；
- *   - 失败只显示固定文案，绝不回显错误码 / 堆栈 / 上游正文 / 任意上游文本。
+ * Host 词汇映射：`starting` / `waiting` / `slow_down` / `exchanging` 都算**还在等**
+ * （`exchanging` 是 Host 正在兑换授权码，客户端继续轮询）；`idle` 算失败（没有会话）。
  */
-function CodexSubscriptionPatchBlock(props) {
-  var active = props !== null && props !== undefined && props.active === true
+function parseCodexAccountLoginStatus(body) {
+  if (body === null || body === undefined || typeof body !== 'object' || Array.isArray(body)) return null
+  // Host 明确拒绝（如「登录流程不存在」）也算终态失败。
+  if (body.ok === false) return { status: 'failed', account: null }
+  var data = codexAccountData(body)
+  if (data === null) return null
+  var raw = codexAccountStatusText(data)
+  var status = null
+  if (raw === 'pending' || raw === 'waiting' || raw === 'authorizing' || raw === 'slow_down'
+    || raw === 'starting' || raw === 'exchanging') status = 'pending'
+  else if (raw === 'authorized' || raw === 'authorised' || raw === 'completed' || raw === 'complete') status = 'authorized'
+  else if (raw === 'failed' || raw === 'error' || raw === 'idle') status = 'failed'
+  else if (raw === 'expired') status = 'expired'
+  else if (raw === 'cancelled' || raw === 'canceled') status = 'cancelled'
+  if (status === null) return null
+  return { status: status, account: status === 'authorized' ? parseCodexAccountInfo(data.account, data) : null }
+}
+
+/** 剩余时间文案：`mm:ss`；未知返回「未知」。 */
+function codexAccountRemainingText(seconds) {
+  if (typeof seconds !== 'number' || isFinite(seconds) !== true || seconds < 0) return '未知'
+  var total = Math.floor(seconds)
+  var mm = Math.floor(total / 60)
+  var ss = total % 60
+  return (mm < 10 ? '0' : '') + mm + ':' + (ss < 10 ? '0' : '') + ss
+}
+
+/**
+ * 统一的 JSON 请求（空 body；只校验 HTTP 状态与 JSON 可解析，不解析错误正文）。
+ *
+ * [终审 N3] 显式 `cache:'no-store'` + `credentials:'same-origin'`：
+ * 登录状态与轮询结果**绝不能**被浏览器 HTTP 缓存复用（否则 2 秒一次的问询可能读到
+ * 一次「pending」的旧响应，或把别人的会话状态留在缓存里）。body **永不**上送。
+ */
+function codexAccountRequest(url, init) {
+  var doFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch : null
+  if (doFetch === null) return Promise.reject(new Error('no-fetch'))
+  var source = init !== null && init !== undefined && typeof init === 'object' ? init : {}
+  var options = { cache: 'no-store', credentials: 'same-origin' }
+  if (source.method !== undefined) options.method = source.method
+  if (source.headers !== undefined) options.headers = source.headers
+  return Promise.resolve()
+    .then(function () { return doFetch(url, options) })
+    .then(function (res) {
+      var httpStatus = res !== null && res !== undefined && typeof res.status === 'number' ? res.status : null
+      if (httpStatus !== null && httpStatus !== 200) throw new Error('http-status')
+      return res !== null && res !== undefined && typeof res.json === 'function' ? res.json() : null
+    })
+}
+
+/**
+ * 给 select / logout 拼 `?id=<credentialId>`（**query 传参，绝不用 body**）。
+ *
+ * id 已在解析阶段过白名单（`codexAccountSafeId`），这里再 `encodeURIComponent` 兜一层；
+ * `null`（老 Host 单账户兼容行）⇒ 不带 query，保持旧的「整体退出」语义。
+ */
+function codexAccountRouteWithId(base, id) {
+  var safe = codexAccountSafeId(id)
+  if (safe === null) return base
+  return base + '?id=' + encodeURIComponent(safe)
+}
+
+/**
+ * Codex 账号卡片（**始终**渲染在 Codex 卡片里，不再由任何「来源」草稿控制）。
+ *
+ * 结构（自上而下）：
+ *   ① 「添加账户」按钮，**占满整行**（无账户时也在；只读 / 进行中 / `canLogin:false` 时禁用）；
+ *   ② 已保存账户列表：每行一个 radio（选中 = active）+「账号名 · 订阅类型」；
+ *      **每一行**都在行尾显示「重新登录 / 退出账号」（`marginLeft:auto`，同一行），
+ *      其中「退出账号」只移除该行自己的账户（非选中行不会误删 active）；
+ *   ③ 设备码等待区（starting / waiting）：代码 + 复制 + 打开登录页 + 取消；
+ *   ④ 一次性提示（全部来自固定文案表）。
+ *
+ * 状态机（`phase`）：
+ *   loading     正在读 Host 的 state（首次挂载）
+ *   ready       已知登录态（`signedIn` 决定渲染账户列表还是「尚未登录」）
+ *   unknown     state 不可信/不可达/记录坏了/没有凭据服务：固定文案 + 重试（可选恢复入口）
+ *   starting    已 POST login，等 Host 回设备码
+ *   waiting     已显示 user_code，每 2 秒轮询 status
+ *   signing-out 正在移除账户（POST `logout?id=`）
+ *   selecting   正在切换账户（POST `select?id=`）
+ *
+ * 「谁说了算」：**Host 的 `state` 路由是唯一权威**。选中 / 退出 / 授权成功 / 取消 / 失败
+ * 之后一律重新 GET state（Host 负责返回新的 active），绝不把本地推断当结果——这样既不会
+ * 把已登录用户显示成未登录，也不会出现两处互相矛盾的账户列表。
+ *
+ * 轮询生命周期：`waiting` 期间用一次性 `setTimeout` 自续（不用 `setInterval`，避免重入与
+ * 泄漏）；离开 waiting、取消、组件卸载都会 `clearTimeout` 并把 `attemptRef` 加一 ——
+ * 在途响应因此**全部作废**，卸载后不再 setState。
+ */
+function CodexAccountBlock(props) {
   var writable = props !== null && props !== undefined && props.writable === true
-  var statusHook = React.useState('idle')
-  var status = statusHook[0]
-  var setStatus = statusHook[1]
+  var phaseHook = React.useState('loading')
+  var phase = phaseHook[0]
+  var setPhase = phaseHook[1]
+  /** 已保存账户：每项只含白名单字段 `id/label/plan/active`（不合规项已在解析时丢弃）。 */
+  var accountsHook = React.useState([])
+  var accounts = accountsHook[0]
+  var setAccounts = accountsHook[1]
+  var activeIdHook = React.useState(null)
+  var activeAccountId = activeIdHook[0]
+  var setActiveAccountId = activeIdHook[1]
+  /** 老 Host 兼容：wire 里没有 `accounts` 时，用这份 active 摘要渲染单个兼容行。 */
+  var accountHook = React.useState(null)
+  var account = accountHook[0]
+  var setAccount = accountHook[1]
+  var signedInHook = React.useState(false)
+  var signedIn = signedInHook[0]
+  var setSignedIn = signedInHook[1]
+  var loginHook = React.useState(null)
+  var login = loginHook[0]
+  var setLogin = loginHook[1]
+  var noticeHook = React.useState('')
+  var notice = noticeHook[0]
+  var setNotice = noticeHook[1]
+  /** Host 的 `canLogin`（凭据服务可用性）：明确 `false` 时禁用「添加账户 / 重新登录」。 */
+  var canLoginHook = React.useState(null)
+  var canLogin = canLoginHook[0]
+  var setCanLogin = canLoginHook[1]
   /**
-   * 探测结果：phase = 'checking'（首次读取中）| 'ready'（拿到可信三态）| 'fallback'（读取失败/不可信）。
-   * 与 POST 状态分开保存：POST 一旦开始/结束，结果文案优先于探测结果。
+   * `unknown` 态的具体原因：`incompatible`（本机记录坏了/版本不认识）/ `unavailable`
+   * （凭据服务读不到或 Host 没提供）/ `no-credentials`（没有凭据服务）/ `unknown`
+   * （信封不可信）。只为选固定文案，不含任何上游文本。
    */
-  var infoHook = React.useState({ phase: 'checking', state: null, version: null, covered: [], manifestVersion: null })
-  var info = infoHook[0]
-  var setInfo = infoHook[1]
+  var unknownReasonHook = React.useState('unknown')
+  var unknownReason = unknownReasonHook[0]
+  var setUnknownReason = unknownReasonHook[1]
+  // 卸载守卫：cleanup 里置 false，任何异步回调都先看它。
   var aliveRef = React.useRef(true)
-  var probeStartedRef = React.useRef(false)
+  /** 轮询定时器句柄（一次性 setTimeout；null = 没有在等）。 */
+  var timerRef = React.useRef(null)
+  /** 尝试代次：取消 / 切换 / 退出 / 卸载都会 +1，旧尝试的迟到响应一律丢弃。 */
+  var attemptRef = React.useRef(0)
+
+  function isAlive() { return aliveRef.current === true }
+
+  function clearPollTimer() {
+    if (timerRef.current === null) return
+    var handle = timerRef.current
+    timerRef.current = null
+    if (typeof globalThis.clearTimeout === 'function') globalThis.clearTimeout(handle)
+  }
+
+  /** 作废当前尝试（停轮询 + 丢弃在途响应），**不改** phase。 */
+  function stopAttempt() {
+    attemptRef.current += 1
+    clearPollTimer()
+  }
+
+  /** 正在进行的一次性动作：这期间所有按钮与 radio 都禁用，避免重入。 */
+  function isBusy() {
+    return phase === 'starting' || phase === 'waiting' || phase === 'signing-out' || phase === 'selecting'
+  }
+
+  // --- 生命周期（必须在顶部无条件调用） ---
   React.useEffect(function () {
     aliveRef.current = true
-    return function () { aliveRef.current = false }
+    // 挂载即问 Host（唯一权威）；不从本地记忆推断登录态。
+    loadAccountState()
+    return function () {
+      aliveRef.current = false
+      attemptRef.current += 1
+      clearPollTimer()
+    }
   }, [])
-  React.useEffect(function () {
-    // active 由 false → true（来源 metadata 异步到位）时才需要探测；组件生命周期内最多一次。
-    if (active !== true) return
-    if (probeStartedRef.current === true) return
-    probeStartedRef.current = true
-    var doFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch : null
-    if (doFetch === null) { setInfo({ phase: 'fallback', state: null, version: null, covered: [], manifestVersion: null }); return }
-    Promise.resolve()
-      .then(function () { return doFetch(CODEX_PATCH_STATE_ROUTE, { headers: { accept: 'application/json' } }) })
-      .then(function (res) {
-        var httpStatus = res !== null && res !== undefined && typeof res.status === 'number' ? res.status : null
-        if (httpStatus !== null && httpStatus !== 200) throw new Error('http-status')
-        return res !== null && res !== undefined && typeof res.json === 'function' ? res.json() : null
-      })
-      .then(function (body) {
-        if (aliveRef.current !== true) return
-        var parsed = parseCodexPatchState(body)
-        if (parsed === null) { setInfo({ phase: 'fallback', state: null, version: null, covered: [], manifestVersion: null }); return }
-        setInfo({ phase: 'ready', state: parsed.state, version: parsed.version, covered: parsed.covered, manifestVersion: parsed.manifestVersion })
-      }, function () {
-        // 失败只降级、不报错：交给原有「显示按钮」的兜底路径，不渲染任何错误细节。
-        if (aliveRef.current === true) setInfo({ phase: 'fallback', state: null, version: null, covered: [], manifestVersion: null })
-      })
-  }, [active])
-  if (active !== true) return null
-  var busy = status === 'sending'
-  var applyOnce = function () {
-    if (busy || writable !== true) return
-    setStatus('sending')
-    var doFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch : null
-    if (doFetch === null) { setStatus('failed'); return }
-    Promise.resolve()
-      .then(function () { return doFetch(CODEX_PATCH_APPLY_ROUTE, { method: 'POST' }) })
-      .then(function (res) {
-        return res !== null && res !== undefined && typeof res.json === 'function' ? res.json() : null
-      })
-      .then(function (body) {
-        if (aliveRef.current !== true) return
-        if (body !== null && body !== undefined && body.ok === true) { setStatus('done'); return }
-        // [0.10.3] 只按 Host 的**固定码**分流：码只在内存里比较，绝不渲染（更不回显上游正文/堆栈）。
-        setStatus(body !== null && body !== undefined && body.error === 'E_CS_PATCH_UNSUPPORTED' ? 'unsupported' : 'failed')
-      }, function () {
-        if (aliveRef.current === true) setStatus('failed')
-      })
-  }
-  // POST 结果优先（用户已点击过，结果必须稳定可见）。
-  if (status === 'done') {
-    return h('p', { key: 'cs-patch-result', style: settingsHintStyle, 'data-cs-patch-result': 'done', 'data-codex-source-patch': 'done' },
-      '已应用，重启 DSH 后可读取订阅额度')
-  }
-  // [0.10.3] 版本无对应清单：说人话，不渲染固定码。
-  if (status === 'unsupported') {
-    return h('p', { key: 'cs-patch-result', style: settingsHintStyle, 'data-cs-patch-result': 'unsupported', 'data-codex-source-patch': 'unsupported' },
-      '当前第三方插件版本暂不支持一键适配，请升级本插件。')
-  }
-  if (status === 'failed') {
-    return h('p', { key: 'cs-patch-result', style: settingsHintStyle, 'data-cs-patch-result': 'failed', 'data-codex-source-patch': 'failed' },
-      '应用失败，请稍后重试或用命令行工具')
-  }
-  // [0.10.6] 探测中：只给中性提示，不闪出一个可能不该出现的按钮。
-  if (info.phase === 'checking') {
-    return h('p', { key: 'cs-patch-checking', style: settingsHintStyle, 'data-codex-source-patch': 'checking' },
-      '正在检查本地适配状态…')
-  }
-  if (info.phase === 'ready' && info.state === 'patched') {
-    return h('p', { key: 'cs-patch-result', style: settingsHintStyle, 'data-cs-patch-result': 'done', 'data-codex-source-patch': 'patched' },
-      '已适配，重启 DSH 后可读取订阅额度')
-  }
-  if (info.phase === 'ready' && info.state === 'unsupported') {
-    return h('p', { key: 'cs-patch-result', style: settingsHintStyle, 'data-cs-patch-result': 'unsupported', 'data-codex-source-patch': 'unsupported' },
-      codexPatchUnsupportedText(info))
-  }
-  var appliableHint = info.phase === 'ready' && info.state === 'appliable' && info.version !== null
-    ? ('第三方插件 ' + info.version + '，可一键适配'
-      + (info.auto === true && typeof info.autoFromVersion === 'string' && info.autoFromVersion !== ''
-        ? '（按 ' + info.autoFromVersion + ' 的锚点自动匹配，适配前会先备份）'
-        : ''))
-    : (info.phase === 'ready' && info.state === 'appliable'
-      ? '该第三方插件可一键适配'
-      : 'Codex 订阅额度需要在本机做一次适配才能读取。')
-  return h('div', { key: 'cs-patch-block', 'data-cs-patch-block': '1', 'data-codex-source-patch': 'appliable', style: { display: 'flex', flexDirection: 'column', gap: 4 } },
-    h('p', { style: settingsHintStyle, 'data-cs-patch-hint': '1' }, appliableHint),
-    h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
-      h('button', {
-        type: 'button',
-        'data-cs-patch': 'apply',
-        disabled: busy || writable !== true,
-        style: Object.assign({}, settingsButtonStyle, (busy || writable !== true) ? settingsButtonDisabledStyle : {}),
-        onClick: applyOnce,
-      }, busy ? '应用中…' : '应用本地适配'),
-      h('span', { style: settingsHintStyle }, '应用后需重启 DSH 生效')))
-}
-function codexSourceRowState(entry) {
-  if (entry === null || entry === undefined) return 'unknown'
-  if (entry.enabled !== true && entry.enabled !== false) return 'unknown'
-  if (entry.enabled !== true) return 'not-enabled'
-  if (entry.compatible !== true && entry.compatible !== false) return 'unknown'
-  if (entry.compatible !== true) return 'incompatible'
-  return 'ready'
-}
 
-var CODEX_SOURCE_STATE_TEXT = {
-  ready: '可用',
-  'not-enabled': '未启用',
-  incompatible: '接口暂不可用（需适配）',
-  unknown: '状态暂不可用',
+  /** 清空「已知登录态」（进入 unknown 时用：不残留上一轮的账户行）。 */
+  function clearAccountState() {
+    setAccounts([])
+    setActiveAccountId(null)
+    setAccount(null)
+    setSignedIn(false)
+  }
+
+  /** 把一份可信的 state 投影落到 UI（所有 state 分支的唯一入口）。 */
+  function applyParsedState(parsed) {
+    setCanLogin(parsed.canLogin)
+    setAccounts(parsed.accounts)
+    setActiveAccountId(parsed.activeAccountId)
+    setAccount(parsed.account)
+    if (parsed.signedIn === true) {
+      setSignedIn(true)
+      setPhase('ready')
+      return
+    }
+    setSignedIn(false)
+    if (parsed.signedIn === null) {
+      // 「已知的不可知」：固定文案 + 恢复入口，**不**冒充未登录。
+      setUnknownReason(typeof parsed.reason === 'string' ? parsed.reason : 'unknown')
+      setPhase('unknown')
+      return
+    }
+    setPhase('ready')
+  }
+
+  /**
+   * 以 Host 的 `state` 路由为**唯一权威**刷新 UI（挂载、切换、退出、授权成功、取消、
+   * 失败都走这里）。
+   *
+   * @param {{keepNotice?:boolean}} options `keepNotice` = 保留调用方刚设的固定提示。
+   */
+  function refreshAuthoritativeState(options) {
+    var opts = options !== null && options !== undefined ? options : {}
+    var keepNotice = opts.keepNotice === true
+    var attempt = attemptRef.current
+    setPhase('loading')
+    if (keepNotice !== true) setNotice('')
+    return codexAccountRequest(CODEX_ACCOUNT_STATE_ROUTE, { headers: { accept: 'application/json' } })
+      .then(function (body) {
+        if (isAlive() !== true || attempt !== attemptRef.current) return
+        // [2026-11-23 多账户] 记录解析前的账户身份：parse 会把它更新成 Host 刚给的 active。
+        var identityBefore = codexAccountUiIdentity
+        var parsed = parseCodexAccountState(body)
+        if (parsed === null) {
+          clearAccountState()
+          setCanLogin(null)
+          setUnknownReason('unknown')
+          setPhase('unknown')
+          return
+        }
+        applyParsedState(parsed)
+        /**
+         * 账户身份**真的变了**（切换成功 / 添加后授权成功 / 退出成功 / 另一个窗口切过）
+         * ⇒ 立即失效胶囊与详情里上一个账户的值并重取。
+         *
+         * 为什么不直接写在 select / authorized / logout 的回调里：身份是在
+         * `parseCodexAccountState` 里更新的，**先** parse 再 bump 才有意义 —— 反过来的话
+         * 胶囊会带着旧身份重跑 effect，prune 认不出「账户变了」，旧数值仍会留到下一次轮询。
+         *
+         * 失败 / 取消不会改账户身份，因此这里的条件不成立、不会 bump；首次
+         * `unknown → 已知` 也跳过（否则光是打开设置页就会把胶囊的值清一次）。
+         */
+        if (codexAccountUiIdentity !== identityBefore
+          && identityBefore !== CODEX_ACCOUNT_IDENTITY_UNKNOWN) {
+          bumpConfigEpoch([CODEX_PLAN_ID])
+        }
+      }, function () {
+        if (isAlive() !== true || attempt !== attemptRef.current) return
+        clearAccountState()
+        setCanLogin(null)
+        setUnknownReason('unknown')
+        setPhase('unknown')
+      })
+  }
+
+  /** 首次/重试读取登录态（清掉提示）。 */
+  function loadAccountState() {
+    return refreshAuthoritativeState({})
+  }
+
+  /** 失败/终止收敛：停轮询、丢掉一次性代码、显示**固定**文案，然后回到 Host 的真实 state。 */
+  function settleWithNotice(text) {
+    clearPollTimer()
+    setLogin(null)
+    setNotice(text)
+    return refreshAuthoritativeState({ keepNotice: true })
+  }
+
+  /**
+   * 「添加账户」/「重新登录」：POST login（空 body），拿到设备码后每 2 秒轮询。
+   * Host 授权成功会自动 upsert 并选中新账户，因此 authorized 之后**重新 GET state**。
+   */
+  function startLogin() {
+    if (writable !== true) return
+    // Host 说没有凭据服务时**零请求**（按钮已禁用，这里再兜一层，防止程序化触发）。
+    if (canLogin === false) return
+    if (isBusy()) return
+    stopAttempt()
+    var attempt = attemptRef.current
+    setLogin(null)
+    setNotice('')
+    setPhase('starting')
+    return codexAccountRequest(CODEX_ACCOUNT_LOGIN_ROUTE, {
+      method: 'POST',
+      headers: { accept: 'application/json' },
+    })
+      .then(function (body) {
+        if (isAlive() !== true || attempt !== attemptRef.current) return
+        var started = parseCodexAccountLoginStart(body)
+        if (started === null) { settleWithNotice(CODEX_ACCOUNT_TEXT.loginFailed); return }
+        setLogin({
+          userCode: started.userCode,
+          verificationUri: started.verificationUri,
+          expiresInSec: started.expiresInSec,
+          // 剩余时间用本地 deadline 推算：只在轮询节拍（2 秒）上刷新，不额外起 1 秒计时器。
+          deadlineAt: started.expiresInSec === null ? null : Date.now() + started.expiresInSec * 1000,
+        })
+        setPhase('waiting')
+        scheduleNextPoll(attempt)
+      }, function () {
+        if (isAlive() !== true || attempt !== attemptRef.current) return
+        settleWithNotice(CODEX_ACCOUNT_TEXT.loginFailed)
+      })
+  }
+
+  /** 排下一次轮询（一次性 setTimeout；句柄进 ref 以便随时取消）。 */
+  function scheduleNextPoll(attempt) {
+    clearPollTimer()
+    var setTimer = typeof globalThis.setTimeout === 'function' ? globalThis.setTimeout : null
+    if (setTimer === null) return
+    timerRef.current = setTimer(function () {
+      timerRef.current = null
+      if (isAlive() !== true || attempt !== attemptRef.current) return
+      pollLoginStatus(attempt)
+    }, CODEX_ACCOUNT_POLL_MS)
+  }
+
+  /** 轮询一次登录状态，未终结则继续排下一拍。 */
+  function pollLoginStatus(attempt) {
+    return codexAccountRequest(CODEX_ACCOUNT_LOGIN_STATUS_ROUTE, { headers: { accept: 'application/json' } })
+      .then(function (body) {
+        if (isAlive() !== true || attempt !== attemptRef.current) return
+        var parsed = parseCodexAccountLoginStatus(body)
+        if (parsed === null) { settleWithNotice(CODEX_ACCOUNT_TEXT.statusFailed); return }
+        if (parsed.status === 'authorized') {
+          clearPollTimer()
+          setLogin(null)
+          setNotice('')
+          // 以 Host 的 state 为准：它已经把新账户 upsert 好并选中了。
+          loadAccountState()
+          return
+        }
+        if (parsed.status === 'cancelled') { settleWithNotice(CODEX_ACCOUNT_TEXT.cancelled); return }
+        if (parsed.status === 'expired') { settleWithNotice(CODEX_ACCOUNT_TEXT.expired); return }
+        if (parsed.status === 'failed') { settleWithNotice(CODEX_ACCOUNT_TEXT.loginFailed); return }
+        // pending：保持 waiting，接着排下一拍（2 秒一次，直到终结）。
+        scheduleNextPoll(attempt)
+      }, function () {
+        if (isAlive() !== true || attempt !== attemptRef.current) return
+        settleWithNotice(CODEX_ACCOUNT_TEXT.statusFailed)
+      })
+  }
+
+  /**
+   * 取消登录：停轮询、fire-and-forget 通知 Host（失败也不回显），
+   * 然后**回到 Host 的真实 state**——已登录用户取消重登后必须仍然看到已登录。
+   */
+  function cancelLogin() {
+    stopAttempt()
+    setLogin(null)
+    setNotice(CODEX_ACCOUNT_TEXT.cancelled)
+    refreshAuthoritativeState({ keepNotice: true })
+    return codexAccountRequest(CODEX_ACCOUNT_LOGIN_CANCEL_ROUTE, {
+      method: 'POST',
+      headers: { accept: 'application/json' },
+    }).then(function () {}, function () {})
+  }
+
+  /**
+   * 切换选中账户：POST `select?id=…`（空 body），成功后**重新 GET state**（Host 回新的
+   * active）；失败只显示固定文案，同样以 Host 的 state 收敛——绝不把本地猜的选中项留在界面上。
+   */
+  function selectAccount(id) {
+    var safe = codexAccountSafeId(id)
+    if (safe === null) return
+    if (writable !== true || isBusy()) return
+    if (safe === activeAccountId) return
+    stopAttempt()
+    var attempt = attemptRef.current
+    setNotice('')
+    setPhase('selecting')
+    return codexAccountRequest(codexAccountRouteWithId(CODEX_ACCOUNT_SELECT_ROUTE, safe), {
+      method: 'POST',
+      headers: { accept: 'application/json' },
+    })
+      .then(function (body) {
+        if (isAlive() !== true || attempt !== attemptRef.current) return
+        /**
+         * [R4] HTTP 200 **不等于**切换成功。
+         *
+         * Host 用 `{ok:false}` 表达「没切」（id 不存在 / 记录不可用 / 状态读不出来），
+         * 而 `codexAccountRequest` 只校验 HTTP 状态与 JSON 可解析 —— 之前这里直接进
+         * 成功分支，于是「200 + ok:false」被静默当成切换成功：界面回到 Host 的旧 active，
+         * 却**没有任何失败提示**，用户以为切换生效了。
+         *
+         * 现在只有可信信封 `body.ok === true` 才算成功；其余（`ok:false` / 非对象 /
+         * 缺 ok）一律按失败处理：固定文案 `selectFailed` + 以 Host 的 state 收敛
+         * （旧 active 原样保留、phase 回到 ready，按钮恢复可交互）。
+         * `keepNotice:true` 保证这条提示不会被随后的权威刷新清掉。
+         */
+        if (body === null || body === undefined || typeof body !== 'object' || body.ok !== true) {
+          setNotice(CODEX_ACCOUNT_TEXT.selectFailed)
+        }
+        return refreshAuthoritativeState({ keepNotice: true })
+      }, function () {
+        if (isAlive() !== true || attempt !== attemptRef.current) return
+        setNotice(CODEX_ACCOUNT_TEXT.selectFailed)
+        return refreshAuthoritativeState({ keepNotice: true })
+      })
+  }
+
+  /**
+   * 移除账户：POST `logout?id=…`（空 body）。还有账户时 Host 会返回新的 active；
+   * 移除最后一个则整体退出（界面回到「尚未登录」+「添加账户」）。
+   * `id === null`（老 Host 兼容行 / unknown 态）⇒ 不带 query，走旧的「整体退出」。
+   */
+  function logoutAccount(id) {
+    if (writable !== true || isBusy()) return
+    stopAttempt()
+    var attempt = attemptRef.current
+    setNotice('')
+    setPhase('signing-out')
+    return codexAccountRequest(codexAccountRouteWithId(CODEX_ACCOUNT_LOGOUT_ROUTE, id), {
+      method: 'POST',
+      headers: { accept: 'application/json' },
+    })
+      .then(function (body) {
+        if (isAlive() !== true || attempt !== attemptRef.current) return
+        if (body !== null && body !== undefined && body.ok === true) {
+          setNotice(CODEX_ACCOUNT_TEXT.loggedOut)
+          return refreshAuthoritativeState({ keepNotice: true })
+        }
+        // 失败：不假设「仍然已登录」，直接问 Host（也覆盖坏记录被清除后的情形）。
+        setNotice(CODEX_ACCOUNT_TEXT.logoutFailed)
+        return refreshAuthoritativeState({ keepNotice: true })
+      }, function () {
+        if (isAlive() !== true || attempt !== attemptRef.current) return
+        setNotice(CODEX_ACCOUNT_TEXT.logoutFailed)
+        return refreshAuthoritativeState({ keepNotice: true })
+      })
+  }
+
+  /** 复制设备码（失败降级为「请手动选择」提示）。 */
+  function copyUserCode() {
+    var code = login !== null && login !== undefined ? login.userCode : null
+    if (code === null) return
+    var nav = typeof navigator !== 'undefined' && navigator !== null ? navigator : null
+    var clip = nav !== null && nav.clipboard !== undefined && nav.clipboard !== null ? nav.clipboard : null
+    if (clip === null || typeof clip.writeText !== 'function') { setNotice(CODEX_ACCOUNT_TEXT.copyHint); return }
+    try {
+      Promise.resolve(clip.writeText(code)).then(function () {
+        if (isAlive() === true) setNotice(CODEX_ACCOUNT_TEXT.copied)
+      }, function () {
+        if (isAlive() === true) setNotice(CODEX_ACCOUNT_TEXT.copyHint)
+      })
+    } catch (err) {
+      setNotice(CODEX_ACCOUNT_TEXT.copyHint)
+    }
+  }
+
+  /** 打开登录页（无 window.open 或抛错时退化为「手动复制地址」提示；URL 文本始终可见）。 */
+  function openVerificationPage() {
+    var uri = login !== null && login !== undefined ? login.verificationUri : null
+    if (uri === null) return
+    var target = typeof globalThis.window !== 'undefined' && globalThis.window !== null ? globalThis.window : null
+    if (target !== null && typeof target.open === 'function') {
+      try {
+        target.open(uri, '_blank', 'noopener,noreferrer')
+        return
+      } catch (err) {
+        // 落到下面的兜底提示
+      }
+    }
+    setNotice(CODEX_ACCOUNT_TEXT.openHint)
+  }
+
+  var busy = isBusy()
+  var canPress = writable === true && busy !== true
+  var loginAvailable = canPress === true && canLogin !== false
+  var addDisabled = loginAvailable !== true
+  var signingOut = phase === 'signing-out'
+
+  /**
+   * 单行账户：radio（选中 = active）+「账号名 · 订阅类型」+（**每一行**）重新登录 / 退出账号。
+   * 动作区无条件渲染：非选中行也能重新登录，且「退出账号」只移除**该行自己的 id**，
+   * 不会误删当前 active 的账户。
+   * `row.id === null` 只用于老 Host 的单账户兼容行：没有 radio（选择/移除都需要 id），
+   * 但仍有「重新登录 / 退出账号」两个入口，退出走无 id 的整体退出（老 Host 语义）。
+   */
+  function accountRow(row, index) {
+    var id = row.id
+    var active = row.active === true
+    var value = id === null ? '1' : id
+    var nameParts = []
+    var labelText = row.label
+    if (labelText === null && row.plan === null) labelText = CODEX_ACCOUNT_TEXT.signedInOnly
+    if (labelText !== null) {
+      nameParts.push(h('span', {
+        key: 'label',
+        style: codexAccountLabelStyle,
+        'data-codex-account-label': value,
+      }, labelText))
+    }
+    if (row.plan !== null) {
+      var planText = codexAccountPlanLabel(row.plan)
+      if (planText !== '') {
+        if (nameParts.length > 0) {
+          nameParts.push(h('span', { key: 'sep', style: codexAccountSeparatorStyle, 'aria-hidden': 'true' }, '·'))
+        }
+        nameParts.push(h('span', {
+          key: 'plan',
+          style: codexAccountPlanStyle,
+          'data-codex-account-plan': value,
+        }, planText))
+      }
+    }
+    var rowChildren = []
+    if (id !== null) {
+      rowChildren.push(h('input', {
+        key: 'radio',
+        type: 'radio',
+        name: 'codex-account',
+        'data-codex-account-radio': id,
+        checked: active === true,
+        // 只读部署 / 进行中 ⇒ 不可点（不可交互 ≠ 被改选：勾选状态原样保留）。
+        disabled: canPress !== true,
+        onChange: function () { selectAccount(id) },
+      }))
+    }
+    rowChildren.push(h('span', { key: 'name', style: codexAccountNameStyle }, nameParts))
+    // [2026-11-23] 每一行都渲染动作区（不再只在 active 行）：按钮始终在该行最右侧。
+    rowChildren.push(h('span', { key: 'actions', style: codexAccountActionsStyle },
+      h('button', {
+        key: 'relogin',
+        type: 'button',
+        'data-codex-account-relogin': value,
+        // 「重新登录」同样受 `canLogin:false` 约束（没有凭据服务时不可能开新流程）；
+        // 「退出账号」只受只读/进行中约束（清除本机记录与能否登录是两件事）。
+        disabled: loginAvailable !== true,
+        style: Object.assign({}, settingsButtonStyle, loginAvailable !== true ? settingsButtonDisabledStyle : {}),
+        onClick: function () { startLogin() },
+      }, CODEX_ACCOUNT_TEXT.relogin),
+      h('button', {
+        key: 'logout',
+        type: 'button',
+        'data-codex-account-logout': value,
+        disabled: canPress !== true,
+        style: Object.assign({}, settingsButtonStyle, canPress !== true ? settingsButtonDisabledStyle : {}),
+        // 用**本行自己的 id**：点非选中行的退出只移除该行账户，不会误删 active。
+        onClick: function () { logoutAccount(id) },
+      }, signingOut === true ? CODEX_ACCOUNT_TEXT.signingOut : CODEX_ACCOUNT_TEXT.logout)))
+    return h('div', {
+      key: 'acct-row-' + (id === null ? 'legacy' : id) + '-' + String(index),
+      'data-codex-account-row': id === null ? 'legacy' : id,
+      'data-codex-account-selected': active === true ? '1' : undefined,
+      style: codexAccountListRowStyle,
+    }, rowChildren)
+  }
+
+  var rows = []
+  if (phase === 'loading') {
+    rows.push(h('p', { key: 'acct-loading', style: settingsHintStyle, 'data-codex-account-loading': '1' },
+      CODEX_ACCOUNT_TEXT.loading))
+  } else if (phase === 'unknown') {
+    rows.push(h('p', {
+      key: 'acct-unavailable',
+      style: settingsHintStyle,
+      'data-codex-account-unavailable': '1',
+      'data-codex-account-unknown-reason': unknownReason,
+    }, unknownReason === 'incompatible' ? CODEX_ACCOUNT_TEXT.badRecord : CODEX_ACCOUNT_TEXT.unavailable))
+    /**
+     * 未知/坏记录**必须有恢复入口**：只给「重试」会让记录损坏的用户无路可走。
+     * 但 `no-credentials`（Host 没有凭据服务）**只给重试**——登录/退出都必然失败。
+     */
+    var unknownActions = [h('button', {
+      key: 'retry',
+      type: 'button',
+      'data-codex-account-retry': '1',
+      disabled: busy,
+      style: Object.assign({}, settingsButtonStyle, busy ? settingsButtonDisabledStyle : {}),
+      onClick: function () { loadAccountState() },
+    }, CODEX_ACCOUNT_TEXT.retry)]
+    if (loginAvailable === true) {
+      unknownActions.push(h('button', {
+        key: 'relogin',
+        type: 'button',
+        'data-codex-account-relogin': '1',
+        style: settingsButtonStyle,
+        onClick: function () { startLogin() },
+      }, CODEX_ACCOUNT_TEXT.relogin))
+    }
+    if (canPress === true && canLogin === true) {
+      unknownActions.push(h('button', {
+        key: 'logout',
+        type: 'button',
+        'data-codex-account-logout': '1',
+        style: settingsButtonStyle,
+        onClick: function () { logoutAccount(null) },
+      }, CODEX_ACCOUNT_TEXT.logout))
+    }
+    rows.push(h('div', { key: 'acct-unknown-actions', style: codexAccountRowStyle }, unknownActions))
+  } else {
+    // ready / starting / waiting / signing-out / selecting：账户区常驻，
+    // 顶部永远是**占满整行**的「添加账户」（无账户时也在，只是列表为空）。
+    rows.push(h('button', {
+      key: 'acct-add',
+      type: 'button',
+      'data-codex-account-add': '1',
+      disabled: addDisabled,
+      style: Object.assign({}, settingsButtonStyle, codexAccountAddStyle, addDisabled ? settingsButtonDisabledStyle : {}),
+      onClick: function () { startLogin() },
+    }, CODEX_ACCOUNT_TEXT.addAccount))
+    if (signedIn === true) {
+      if (accounts.length > 0) {
+        for (var ri = 0; ri < accounts.length; ri++) rows.push(accountRow(accounts[ri], ri))
+      } else {
+        // 老 Host：`accounts` 缺失，用 active 摘要渲染单个兼容行。
+        rows.push(accountRow({
+          id: null,
+          label: account === null || account === undefined ? null : account.label,
+          plan: account === null || account === undefined ? null : account.plan,
+          active: true,
+        }, 0))
+      }
+    } else {
+      rows.push(h('p', { key: 'acct-signed-out', style: settingsHintStyle, 'data-codex-account-signed-out': '1' },
+        CODEX_ACCOUNT_TEXT.signedOut))
+      // Host 说不能登录时，明确说明原因（固定文案），而不是留一个点了必然失败的按钮。
+      if (canLogin === false) {
+        rows.push(h('p', {
+          key: 'acct-no-credentials',
+          style: settingsHintStyle,
+          'data-codex-account-no-credentials': '1',
+        }, CODEX_ACCOUNT_TEXT.unavailable))
+      }
+    }
+    if (phase === 'starting') {
+      rows.push(h('p', { key: 'acct-starting', style: settingsHintStyle, 'data-codex-account-starting': '1' },
+        CODEX_ACCOUNT_TEXT.starting))
+      rows.push(h('div', { key: 'acct-starting-actions', style: codexAccountRowStyle },
+        h('button', {
+          key: 'cancel',
+          type: 'button',
+          'data-codex-account-cancel': '1',
+          style: settingsButtonStyle,
+          onClick: function () { cancelLogin() },
+        }, CODEX_ACCOUNT_TEXT.cancel)))
+    } else if (phase === 'waiting' && login !== null) {
+      rows.push(h('p', { key: 'acct-waiting', style: settingsHintStyle, 'data-codex-account-waiting': '1' },
+        CODEX_ACCOUNT_TEXT.waiting))
+      if (login.userCode !== null) {
+        rows.push(h('div', { key: 'acct-code-row', style: codexAccountRowStyle },
+          h('code', { key: 'code', 'data-codex-account-user-code': '1', style: codexAccountCodeStyle }, login.userCode),
+          h('button', {
+            key: 'copy',
+            type: 'button',
+            'data-codex-account-copy': '1',
+            style: settingsButtonStyle,
+            onClick: function () { copyUserCode() },
+          }, CODEX_ACCOUNT_TEXT.copy)))
+      }
+      if (login.verificationUri !== null) {
+        rows.push(h('div', { key: 'acct-open-row', style: codexAccountRowStyle },
+          h('button', {
+            key: 'open',
+            type: 'button',
+            'data-codex-account-open': '1',
+            style: settingsButtonStyle,
+            onClick: function () { openVerificationPage() },
+          }, CODEX_ACCOUNT_TEXT.open)))
+        rows.push(h('p', { key: 'acct-uri', style: codexAccountUriStyle, 'data-codex-account-uri': '1' },
+          login.verificationUri))
+      }
+      var remainingSec = login.deadlineAt === null ? null : Math.max(0, Math.round((login.deadlineAt - Date.now()) / 1000))
+      rows.push(h('p', { key: 'acct-status', style: settingsHintStyle, 'data-codex-account-status': '1' },
+        remainingSec === null
+          ? CODEX_ACCOUNT_TEXT.waitingStatus
+          : CODEX_ACCOUNT_TEXT.waitingStatus + ' · 剩余 ' + codexAccountRemainingText(remainingSec)))
+      rows.push(h('div', { key: 'acct-cancel-row', style: codexAccountRowStyle },
+        h('button', {
+          key: 'cancel',
+          type: 'button',
+          'data-codex-account-cancel': '1',
+          style: settingsButtonStyle,
+          onClick: function () { cancelLogin() },
+        }, CODEX_ACCOUNT_TEXT.cancel)))
+    }
+  }
+  // 一次性提示（复制成功/取消/过期/退出成功…）：全部来自固定文案表。
+  if (notice !== '') {
+    rows.push(h('p', { key: 'acct-notice', style: settingsHintStyle, 'data-codex-account-notice': '1' }, notice))
+  }
+  var stateText = phase === 'unknown' ? 'unknown' : (phase === 'loading' ? 'loading' : (signedIn === true ? 'signed-in' : 'signed-out'))
+  return h('div', {
+    'data-codex-account-block': phase,
+    'data-codex-account-state': stateText,
+    style: { display: 'flex', flexDirection: 'column', gap: 4, paddingTop: 2, minWidth: 0 },
+  }, rows)
 }
 
 /**
@@ -657,8 +1642,7 @@ function quotaToneColorRemaining(meta, shownRemaining, limited) {
 // ===========================================================================
 
 /** 币种 → 显示符号（MiMo 官方返回 CNY/USD；未知币种按 ¥ 处理）。
- * [0.8.3] 符号后带统一薄空格（U+2009）：与 WorkBuddy「✦」前缀共用同一间距基准，
- * 实测「符号→数字」可见间隙 ✦ 3.29 / ¥ 3.31（18px）像素级一致（见 SYMBOL_GAP 定义）。 */
+ * 符号后带统一薄空格（U+2009），见 SYMBOL_GAP 定义。 */
 function balanceSymbol(currency) {
   var cur = typeof currency === 'string' ? currency.trim().toUpperCase() : ''
   if (cur === 'USD') return '$' + SYMBOL_GAP
@@ -852,6 +1836,26 @@ function getConfigEpoch() {
   return configEpochValue
 }
 
+// ===========================================================================
+// [R2 代次] Codex 额度响应的「采集代次」水位
+// ===========================================================================
+//
+// Host 在 `/api/plan-usage` 的 Codex 条目上附 `codexGeneration` / `codexGenerationOrder`
+// （后者 = 该次采集票据的 `epoch`，账户切换 / 配置身份变化 / 停用-启用都会推进它）。
+//
+// 为什么必须放在**模块级**并跨 effect 重建保留：代次是「本页已经接受了哪个账户的额度」的
+// 事实，配置变化导致轮询 effect 重建时不能忘掉它——否则一次迟到的旧账户响应会被当成首轮数据
+// 接受，把刚切走的 A 的余额又画回来。
+//
+// 三条规则（见 settle）：
+//   - order < 当前水位 ⇒ **忽略该 Codex 行**（迟到旧响应），保留已应用的当前行；
+//   - order > 当前水位 ⇒ 换代：推进水位 + 作废旧 Codex 基线与失败计数
+//     （B 的**首次**失败因此不会回退到 A 的成功值，而是直接显示失败/等待）；
+//   - order 相同 ⇒ 正常处理（同一代次内的短期失败仍可灰显 B 自己的缓存值）。
+//
+// `-1` = 还没见过任何代次（老 Host 不带字段时永远不会更新，行为与原来一致）。
+var codexPlanGenerationOrder = -1
+
 /**
  * [V2] 某条自定义条目在**当前**配置下是否还能沿用「epochAtApply 那轮」的数据。
  *
@@ -929,7 +1933,8 @@ function customConfigIndex(config) {
  * [W1/W2] 客户端版的配置摘要，**必须与 Host 的 `configDigestOf()` 逐字一致**。
  *
  * 组成（**顺序即契约，与 Host 逐字相同**）：可选的第一段 codex 来源组件
- * `'builtin:codex-source\u0002subscription'`（仅 subscription 时存在）→ 每条自定义条目的
+ * `'builtin:codex-source\u0002<source>'`（来源不是 `connect` 时**都**追加，不只是
+ * `subscription`；`connect` / 字段缺失不追加，因此老证明继续有效）→ 每条自定义条目的
  * 公开身份（id/url/路径/扣减键/币种/凭据引用/目标确认/启用）+ 该条的**非密**密钥修订号
  * `customKeyRev[id]`（条目顺序敏感）→ 已删除条目的 orphan 修订号（排序后）。
  *
@@ -943,7 +1948,8 @@ function configDigestOfClient(config) {
     ? config.customKeyRev
     : {}
   var parts = []
-  // [2026-11-11 Codex 双来源] 来源进入摘要（**只在 subscription 时追加**，逐字同构 Host）。
+  // [2026-11-11 Codex 双来源] 来源进入摘要（**非 connect 都追加**，逐字同构 Host；
+  // 2026-11-23 起来源只剩跨端兼容语义：老 Host / 老配置仍可能带 connect/subscription）。
   // 于是「切来源保存」= 摘要变化 → 期望摘要/effect 依赖一起变 → 跨窗口也会重跑轮询、
   // abort 在途请求并作废旧来源的值；connect 配置的摘要与旧版完全一致（保旧证明）。
   // [B1 整改] 与 Host configDigestOf 同位置：**条目之前**追加来源组件。
@@ -1085,116 +2091,9 @@ function parseCustomBalances(raw) {
   return out
 }
 
-// [local patch 0.8.1] 详情面板积分渠道的大号数值行（与余额类渠道同款排版，
-// 但不写死颜色——由调用方传）。模块级常量，避免在 map 回调里重复构造。
-var balRowStyleStatic = {
-  display: 'flex', alignItems: 'center', gap: 8, margin: '4px 0',
-  fontSize: 18, fontWeight: 600,
-}
-
-/** 积分数值格式化：千分位、最多两位小数（与 workbuddy-connect 的显示一致）。 */
-function formatCredit(value) {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return '—'
-  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value)
-}
-
-/** 到期部分使用实际时间戳的本地日历日期；缺失/非法日期只显示“最近到期”。 */
-function workbuddyAccountLabel(account) {
-  var name = account.packageName || '套餐'
-  // 兼容旧 Host 的文字标签；普通套餐名和非到期行保持原样。
-  if (account.subsetOfAccount !== true && name !== '其中最早到期部分') return name
-  var stamp = account.endTimeMs
-  if (typeof stamp !== 'number' || !Number.isFinite(stamp)) return '最近到期'
-  var expiryDate = new Date(stamp)
-  if (!Number.isFinite(expiryDate.getTime())) return '最近到期'
-  var year = expiryDate.getFullYear()
-  if (year < 0 || year > 9999) return '最近到期'
-  // 不截取 UTC ISO 字符串，避免本地午夜的到期日显示成前一天。
-  return '最近到期 ' + ('0000' + year).slice(-4)
-    + '-' + ('0' + (expiryDate.getMonth() + 1)).slice(-2)
-    + '-' + ('0' + expiryDate.getDate()).slice(-2)
-}
-
-// [0.8.3] 符号与数字间的统一薄空格（U+2009）。
-// 背景：✦（U+2726）advance 9.79px vs ¥ 6.47px（12px），墨迹测量显示 ✦ 墨迹几乎
-// 顶满字宽、¥ 反而略溢出；「符号→数字」的可见间隙实测（canvas actualBoundingBox）：
-//   ✦+普通空格 = 2.08px(12px) / 4.62px(18px)——18px 下比 ¥ 几乎贴死的 -0.3px 大 5px，
-//   这正是用户指出的「星星和数字间隔比 ¥ 大」。
-// 两边统一加 thin space 后：✦ 1.19 / ¥ 1.87（12px，差 0.7px 不可辨）、
-// ✦ 3.29 / ¥ 3.31（18px，像素级一致）。选 U+2009 而非 U+200A（hair）：
-// hair 在 12px 下 0.29px 过紧，thin 在两种字号下都落在「贴合但透气」区间。
-var SYMBOL_GAP = /* U+2009 thin space（勿改成普通空格，间距实测见上） */' '
-
-// [0.8.3] ✦ 与数字之间的分隔（英文空格 U+0020，与 ¥ 的 thin 等效间隙）。
-// ✦ 缩放后进宽变小（8px 语境：6.53 vs ¥ 6.47），可见间隙随之变小；实测配**普通空格**
-// 才与 ¥ 的 thin 打平（canvas 墨迹级测量，两个语境）：
-//   胶囊 12px：✦@8px + space = 1.81px  vs  ¥@12 + thin = 1.87px（差 0.06）
-//   面板 18px：✦@12px + space = 3.74px vs  ¥@18 + thin = 3.60px（差 0.14）
-// 因此间距常量分开：¥/$ 用 SYMBOL_GAP，✦ 用 STAR_GAP。
-var STAR_GAP = ' '
-
-// [0.8.3] ✦ 的渲染参数（用户三轮实测后定稿：Android 与桌面都要对齐）。
-//
-// 演进：
-//   1) 视觉「大一号」：✦ 在 18px 下墨迹 ascent14/descent2，比 ¥（13/0）更高且
-//      基线不对称 → ✦ 缩到基准字号 2/3。
-//   2) 符号列错轴：胶囊数值列右对齐，而 ¥ 进宽 6.47px / ✦ 进宽 9.79px
-//      → 缩到 2/3 后进宽 6.53 ≈ ¥ 6.47，右对齐下中心与数字起点同时对齐。
-//   3) [方案 B] 光学中心偏下：✦ 与数字**基线虽齐**，但 Android Noto 把 ✦ 画得
-//      又小又靠下（实测面板：✦ 墨迹 10px vs 数字 16px，中心低 3.0px；胶囊低 2.0px；
-//      同一份 CSS 在 Windows Segoe UI Symbol 下偏移 0.00px——纯平台字体差异，
-//      用 translateY 只能治好一端）。因此数值区改**flex 中心对齐**
-//      （align-items:center 按盒子中心对齐，不依赖字体基线），符号与数字各成子项。
-//
-// 用法：数值区容器用 valueFlexStyle(fontSize)，内部依次放
-//   h('span', { style: starFixStyle(fontSize) }, '✦') 与 h('span', {}, 数字)。
-//   ⚠️ 符号必须是**子项**（不能塞回同一个文本 span，那样又回到基线对齐）。
-function starFixStyle(fontSize) {
-  return {
-    display: 'inline-block',
-    fontSize: Math.round(fontSize * 2 / 3), // 与 ¥ 进宽/中心对齐的比例（实测见上）
-    lineHeight: 1,                          // 防止撑高行框
-  }
-}
-
-/**
- * [0.8.3 方案 B] 数值区容器：flex 横向 + 垂直中心对齐。
- * 不依赖字体基线，因此在 Windows / Android 的字体回退差异下都能把 ✦ 与数字居中对齐。
- *
- * ⚠️ 两个必须同时满足的条件（各自都踩过一次真实故障）：
- *   1) **块级 flex**（不是 inline-flex）：胶囊数值列靠 `marginLeft:'auto'` 贴右，
- *      而 auto 外边距在 inline-flex 元素上不推挤——用 inline-flex 会让数值区
- *      脱离右缘（0.8.3 第一版方案 B 左移约 51px）。
- *   2) **justifyContent:'flex-end'**：改成 flex 后，外层的 `textAlign:'right'`
- *      对 **flex 子项不再生效**（textAlign 只影响行内内容），内容会默认靠左
- *      （0.8.3 第二版方案 B 的胶囊仍左偏）。
- * 面板语境外层本来就是 flex 行，这里再套一层只影响「✦ + 数字」这一组。
- */
-function valueFlexStyle(fontSize) {
-  return {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    fontSize: fontSize,
-    lineHeight: 1.2,
-  }
-}
-
-// ===========================================================================
-// [0.8.1 定稿] WorkBuddy 积分明细的自适应列表
-// ===========================================================================
-// 高度基准 = DeepSeek 当前区块的视觉高度（大号余额行 27px + 状态脚注 ≈17px
-// + 上下 margin 8px ≈ 52px；再减去明细行的行高 17px，让列表整体不高于
-// DeepSeek 区块）。行数少时按普通文字铺开；超过阈值才收进列表滚动。
-// 列表右侧 paddingRight 预留滚动条（约 10px），避免与明细文字重合。
-var WB_DETAIL_MAX_ROWS = 3
-var wbDetailListStyle = {
-  maxHeight: 72,           // [0.8.1 定稿] 首版 36px 太局促，扩大一倍（约 4 行）
-  overflowY: 'auto',
-  boxSizing: 'border-box',
-  paddingRight: 10,        // 滚动条避让：明细文字不与滚动条重合
-  overscrollBehavior: 'contain',
-}
+// 符号与数字之间的统一薄空格（U+2009 thin space）：
+// ¥ / $ 后面用它比普通空格更贴近设计稿的「贴合但透气」；不要改成普通空格。
+var SYMBOL_GAP = /* U+2009 thin space（勿改成普通空格） */' '
 
 /**
  * 余额**向下取整到分**：与 DSH 设置页的截断语义一致。
@@ -1208,9 +2107,11 @@ function floorToCent(value) {
 
 /** 连续失败达到该轮数后才显示「获取失败」（更早的失败保留旧值 + 灰字）。
  * [0.8.3] 2 → 5（用户 2026-10-16 决定）：30 秒轮询下约 2.5 分钟才转「获取失败」，
- * 给 WorkBuddy 实时计费查询的偶发超时留出恢复窗口，避免数值灰一下就直接报错。
- * [0.9.0][A04] 8 → 5：与 Host 统一状态机对齐（第 5 次才移除旧值）。`n * 注意：正常情况下客户端**不再自己计数**，而是消费 Host 的 `effectiveStatus`；`n * FAIL_THRESHOLD 只用于 Host 未提供该字段的旧响应兜底。
- * 配合 WorkBuddy 渠道的错误分类（限流/5xx/超时都算暂时失败）一起生效。 */
+ * 给实时计费类渠道的偶发超时留出恢复窗口，避免数值灰一下就直接报错。
+ * [0.9.0][A04] 8 → 5：与 Host 统一状态机对齐（第 5 次才移除旧值）。
+ * 注意：正常情况下客户端**不再自己计数**，而是消费 Host 的 `effectiveStatus`；
+ * FAIL_THRESHOLD 只用于 Host 未提供该字段的旧响应兜底。
+ * 配合暂时失败分类（限流/5xx/超时都算暂时失败）一起生效。 */
 var FAIL_THRESHOLD = 5
 
 /** 失败期间旧值的显示色：弱化灰（不加「更新于」标注，见 roadmap 方向 3 定稿）。 */
@@ -1642,16 +2543,16 @@ function PlanUsageBadge(props) {
   var customIndex = customConfigIndex(config)
   // [V2] 逐条身份签名；`applied`（已显示数据所属的配置身份）在 stateHook 之后读取。
   var customSignatures = customConfigSignatureMap(config)
-  // [2026-11-11 Codex 双来源] 逐条身份 = 自定义条目 + **内置 Codex 来源**。
+  // [2026-11-11 Codex 来源] 逐条身份 = 自定义条目 + **内置 Codex 来源**。
   // 只有「身份确实变了」的条目会在 effect 重建时作废旧值/失败计数；其它渠道（DeepSeek /
-  // WorkBuddy / MiMo / 自定义 B、C…）照旧沿用，切来源不会整批清空。
+  // MiMo / 自定义 B、C…）照旧沿用，来源变化不会整批清空。
+  //
+  // [2026-11-23 用户定稿] Codex 只剩**一个**来源（本插件自己的 ChatGPT 账号），
+  // 因此**不再按「wire 来源 ≠ 已保存来源」丢行**：Host 恒以 `codexSource:'account'` 标记
+  // 新 wire，而老配置里的 `codexSource` 可能还是 connect/subscription —— 继续按它过滤会把
+  // **唯一的 Codex 行整个丢掉**（胶囊/详情直接没有 Codex）。配置变化造成的旧值作废由
+  // 「配置摘要 / 逐条身份」两道路径负责，不需要来源过滤这一层。
   var configIdentities = configIdentityMap(config)
-  /** 当前**已保存**的 Codex 来源（缺失/非法 → connect）。在途/迟到结果据此过滤。 */
-  var savedCodexSourceRef = React.useRef(CODEX_SOURCE_DEFAULT)
-  savedCodexSourceRef.current = normalizeCodexSource(config !== null && config !== undefined ? config.codexSource : undefined)
-  // [display 2026-11-05] 本机显示会话快照：单例 store（唯一轮询定时器），
-  // 与 Host 手工 Cookie 的 /api/plan-usage 轮询完全独立；此处只读快照，不触发动作。
-  var mimoDisplaySnap = useMimoDisplay()
 
   // [0.8.1 回退记录] 内嵌充值入口已按用户要求**整体移除**：原生 Platform 视图
   // 的 bounds 在窗口状态变化时会被主进程按 open 时的值重放，与网页层返回栏
@@ -1682,50 +2583,6 @@ function PlanUsageBadge(props) {
   var openHook = React.useState(false)
   var open = openHook[0]
   var setOpen = openHook[1]
-  // [refresh 2026-11-10] 详情打开（false→true）时对 managed+verified 主动刷新一次（owner POST）；
-  // 关闭/重渲染不触发；非 managed/未登录/disabled 不触发；不在 UI 另设定时器。
-  var mimoRefreshOpenRef = React.useRef(false)
-  var mimoManualRefreshRef = React.useRef(null)
-  React.useEffect(function () {
-    var was = mimoRefreshOpenRef.current
-    mimoRefreshOpenRef.current = open === true
-    if (was === true || open !== true) return
-    var snap = mimoDisplaySnap
-    if (snap === null || snap === undefined) return
-    if (snap.managed !== true || snap.selected !== true || snap.state !== 'verified') return
-    if (snap.freshness === 'paused') return
-    // 渠道当前保存开关必须为开（未启用时不发任何 owner 请求）
-    if (settingBool(config, 'mimoEnabled', true) !== true) return
-    // 全局插件开关同样必须为开。真实 disabled 时胶囊**根本不渲染**（本组件提前 return null），
-    // 正常走不到这里；显式对齐契约，避免将来复用这段 effect 时漏判。
-    if (settingBool(config, 'enabled', true) !== true) return
-    var cap = mimoDisplayStore.capability
-    if (cap === null || cap === undefined || typeof cap.bootEpoch !== 'string') return
-    // manual 单独 coalesce：不因 status 轮询在途而放弃本次强刷
-    if (mimoManualRefreshRef.current !== null) return
-    // 请求发出时的 store 代次：期间若换了 boot / 退出（epoch++），这次强刷的后续 pump 一律不再发起。
-    var manualEpoch = mimoDisplayStore.epoch
-    var manual = mimoAuthRequest({ action: 'rememberedRefresh', bootEpoch: cap.bootEpoch, generation: snap.generation }).then(function (reply) {
-      // **可信回复的判据不是 ok===true**：普通读失败（第 1..5 次）Host 同样回 ok:false，
-      // 但 failure/readFailures/freshness 已经更新，必须马上走 pureStatus 把「灰化/隐藏金额 + 固定原因」
-      // 落到界面；若只认 ok:true，点开详情后还会继续显示旧金额，直到下一次 status 轮询。
-      // 只有「没有回复（传输失败/超时/无可信 boot）」或「回包的 bootEpoch 不是本 boot」才跳过。
-      // 也**不**要求 reply.remembered.generation 仍等于旧值：本人主动读触发安全终止时它会变 0，
-      // 那时的墓碑正需要立刻拉回来把金额清掉。
-      if (reply === null || reply === undefined) return null
-      if (typeof reply.bootEpoch !== 'string' || reply.bootEpoch !== cap.bootEpoch) return null
-      if (mimoDisplayStore.epoch !== manualEpoch) return null
-      // 等既有 status 轮询落定后再走**同一** pureStatus 路径（load→revision/owner guard→commit→emit）
-      return Promise.resolve(mimoDisplayStore.inflight).catch(function () { return null }).then(function () {
-        if (mimoDisplayStore.epoch !== manualEpoch) return null
-        return mimoDisplayPump()
-      })
-    }, function () { return null }).then(function (value) {
-      if (mimoManualRefreshRef.current === manual) mimoManualRefreshRef.current = null
-      return value
-    })
-    mimoManualRefreshRef.current = manual
-  }, [open])
   // [0.8.2] 外点关闭：需要拿到胶囊与详情面板的真实元素做「点击是否在卡片内」判定。
   var pillRef = React.useRef(null)
   var panelRef = React.useRef(null)
@@ -1976,13 +2833,36 @@ function PlanUsageBadge(props) {
         var plan = source[i]
         if (!plan || typeof plan.id !== 'string') continue
         seen[plan.id] = true
-        // [2026-11-11 Codex 双来源] 只显示**当前已保存来源**的结果。
-        // 旧来源的响应（Host 2 秒配置缓存 / 切换瞬间的在途旧请求）在这里被丢弃，
-        // 且 seen 已置位——carry 也不会把旧来源的值再顶回来；**不**回退到另一个来源。
-        if (plan.id === CODEX_PLAN_ID && codexSourceFromWire(plan) !== savedCodexSourceRef.current) {
-          delete failStreaks[plan.id]
-          continue
+        /**
+         * [R2 代次] Codex：只接受**当前代次**（或更新代次）的那一行。
+         *
+         * Host 用票据 `epoch` 标出这份额度属于哪一次采集代次（账户切换 / 配置身份变化
+         * 都会推进）。三种情形：
+         *   - `order < 水位`：这是**迟到的旧代次响应**（A），整行忽略；但不能把它当成
+         *     「本轮没有 Codex」，否则 carry 会拿旧基线复活，所以 seen 已置位，
+         *     并保留当前已应用的行（B）——旧 A 绝不回填；
+         *   - `order > 水位`：换代。推进水位 + 作废旧基线与失败计数，于是 B 的**首次**
+         *     暂时失败不会回退到 A 的成功值（否则刚切完账户会先闪一下 A 的余额）；
+         *   - `order` 相同：同代次的正常轮询，继续走下面的通用分支（短期失败可灰显
+         *     B 自己的缓存值，不能因为「失败」就降级换代）。
+         *
+         * 没有 `codexGenerationOrder`（老 Host）时完全按原行为处理。
+         */
+        if (plan.id === CODEX_PLAN_ID && Number.isSafeInteger(plan.codexGenerationOrder)) {
+          if (plan.codexGenerationOrder < codexPlanGenerationOrder) {
+            var keptCodex = findPlan(lastList, CODEX_PLAN_ID)
+            if (keptCodex !== null && keptCodex !== undefined) merged.push(keptCodex)
+            continue
+          }
+          if (plan.codexGenerationOrder > codexPlanGenerationOrder) {
+            codexPlanGenerationOrder = plan.codexGenerationOrder
+            invalidated[plan.id] = true
+            delete failStreaks[plan.id]
+          }
         }
+        // [2026-11-23] 这里**不再**按来源丢行：Codex 只剩账号一个来源，继续比较
+        // 「wire 来源 vs 已保存来源」会因 Host 恒写 `account` 而把唯一的 Codex 行过滤掉。
+        // 旧值的作废由「配置摘要（含 codexSource 片段）+ 逐条身份」保证。
         // [W3] 自定义条目被停用：Host 回 {enabled:false} 且不请求。这里把它从
         // 展示列表里彻底移除（seen 已置位，carry 不会用旧值把它复活），
         // 同时清掉失败计数与代次记录。
@@ -2033,8 +2913,8 @@ function PlanUsageBadge(props) {
             continue
           }
           // 缺凭据、登录失效等语义错误立即透传；仅暂时的网络/执行错误允许保留旧值。
-          // [0.8.5] host 可以在条目上显式标 transient:true（目前 WorkBuddy 渠道用它
-          // 区分「限流/5xx/超时/结构变化」与「登录失效」），显式标记优先于按 error 名猜。
+          // [0.8.5] host 可以在条目上显式标 transient:true，用来区分
+          // 「限流/5xx/超时/结构变化」与「登录失效」；显式标记优先于按 error 名猜。
           var transient = plan.transient === true
             || plan.error === 'curl' || plan.error === 'exec' || plan.error === 'rpc'
             || (plan.error === 'http' && /HTTP (429|5\d\d)/.test(plan.message || ''))
@@ -2106,9 +2986,11 @@ function PlanUsageBadge(props) {
             stripped.custom = true
             if (typeof old.gen === 'string') stripped.gen = old.gen
           }
-          // [2026-11-11 Codex 双来源] 错误行也必须保留**来源身份**：剥掉它会被当成
-          // 「别的来源的结果」而在渲染层被过滤掉，用户就看不到「本来源获取失败」。
-          if (old.id === CODEX_PLAN_ID) stripped.codexSource = codexSourceFromWire(old)
+          // [2026-11-23] Codex 只剩一个来源，渲染层**不再**按来源过滤；这条错误行仍原样
+          // 带上 wire 自己的 `codexSource`（若有），只作溯源/兼容旧字段，不参与任何判定。
+          if (old.id === CODEX_PLAN_ID && old.codexSource !== undefined) {
+            stripped.codexSource = codexSourceFromWire(old)
+          }
           merged.push(stripped)
         }
       }
@@ -2206,10 +3088,9 @@ function PlanUsageBadge(props) {
       controller = { abort: function () { if (aborter) aborter.abort() }, superseded: false }
       var current = controller
       var timeout = new Promise(function (_resolve, reject) {
-        // [0.8.3] 20s → 30s（用户 2026-10-16 实测：WorkBuddy 实时计费查询偶发超时，
+        // [0.8.3] 20s → 30s（用户 2026-10-16 实测：实时计费类渠道偶发超时，
         // 20s 偏紧；超时被归为 transient 失败，会推进「获取失败」轮数）。
-        // [0.8.5] 30s → 40s：Host 的 WorkBuddy 单次读取上限已提到 35s（要等
-        // workbuddy-connect 自己的 30s 计费超时落地，才能拿到结构化错误原因）。
+        // [0.8.5] 30s → 40s：Host 端最慢的单渠道读取上限为 35s。
         // 浏览器侧若仍是 30s，会**先**掐断整个 /api/plan-usage，连带所有渠道一起失败。
         // 因此这里必须严格大于 35s，且留 5s 余量。
         timer = setTimeout(function () { current.abort(); reject(new Error('usage timeout')) }, 40000)
@@ -2302,6 +3183,11 @@ function PlanUsageBadge(props) {
     if (p == null) return false
     // [0.9.0] 已退场的内置渠道：即使 Host 仍返回（旧 Host + 新客户端），也不画行。
     if (isRetiredPlanId(p.id)) return false
+    // [2026-11-23 B1] 白名单守卫：**不在 `PLANS` 且不是 `custom:*`** 的 id 一律丢弃。
+    // 旧 Host 的未知内置 id 会被 `planMeta()` 回退成「id 当名字」，且 `meta.fields` 为
+    // undefined 又让渠道开关检查恒为 true —— 只靠退场清单会漏掉清单外的 id（如
+    // `workbuddy-ai`）。自定义条目仍按 `custom:*` 放行，不受此守卫影响。
+    if (!isCustomLike(p) && !isBuiltInPlanId(p.id)) return false
     // [R3/R4/V2] 自定义条目以**当前已保存配置**为准，而不是 wire 里的 enabled：
     //   - 配置里已删除 → 立刻不显示（哪怕旧 wire / 旧 carry 还带着它）；
     //   - 配置里已停用 → 立刻不显示；
@@ -2317,17 +3203,15 @@ function PlanUsageBadge(props) {
       // 已显示的数据必须仍属于当前配置（V2）。
       return customDataStillValid(p.id, applied, customSignatures)
     }
-    // [2026-11-11 Codex 双来源] 渲染时再兜一道：wire 的来源必须等于**当前已保存来源**。
-    // 老 wire 不带 `codexSource` 视作 connect，因此「已选 subscription 却在显示 Connect
-    // 的数字」不可能出现；来源不符时整行不画（不是换成另一个来源的数字）。
-    if (p.id === CODEX_PLAN_ID && codexSourceFromWire(p) !== savedCodexSourceRef.current) return false
+    // [2026-11-23] 渲染期**不再**按来源过滤 Codex：单一来源（本插件账号登录），
+    // 见 settle() 里同一处说明。渠道开关仍按配置决定是否显示。
     var meta = planMeta(p.id)
     var key = meta.fields && meta.fields.enabled
     return key === undefined || settingBool(config, key, true)
   })
   // [顺序修复 2026-10-20 第三次] **全局混排**：内置与自定义渠道共用同一 `planOrder`。
   //
-  // 用户已明确要求：OpenRouter 这类自定义渠道必须能移到 Codex / WorkBuddy **之前**，
+  // 用户已明确要求：OpenRouter 这类自定义渠道必须能移到内置渠道 **之前**，
   // 所有渠道统一上下排序；设置页卡片、侧栏胶囊、详情面板共用同一顺序。
   //
   // 旧的「内置在前 + 自定义在后」分组（`sortPlansByOrder(builtIns).concat(customs)`）
@@ -2338,19 +3222,11 @@ function PlanUsageBadge(props) {
   // 不再分成两组，也不再有 `concat` 造成的强制分组。
   plans = sortPlansByOrder(plans, config.planOrder)
   // [2026-11-12 批次 G] 启动首帧就把「已启用但还没数据」的渠道铺成占位行：
-  // 之前只有被 `mimoDisplayOverlay` 追加的 MiMo 会先出现，其它渠道要等主路由（含网络取数）
-  // 返回后才冒出来。占位只表示「该渠道已启用、正在读取」，**不伪造任何数值**；
-  // 放在 overlay **之前**，这样 overlay 会直接覆盖 mimo 占位（不会出现重复行）。
-  // 只在前面的「有配置视图」成立时才铺：没有 configForm（旧宿主 / 纯 mock）时
-  // `useConfigSnapshot(null)` 会给一个空对象，照空对象铺就会把所有渠道都列出来。
+  // 其它渠道要等主路由（含网络取数）返回后才冒出来。占位只表示「该渠道已启用、
+  // 正在读取」，**不伪造任何数值**。只在前面的「有配置视图」成立时才铺：没有
+  // configForm（旧宿主 / 纯 mock）时 `useConfigSnapshot(null)` 会给一个空对象，
+  // 照空对象铺就会把所有渠道都列出来。
   plans = withPendingPlaceholders(plans, hasConfigView ? config : null)
-  // [display 2026-11-05] 已选本机显示会话时，MiMo 行**由 Host DTO 驱动**（覆盖手工来源）；
-  // [0.10.2] 未选中/未验证时 mimo 固定为缺失态，**不再**回落旧 Cookie lane（旧配置字段保留但不读取）。
-  plans = mimoDisplayOverlay(plans, mimoDisplaySnap, {
-    // 渠道被停用时不把 MiMo 加回来（B5）；尚未拿到可信状态时用"读取中"占位（N4）。
-    allowMimo: settingBool(config, 'mimoEnabled', true),
-    resolving: mimoDisplayStore.resolving,
-  })
 
   // 胶囊：多行，每个套餐一行。用量类套餐展示 5小时/周限/月限 三个窗口的
   // 百分比；余额类套餐（deepseek / mimo，带 balanceThreshold）只显示剩余余额
@@ -2413,70 +3289,6 @@ function PlanUsageBadge(props) {
       }
       continue
     }
-    // [local patch 0.8.1] WorkBuddy 积分渠道：右侧显示剩余积分（千分位）；
-    // [0.8.3] 「（积分）」全角后缀改为「✦」前缀（U+2726，单色、随主题深浅）。
-    // ✦ 用 starFixStyle(12)=8px 缩放（进宽 ≈ ¥），并用 valueFlexStyle 做 flex
-    // **中心对齐**——Android Noto 把 ✦ 画得偏下，基线对齐会低 2–3px（实测），
-    // flex 的 align-items:center 不依赖字体基线，两端都居中。
-    //
-    // [0.8.3] 国内版 WorkBuddy 与国际版 WorkBuddy AI 的积分**不通用**
-    //（用户 2026-10-17 在第二台设备实测发现）：Host 的 variants 已给出各版本
-    // 独立小计，这里**按版本各占一行**分别显示，而不是把两版加成一个合计。
-    // 未登录/未配置的版本不会出现在 variants 里，因此不会产生空行。
-    if (meta.creditMode === true && (typeof plan.creditsTotal === 'number' || plan.creditsUnlimited === true)) {
-      var wbVariants = Array.isArray(plan.variants) && plan.variants.length > 0 ? plan.variants : null
-      var wbDot = plan.stale === true
-        ? 'var(--dsw-alias-label-tertiary)'
-        : 'var(--dsw-alias-state-success-primary)'
-      if (wbVariants !== null) {
-        for (var vi = 0; vi < wbVariants.length; vi++) {
-          var variant = wbVariants[vi]
-          if (variant == null || typeof variant !== 'object') continue
-          var vNum = variant.unlimited === true ? '∞'
-            : (typeof variant.total === 'number' ? formatCredit(variant.total) : '—')
-          capsuleRows.push({
-            dot: wbDot,
-            label: typeof variant.label === 'string' && variant.label.length > 0 ? variant.label : meta.name,
-            values: ['✦' + STAR_GAP + vNum],
-            valueNodes: [
-              h('span', { style: starFixStyle(12), key: 'star' }, '✦'),
-              h('span', { style: { marginLeft: '0.34em' }, key: 'num' }, vNum),
-            ],
-            valueFlex: true,
-            stale: plan.stale === true,
-          })
-        }
-        continue
-      }
-      // 旧 Host（无 variants）：退回单行合计显示，保持向后兼容。
-      var wbNum = plan.creditsUnlimited === true ? '∞' : formatCredit(plan.creditsTotal)
-      capsuleRows.push({
-        dot: wbDot,
-        label: meta.name,
-        values: ['✦' + STAR_GAP + wbNum], // title / 无障碍文本用纯字符串
-        valueNodes: [
-          h('span', { style: starFixStyle(12), key: 'star' }, '✦'),
-          h('span', { style: { marginLeft: '0.34em' }, key: 'num' }, wbNum),
-        ],
-        valueFlex: true,
-        stale: plan.stale === true,
-      })
-      continue
-    }
-    // [display 2026-11-05] 已选本机显示会话但当前没有数值：只显示会话状态，
-    // **绝不**回填手工 Cookie 的旧值（selected 墓碑），也不自称"获取失败"。
-    if (plan.displaySource === true && typeof plan.balance !== 'number') {
-      var mimoReadFailed = (plan.displayReadFailures || 0) >= 5 || plan.displayFreshness === 'failed'
-      capsuleRows.push({
-        dot: 'var(--dsw-alias-label-tertiary)',
-        label: meta.name,
-        values: [mimoReadFailed ? '获取失败' : mimoDisplayShortText(mimoDisplaySnap, mimoDisplayStore.resolving)],
-        stale: false,
-        // 失败时 title 也不得带具体原因/URL/错误正文
-        title: meta.name + ' ' + (mimoReadFailed ? '获取失败' : mimoDisplayStateText(mimoDisplaySnap)),
-      })
-      continue
-    }
     // [local patch] 余额类套餐：右侧只显示剩余余额，低于阈值红灯。
     if (meta.balanceThreshold !== undefined && typeof plan.balance === 'number') {
       // 阈值优先取 host 下发的配置值；0 表示不警告。
@@ -2488,17 +3300,12 @@ function PlanUsageBadge(props) {
         ? 'var(--dsw-alias-label-tertiary)'
         : (low ? 'var(--dsw-alias-state-error-primary)' : 'var(--dsw-alias-state-success-primary)')
       var balText = balanceSymbol(plan.currency) + floorToCent(plan.balance)
-      // [display] 历史值必须在数值本身标出来（只变灰不算标识），并在 title 给采集时间。
-      var displayHistoric = plan.displaySource === true && plan.displayFreshness === 'stale'
-      var displayTime = plan.displaySource === true ? mimoDisplayTimeText(plan.displayFetchedAt) : ''
       capsuleRows.push({
         dot: dot,
         label: meta.name,
-        values: [balText + (displayHistoric ? ' 历史' : '')],
+        values: [balText],
         stale: plan.stale === true,
-        title: meta.name + ' ' + balText
-          + (displayHistoric ? '（历史值，未确认最新）' : '')
-          + (displayTime === '' ? '' : ' · 采集于 ' + displayTime),
+        title: meta.name + ' ' + balText,
       })
       continue
     }
@@ -2536,7 +3343,7 @@ function PlanUsageBadge(props) {
         .map(function (w) { return shownOf(plan[w.key]) + '%' })
       capsuleRows.push({ dot: quotaToneColorRemaining(meta, worstShown, false), label: meta.name, values: values, stale: plan.stale === true })
     } else if (plan.error === 'no-key') {
-      // [0.11.4] MiMo 的扫码登录已下线，缺 Key 时直接提示配置（不再说「未登录」）。
+      // MiMo 只走 API Key：缺 Key 时直接提示配置，不再有登录态说法。
       capsuleRows.push({ dot: null, label: meta.name, values: [meta.id === 'mimo' ? '未配置 Key' : '请设置 Key'], stale: false })
     } else {
       capsuleRows.push({ dot: null, label: meta.name, values: ['获取失败'], stale: false })
@@ -2615,12 +3422,9 @@ function PlanUsageBadge(props) {
           h('span', { style: Object.assign({}, dotStyle, { background: r.dot || dotColor }) }),
           wide && h('span', { style: capNameStyle }, r.label),
           wide && h('span', {
-            style: r.valueFlex === true
-              // [0.8.3 方案 B] WorkBuddy 行：flex 中心对齐（符号盒与数字盒按中心对齐）
-              ? Object.assign({}, capValueStyle, valueFlexStyle(12), r.stale ? staleValueStyle : {})
-              : (r.stale ? Object.assign({}, capValueStyle, staleValueStyle) : capValueStyle),
+            style: r.stale ? Object.assign({}, capValueStyle, staleValueStyle) : capValueStyle,
           },
-            r.valueNodes ? r.valueNodes : r.values.join(' ')),
+            r.values.join(' ')),
         )
       })
       : h('span', { style: pillSegStyle },
@@ -2646,94 +3450,12 @@ function PlanUsageBadge(props) {
       if (isCustomPlan(plan)) {
         return customBalanceSection(plan)
       }
-      var title = meta.name + (meta.creditMode === true ? ' 积分'
-        : meta.balanceThreshold !== undefined ? ' 余额'
+      var title = meta.name + (meta.balanceThreshold !== undefined
+        ? ' 余额'
         : ' 剩余额度') + (plan.level ? ' · ' + plan.level : '')
       var inner
       if (plan.error) {
-        // [refresh 2026-11-10] 本机显示会话读失败时，**具体原因（白名单错误码）只在这里给**：
-        // 胶囊数值 / 胶囊 title / 状态文案一律只说「获取失败」，不泄码、不泄 URL。
-        // displayFailureText 只在 planOf 的失败分支出现，且码已经过 DTO 白名单。
-        var displayNote = plan.displaySource === true && typeof plan.displayFailureText === 'string'
-          && plan.displayFailureText !== '' ? plan.displayFailureText : null
-        inner = h('div', { style: sectionNoteStyle },
-          displayNote !== null ? displayNote : (plan.message || '无法获取用量'))
-      } else if (meta.creditMode === true) {
-        // [local patch 0.8.1 / 0.8.3] WorkBuddy 积分渠道。
-        //
-        // [0.8.3] 国内版 WorkBuddy 与国际版 WorkBuddy AI 的积分**不通用**
-        //（用户 2026-10-17 在第二台设备实测发现）：因此大号数值行**按版本各显示
-        // 一行**，不再把两版合并成一个「合计」（合并会让人误以为积分可通用）。
-        // Host 的 variants 已给出各版本的独立小计与 unlimited 状态；
-        // 旧 Host（无 variants）退回单行合计，保持向后兼容。
-        var wbVariantRows = Array.isArray(plan.variants)
-          ? plan.variants.filter(function (v) { return v !== null && typeof v === 'object' })
-          : []
-        // 若 Host 只给了合计（旧版 / 结构变化），用合计造一行，保证始终有数值行。
-        if (wbVariantRows.length === 0) {
-          wbVariantRows = [{
-            label: meta.name,
-            total: typeof plan.creditsTotal === 'number' ? plan.creditsTotal : null,
-            unlimited: plan.creditsUnlimited === true,
-          }]
-        }
-        /** 一个版本的大号数值行：dot + ✦ + 该版本剩余积分。 */
-        function wbVariantRow(variant, key) {
-          var vNum = variant.unlimited === true ? '∞'
-            : (typeof variant.total === 'number' ? formatCredit(variant.total) : '—')
-          return h('div', {
-            style: Object.assign({}, balRowStyleStatic, { color: 'var(--dsw-alias-label-primary)' }),
-            key: key,
-          },
-            h('span', { style: Object.assign({}, dotStyle, { width: 9, height: 9, background: 'var(--dsw-alias-state-success-primary)' }) }),
-            // 版本名（WorkBuddy / WorkBuddy AI）在有多个版本时标在数值前，
-            // 否则两行数字无法区分属于哪个版本。
-            wbVariantRows.length > 1 && typeof variant.label === 'string'
-              ? h('span', { style: { fontSize: 12, fontWeight: 400, color: 'var(--dsw-alias-label-secondary)' } }, variant.label)
-              : null,
-            // [0.8.3 方案 B] flex 中心对齐的「✦ + 数字」（Android Noto 的 ✦ 偏下）。
-            h('span', { style: valueFlexStyle(18) },
-              h('span', { style: starFixStyle(18) }, '✦'),
-              h('span', { style: { marginLeft: '0.34em' } }, vNum),
-            ),
-          )
-        }
-
-        // 套餐明细（remain>0 或企业套餐；与 workbuddy-connect 卡片口径一致）。
-        var wbRows = []
-        if (Array.isArray(plan.creditsAccounts) && plan.creditsAccounts.length > 0) {
-          for (var ai = 0; ai < plan.creditsAccounts.length; ai++) {
-            var account = plan.creditsAccounts[ai]
-            if (account.remain === null || (account.remain === 0 && account.packageName !== 'enterprise')) continue
-            // 大号总积分已显示：只略过完全重复的普通汇总，保留到期部分和独立明细。
-            if (plan.id === 'workbuddy' && plan.creditsUnlimited !== true
-              && account.subsetOfAccount !== true && !account.packageName
-              && account.size == null && account.endTimeMs == null
-              && Number.isFinite(plan.creditsTotal) && account.remain === plan.creditsTotal) continue
-            wbRows.push(h('div', { key: 'a' + ai, style: sectionNoteStyle },
-              (account.variant ? account.variant + ' · ' : '')
-              + (plan.id === 'workbuddy' ? workbuddyAccountLabel(account) : (account.packageName || '套餐'))
-              + '：' + formatCredit(account.remain)
-              + (typeof account.size === 'number' && account.size > 0 ? ' / ' + formatCredit(account.size) : '')))
-          }
-        }
-        var wbListStyle = wbRows.length > WB_DETAIL_MAX_ROWS
-          ? Object.assign({}, wbDetailListStyle)
-          : null
-        var wbDetailBlock = wbListStyle !== null
-          ? h('div', { style: wbListStyle, key: 'wbdetail' }, wbRows)
-          : wbRows
-        inner = h('div', {},
-          wbVariantRows.map(function (variant, vi) {
-            return wbVariantRow(variant, 'wbv' + vi)
-          }),
-          wbDetailBlock,
-          // [0.8.2] 部分取数脚注：某个版本取不到数据时，上方只是已取到版本的数据，
-          // 用灰色说明行点出来。creditMode 不走 planNotes()，必须内联。
-          plan.partial === true && plan.partialNote
-            ? h('div', { style: sectionNoteStyle, key: 'wbpartial' }, plan.partialNote)
-            : null,
-        )
+        inner = h('div', { style: sectionNoteStyle }, plan.message || '无法获取用量')
       } else if (meta.balanceThreshold !== undefined) {
         // [local patch] 余额类套餐：显示剩余余额与可用状态；低于阈值红灯提示。
         if (plan.mixedCurrency === true && typeof plan.balance !== 'number') {
@@ -2767,12 +3489,7 @@ function PlanUsageBadge(props) {
             mixedRows.length > 0 ? h('div', { key: 'mixedlist' }, mixedRows) : null,
           )
         } else if (typeof plan.balance !== 'number') {
-          // [display] 已选显示会话但没有余额：说明是"本次会话暂无值"，不冒充"获取失败"，
-          // 也不回落手工来源。
-          inner = h('div', { style: sectionNoteStyle },
-            plan.displaySource === true
-              ? (typeof plan.displayFailureText === 'string' && plan.displayFailureText !== '' ? plan.displayFailureText : '正在读取余额')
-              : '余额获取失败')
+          inner = h('div', { style: sectionNoteStyle }, '余额获取失败')
         } else {
           var panelThreshold = typeof plan.warnThreshold === 'number' ? plan.warnThreshold : meta.balanceThreshold
           var low = panelThreshold > 0 && plan.balance < panelThreshold
@@ -2790,7 +3507,7 @@ function PlanUsageBadge(props) {
               : (low ? 'var(--dsw-alias-state-error-primary)' : 'var(--dsw-alias-state-success-primary)'),
           })
           // [local patch 0.8.0/0.8.1] 余额明细：DeepSeek 与 MiMo 各自拆行显示。
-          //   - MiMo：cashBalance / giftBalance（控制台口径：现金 / 赠送）；
+          //   - MiMo：cashBalance / giftBalance（现金 / 赠送）；
           //   - DeepSeek [0.8.3]：cashBalance（充值余额）/ bonusBalance（赠金余额）——
           //     用户 2026-10-17 要求「和 MiMo 一样分开描述」。
           // 同一行布局（左充值/现金，右赠金/赠送），比两行更紧凑（用户 0.8.0 定稿）。
@@ -2803,17 +3520,12 @@ function PlanUsageBadge(props) {
             var isDeepseek = plan.id === 'deepseek'
             var leftLabel = isDeepseek ? '充值余额：' : '现金余额：'
             var rightLabel = isDeepseek ? '赠金余额：' : '赠送余额：'
-            // [display/B7] display 来源**缺项不造 0**：只有字段存在才渲染该侧。
+            // 缺项按 0 补齐同一行布局；金额本身仍以 Host 下发字段为准。
             var cashKnown = typeof plan.cashBalance === 'number'
             var giftField = isDeepseek ? plan.bonusBalance : plan.giftBalance
             var giftKnown = typeof giftField === 'number'
-            var strictSplit = plan.displaySource === true
-            var leftNode = cashKnown || !strictSplit
-              ? h('span', {}, leftLabel + sym + floorToCent(cashKnown ? plan.cashBalance : 0))
-              : null
-            var rightNode = giftKnown || !strictSplit
-              ? h('span', { style: { marginLeft: 'auto' } }, rightLabel + sym + floorToCent(giftKnown ? giftField : 0))
-              : null
+            var leftNode = h('span', {}, leftLabel + sym + floorToCent(cashKnown ? plan.cashBalance : 0))
+            var rightNode = h('span', { style: { marginLeft: 'auto' } }, rightLabel + sym + floorToCent(giftKnown ? giftField : 0))
             detailChildren.push(h('div', {
               key: 'cashgift',
               style: { display: 'flex', alignItems: 'baseline', color: 'var(--dsw-alias-label-tertiary)', fontSize: 11, lineHeight: 1.5, margin: '2px 0' },
@@ -3270,7 +3982,7 @@ function PlanUsageConfigCard(props) {
     },
       h('span', { style: headTextStyle },
         h('span', { style: nameStyle }, PLAN_NAME),
-        h('span', { style: descriptionStyle }, '在左侧状态栏显示套餐用量与余额（OpenCode Go / DeepSeek / OpenAI Codex / Xiaomi MiMo / WorkBuddy / 自定义余额渠道）。'),
+        h('span', { style: descriptionStyle }, '在左侧状态栏显示套餐用量与余额（OpenCode Go / DeepSeek / OpenAI Codex / Xiaomi MiMo / 自定义余额渠道）。'),
       ),
       dirty ? h('span', { style: pendingStyle }, '未保存') : null,
       h('span', { style: open ? chevronOpenStyle : chevronStyle, 'aria-hidden': 'true' }, '⌄'),
@@ -3523,8 +4235,7 @@ function planKindLabelOf(meta) {
  *
  * ⚠️ **不要自造残缺的来源字段表**：这里复用已经与 Host 同构的
  * `configDigestOfClient(value)`（含自定义条目的 provider / balanceEndpoint / 路径 /
- * 扣减键 / 币种 / 凭据引用 / 目标确认 / 启用状态，以及**公开**的 Key 修订号），
- * 再补上 WorkBuddy 的**账号选择**（规范化、顺序无关）。
+ * 扣减键 / 币种 / 凭据引用 / 目标确认 / 启用状态，以及**公开**的 Key 修订号）。
  * 只用公开字段：secret 已被 DSH 剥掉，这里既读不到也不缓存任何密钥。
  * 依赖 `value`（已保存快照）而不是草稿 —— 未保存的编辑不应被当成"来源已切换"。
  */
@@ -3538,28 +4249,7 @@ function policyConfigSignature(value) {
   }
   // 自定义条目 + 公开 Key 修订号（与 Host 的配置摘要同一套规范化）
   parts.push('custom=' + configDigestOfClient(v))
-  // WorkBuddy：账号选择是**真实来源**的一部分（换账号 = 换来源）
-  parts.push('wb=' + policyAccountsSignature(v.workbuddyAccounts))
   return parts.join('|')
-}
-
-/** WorkBuddy 账号选择的规范化签名（顺序无关；坏值用原文兜底，保证"变了就变"）。 */
-function policyAccountsSignature(raw) {
-  if (typeof raw !== 'string') return 'raw:' + String(raw === undefined ? '' : raw)
-  var text = raw.trim()
-  if (text.length === 0) return ''
-  var parsed
-  try { parsed = JSON.parse(text) } catch (err) { return 'raw:' + text }
-  if (!Array.isArray(parsed)) return 'raw:' + text
-  var list = []
-  for (var i = 0; i < parsed.length; i++) {
-    if (typeof parsed[i] !== 'string') continue
-    var id = parsed[i].trim()
-    if (id.length === 0 || list.indexOf(id) !== -1) continue
-    list.push(id)
-  }
-  list.sort()
-  return list.join(',')
 }
 
 /**
@@ -4616,2924 +5306,6 @@ function checkJsonPathSyntax(text) {
 }
 
 /**
- * 自定义余额编辑区。props：
- *   entries    当前（草稿优先）条目数组
- *   onChange   接收新数组（整页草稿的一部分）
- *   keyDrafts  { id: 新 Key 文本 }（空串 = 不修改）
- *   keyClears  { id: true }（显式清除已保存 Key）
- *   keyStatus  { id: true } 表示该条已保存 Key（布尔摘要，来自 Host）
- *   refStatus  { id: true } 表示所选凭据引用当前有值
- *   disabled / saving / writable
- *   onKeyChange(id, text) / onKeyClear(id) / onKeyUndoClear(id)
- */
-// [G1 / 2026-10-30 — 4 阻断修复版（review-20261030/G1-UI-VERDICT.md）]
-// ===========================================================================
-// MiMo「实验性临时扫码」本地入口（仅 UI + 纯前端 helper）
-//
-// 硬边界（G1 授权 + .diagnostics/mimo-g1-local-20261030/CONTRACT.md 23 行）：
-//   - 顶层不加载/不执行任何认证 flow、不轮询、不发网络请求；只有用户点了入口按钮
-//     才发第一次 GET capability；`begin`（懒加载官方二维码流程）也必须是显式动作。
-//   - ticketId（32 hex）只在本机 UI 内存：不进 URL / Storage / console / 剪贴板。
-//   - **只有 `state==='running'` 持续 status 轮询 / approve / confirm**；
-//     `idle` = 已建票待 begin（不轮询）；`done|failed|cancelled|expired|disposed` 终态。
-//   - 无会话由 Host 以 404 + ok:false + `E_MIMO_AUTH_SESSION_MISSING` 表达（不用 idle 冒充）。
-//   - **HTTP 非 2xx 一律在客户端强制 ok:false**（404/500 带 ok:true 的响应体不得越权）。
-//   - 取消/登出/关闭/卸载/替换旧会话都要**用捕获的快照**向 Host 发有界取消请求；
-//     本地 request epoch 与 Host generation **分开**推进（绝不伪造 ++Host generation）。
-//   - 不写 ConfigForm、不覆盖手工 mimoCookie、不接入现余额轮询。
-//   - balance 只按合同白名单渲染：主 `balance` 必须是 finite 且 >=0，否则**整体 null**。
-//   - QR 只接受 `image/png` / `image/jpeg` **二进制**；Response content-type 必须与
-//     Blob 类型一致；不接受 `image/*`、无 type blob、JSON data: URL。
-// ===========================================================================
-var MIMO_AUTH_ROUTE = '/api/plan-usage-mimo-auth'
-var MIMO_AUTH_QR_ROUTE = '/api/plan-usage-mimo-qr'
-var MIMO_AUTH_ACTIONS = { start: true, begin: true, status: true, approve: true, deny: true, confirm: true, confirmIdentity: true, readBalance: true, cancel: true, logout: true }
-var MIMO_AUTH_VERDICTS = { match: true, mismatch: true, later: true }
-/** [remembered 2026-11-07] 「记住登录」managed 模式动作：与旧动作并列，走同一条 owner-only 路由。 */
-var MIMO_REMEMBERED_ACTIONS = {
-  rememberedStart: true, rememberedBegin: true, rememberedStatus: true, rememberedQr: true,
-  rememberedApprove: true, rememberedDeny: true, rememberedConfirm: true, rememberedCancel: true,
-  rememberedPause: true, rememberedResume: true, rememberedForget: true, rememberedRetry: true,
-  // [refresh 2026-11-10] 详情 false→true 主动读一次：Host 白名单（rememberedFieldSets）里的
-  // `[action, bootEpoch, generation]`。**漏这一项会被本地白名单直接拒绝**（E_UNKNOWN、零请求），
-  // 强刷看起来"什么都没发生"。必须与 plans/mimo-auth/routes.js 的 REMEMBERED_ACTIONS 同步。
-  rememberedRefresh: true
-}
-var MIMO_REMEMBERED_STATES = {
-  booting: true, disabled: true, unsupported: true, unreadable: true, empty: true,
-  authorizing: true, awaiting_confirmation: true, restoring: true, verified: true,
-  paused: true, failed: true, stopped: true
-}
-/**
- * [remembered 失败可见性 2026-11-07] 失败「原因码」只允许协议内核的**固定枚举**
- * （= plans/mimo-auth/console-protocol.js 的 `CONSOLE_PROTOCOL_CODES` 的 value 集合）。
- * 浏览器半是零构建单文件、不能 import 那支模块，因此这里镜像一份**字符串值**；
- * 改协议码表时必须同步改这里（`tools/test-mimo-remembered-error-client.mjs` 会逐值比对，漏同步会红）。
- * 未知 / 自造 / 自由文本一律丢弃：不落 UI、不进 DOM、不当原因显示。
- */
-var MIMO_REMEMBERED_REASON_CODE_LIST = [
-  'E_MIMO_CONSOLE_FLOW', 'E_MIMO_AUTH_CANCELLED', 'E_MIMO_AUTH_TARGET_EXPIRED',
-  'E_MIMO_AUTH_TARGET_INVALID', 'E_MIMO_CONSOLE_BUSY', 'E_MIMO_CONSOLE_NOT_VERIFIED',
-  'E_MIMO_CONSOLE_UNSUPPORTED', 'E_MIMO_CONSOLE_JSON_UNSUPPORTED', 'E_MIMO_CONSOLE_COOKIE_HEADER_LIMIT',
-  'E_MIMO_CONSOLE_LP_COOKIE_DOMAIN', 'E_MIMO_CONSOLE_LP_COOKIE_POLICY', 'E_MIMO_CONSOLE_LP_COOKIE_EMPTY',
-  'E_MIMO_CONSOLE_LP_COOKIE_CRLF', 'E_MIMO_CONSOLE_LP_COOKIE_TOO_LARGE',
-  'E_MIMO_CONSOLE_LP_COOKIE_BAD_NAME', 'E_MIMO_CONSOLE_LP_COOKIE_BAD_VALUE',
-  'E_MIMO_CONSOLE_LP_COOKIE_VALUE_FORMAT', 'E_MIMO_CONSOLE_LP_COOKIE_EXPIRY_FORMAT',
-  'E_MIMO_CONSOLE_LP_COOKIE_STORE_FULL', 'E_MIMO_CONSOLE_LP_COOKIE_BAD_SOURCE',
-  'E_MIMO_CONSOLE_LP_COOKIE_DUP_DOMAIN', 'E_MIMO_CONSOLE_LP_COOKIE_DUP_VALUE',
-  'E_MIMO_CONSOLE_LP_COOKIE_COUNT_LIMIT', 'E_MIMO_CONSOLE_LP_COOKIE_PARSE_ERROR',
-  'E_MIMO_CONSOLE_ACCOUNT_COOKIE_EMPTY', 'E_MIMO_CONSOLE_ACCOUNT_COOKIE_CRLF',
-  'E_MIMO_CONSOLE_ACCOUNT_COOKIE_TOO_LARGE', 'E_MIMO_CONSOLE_ACCOUNT_COOKIE_BAD_NAME',
-  'E_MIMO_CONSOLE_ACCOUNT_COOKIE_BAD_VALUE', 'E_MIMO_CONSOLE_ACCOUNT_COOKIE_VALUE_FORMAT',
-  'E_MIMO_CONSOLE_ACCOUNT_COOKIE_EXPIRY_FORMAT', 'E_MIMO_CONSOLE_ACCOUNT_COOKIE_STORE_FULL',
-  'E_MIMO_CONSOLE_ACCOUNT_COOKIE_BAD_SOURCE', 'E_MIMO_CONSOLE_ACCOUNT_COOKIE_DUP_DOMAIN',
-  'E_MIMO_CONSOLE_ACCOUNT_COOKIE_DUP_VALUE', 'E_MIMO_CONSOLE_ACCOUNT_COOKIE_COUNT_LIMIT',
-  'E_MIMO_CONSOLE_ACCOUNT_COOKIE_PARSE_ERROR', 'E_MIMO_CONSOLE_ACCOUNT_COOKIE_DOMAIN',
-  'E_MIMO_CONSOLE_ACCOUNT_COOKIE_POLICY', 'E_MIMO_CONSOLE_PLATFORM_COOKIE_DOMAIN',
-  'E_MIMO_CONSOLE_PLATFORM_COOKIE_POLICY', 'E_MIMO_CONSOLE_PLATFORM_COOKIE_EMPTY',
-  'E_MIMO_CONSOLE_PLATFORM_COOKIE_CRLF', 'E_MIMO_CONSOLE_PLATFORM_COOKIE_TOO_LARGE',
-  'E_MIMO_CONSOLE_PLATFORM_COOKIE_BAD_NAME', 'E_MIMO_CONSOLE_PLATFORM_COOKIE_BAD_VALUE',
-  'E_MIMO_CONSOLE_PLATFORM_COOKIE_VALUE_FORMAT', 'E_MIMO_CONSOLE_PLATFORM_COOKIE_EXPIRY_FORMAT',
-  'E_MIMO_CONSOLE_PLATFORM_COOKIE_STORE_FULL', 'E_MIMO_CONSOLE_PLATFORM_COOKIE_BAD_SOURCE',
-  'E_MIMO_CONSOLE_PLATFORM_COOKIE_DUP_DOMAIN', 'E_MIMO_CONSOLE_PLATFORM_COOKIE_DUP_VALUE',
-  'E_MIMO_CONSOLE_PLATFORM_COOKIE_COUNT_LIMIT', 'E_MIMO_CONSOLE_PLATFORM_COOKIE_PARSE_ERROR',
-  'E_MIMO_CONSOLE_LP_SEED_CONFLICT', 'E_MIMO_CONSOLE_LP_CHALLENGE', 'E_MIMO_CONSOLE_SSO_CHALLENGE',
-  'E_MIMO_CONSOLE_SSO_RESPONSE_UNSUPPORTED', 'E_MIMO_CONSOLE_SSO_TARGET_UNSUPPORTED',
-  // [sso-target-shape 2026-11-09] 只新增**分类枚举**镜像（与 protocol 端同名同值），old generic 保留。
-  'E_MIMO_CONSOLE_SSO_TARGET_HTTP_PLATFORM_STS', 'E_MIMO_CONSOLE_SSO_TARGET_HTTP_PLATFORM_OTHER',
-  'E_MIMO_CONSOLE_SSO_TARGET_HTTPS_PLATFORM_API_STS', 'E_MIMO_CONSOLE_SSO_TARGET_HTTPS_PLATFORM_STS_SLASH',
-  'E_MIMO_CONSOLE_SSO_TARGET_HTTPS_PLATFORM_OTHER', 'E_MIMO_CONSOLE_SSO_TARGET_ACCOUNT_OTHER',
-  'E_MIMO_CONSOLE_SSO_TARGET_OTHER_HOST', 'E_MIMO_CONSOLE_SSO_TARGET_UNSAFE_AUTHORITY',
-  'E_MIMO_CONSOLE_SSO_TARGET_OTHER_SCHEME',
-  'E_MIMO_CONSOLE_LP_TARGET_UNSUPPORTED', 'E_MIMO_CONSOLE_LP_SID_UNSUPPORTED',
-  'E_MIMO_CONSOLE_LP_CALLBACK_UNSUPPORTED', 'E_MIMO_CONSOLE_LP_SCHEMA_UNSUPPORTED',
-  'E_MIMO_CONSOLE_LP_HOST_UNSUPPORTED', 'E_MIMO_CONSOLE_RESPONSE_SIZE', 'E_MIMO_CONSOLE_RESPONSE_REDIRECT',
-  'E_MIMO_AUTH_REJECTED', 'E_MIMO_CONSOLE_AUTH_REQUIRED', 'E_MIMO_CONSOLE_AUTH_RESULT_SEED_MISSING',
-  'E_MIMO_CONSOLE_AUTH_RESULT_ID_INVALID', 'E_MIMO_CONSOLE_ACCOUNT_CREDENTIAL_MISSING',
-  'E_MIMO_CONSOLE_PLATFORM_CREDENTIAL_MISSING', 'E_MIMO_CONSOLE_IDENTITY_MISMATCH',
-  'E_MIMO_CONSOLE_BALANCE_PARSE', 'E_MIMO_CONSOLE_TRANSIENT', 'E_MIMO_CONSOLE_CONFIRM_REQUIRED'
-]
-var MIMO_REMEMBERED_REASON_CODES = {}
-for (var mimoReasonIndex = 0; mimoReasonIndex < MIMO_REMEMBERED_REASON_CODE_LIST.length; mimoReasonIndex += 1) {
-  MIMO_REMEMBERED_REASON_CODES[MIMO_REMEMBERED_REASON_CODE_LIST[mimoReasonIndex]] = true
-}
-/** 失败阶段只允许四个固定值（与 Host 侧 `FAILURE_STAGES` 同一枚举）。 */
-var MIMO_REMEMBERED_FAILURE_STAGES = { restore: true, login: true, read: true, store: true }
-var MIMO_AUTH_STATES = { idle: true, running: true, done: true, failed: true, cancelled: true, expired: true, disposed: true }
-var MIMO_AUTH_TERMINAL = { done: true, failed: true, cancelled: true, expired: true, disposed: true }
-var MIMO_AUTH_QR_TYPES = { 'image/png': true, 'image/jpeg': true }
-var MIMO_AUTH_CODES = {
-  E_NONE: true,
-  E_MIMO_AUTH_UNAVAILABLE: true,
-  E_MIMO_AUTH_BOOT_STALE: true,
-  E_MIMO_AUTH_BAD_REQUEST: true,
-  E_MIMO_AUTH_METHOD: true,
-  E_MIMO_AUTH_CONTENT_TYPE: true,
-  E_MIMO_AUTH_BODY_TOO_LARGE: true,
-  E_MIMO_AUTH_SESSION_ACTIVE: true,
-  E_MIMO_AUTH_SESSION_MISSING: true,
-  E_MIMO_AUTH_SESSION_EXPIRED: true,
-  E_MIMO_AUTH_STALE_TICKET: true,
-  E_MIMO_AUTH_STALE_GENERATION: true,
-  E_MIMO_AUTH_BEGIN_DUPLICATE: true,
-  E_MIMO_AUTH_APPROVAL_MISSING: true,
-  E_MIMO_AUTH_APPROVAL_UNKNOWN: true,
-  E_MIMO_AUTH_APPROVAL_EXPIRED: true,
-  E_MIMO_AUTH_TARGET_INVALID: true,
-  E_MIMO_AUTH_CANCELLED: true,
-  E_MIMO_AUTH_FLOW: true,
-  E_MIMO_AUTH_QR_UNAVAILABLE: true,
-  E_URL_PURPOSE_MISMATCH: true,
-  // [dynamic approval] 本机固定诊断码（不来自 Host，也不透传任何 URL）
-  E_MIMO_AUTH_DYNAMIC_OPTIN_REQUIRED: true,
-  E_MIMO_AUTH_DYNAMIC_TARGET_INVALID: true,
-  // [post-QR local] 本机/契约固定码（身份、用途与 receipt schema）
-  E_MIMO_AUTH_POSTQR_DISABLED: true,
-  E_MIMO_AUTH_IDENTITY_MISMATCH: true,
-  E_CREDENTIAL_FIELD_INVALID: true,
-}
-var MIMO_AUTH_POLL_MS = 1500
-/** 取消请求的独立有界 TTL（不参与轮询 timer；超时 abort 并如实报告未确认）。 */
-var MIMO_AUTH_CANCEL_TIMEOUT_MS = 2500
-var MIMO_AUTH_TEXT = {
-  entry: '登录 MiMo（扫码）',
-  closedHint: '登录后可自动读取余额',
-  notice: '实验性临时入口，不是标准 OAuth：不读取系统浏览器 Cookie、不把票写入任何配置、不接入余额轮询。',
-  opening: '正在请求本机认证能力…',
-  unsupported: '本机暂不支持该实验性登录（宿主能力未就绪）；其它渠道与手工 Cookie 不受影响。',
-  forbidden: '宿主拒绝了这次请求（需要 owner 授权）。',
-  failed: '这次登录没有完成。',
-  cancelUnconfirmed: '已停止本地工作；Host 未确认停止（按 TTL 兜底，不自动重试）。',
-  idleHint: '点击会先在本机内存建立一次性登录会话（不联系任何厂商）。',
-  logoutUnconfirmed: '已退出本地会话；Host 未确认结束（按 TTL 兜底，不自动重试）。',
-  created: '会话已创建，尚未开始官方二维码流程（仅本机内存，未写入任何配置）。',
-  running: '官方二维码流程进行中。二维码只在本面板显示。',
-  qrPending: '二维码待显示',
-  qrLoading: '二维码加载中…',
-  qrAlt: '官方二维码（本机授权 UI 内显示）',
-  approvalTitle: '本次登录目标（宿主显示字段）',
-  approvalApprove: '批准此目标',
-  confirmTitle: '余额核对结果',
-  confirmMatch: '一致',
-  confirmMismatch: '不一致',
-  confirmLater: '稍后再说',
-  done: '宿主报告本次登录流程已完成。',
-  cancelled: '登录已取消。',
-  balanceTitle: '余额（宿主白名单字段）',
-  cancel: '取消',
-  close: '关闭',
-  logout: '退出登录',
-  start: '开始登录会话',
-  begin: '加载官方二维码流程',
-  retry: '重新开始',
-  stateIdle: '已创建待开始',
-  /** failure 可见性文案（只拼固定枚举 token，绝不拼上游自由文本）。 */
-  failureDetail: '失败码',
-  hostStage: 'Host 流程阶段',
-  stageUnknown: 'unknown',
-  diagPurpose: '被拒用途',
-  diagReason: '拒绝原因',
-  diagHostClass: '域名类别（不是完整域名）',
-  dynamicOptIn: '本次会话允许“征求动态目标批准”（默认关闭）',
-  dynamicOptInHint: '只提出待批准目标，不自动访问、不是标准 OAuth；仅在本次会话内有效，关闭/注销即清零。',
-  postQrConsent: '本次会话允许继续到“本人身份核对”（默认关闭，仅本地模拟）',
-  postQrConsentHint: '仅本地模拟：真实登录后续链未就绪（producer 硬 disabled），不会发起真实余额请求；只表示本机意图，不等于接收登录票或同意读取余额。',
-  postQrUserLabel: '预期 userId（仅本机，算完即清）',
-  postQrCidLabel: '预期 cUserId（仅本机，算完即清）',
-  identityTitle: 'Host 报告的身份（遮蔽，仅展示）',
-  identityPending: '已提交本次意图，等待 Host 确认…',
-  identityMine: '这是我本人',
-  identityNotMine: '不是我',
-  readBalanceOnce: '读取一次余额（只读，不兑换）',
-  localOnlyNote: '本机模拟模式：真实链未就绪',
-  postQrDisabled: '本机不支持该后续链（crypto/类型/预期来源不足），已停用',
-  dynamicTitle: '待批准的动态目标（仅这一次）',
-  dynamicMethod: '方法',
-  dynamicPurposeLabel: '用途',
-  dynamicPurposeLongPoll: 'longPoll',
-  approveOnce: '允许这一次',
-  refuseOnce: '拒绝（取消本次会话）',
-  dynamicNoOptIn: '未启用本次动态批准：该目标不会被请求。',
-  dynamicTargetInvalid: '目标形态不合规：已拒绝显示与请求。',
-  localAction: '本机动作（不是 Host 阶段/根因）',
-  qrFailed: '二维码获取失败',
-}
-function mimoAuthHex32(value) {
-  return typeof value === 'string' && /^[0-9a-fA-F]{32}$/.test(value)
-}
-/** bootEpoch 是 **hex32 opaque string**（小写）：只接受、原样透传，不做 Number/解析/归一化。 */
-function mimoAuthBootEpoch(value) {
-  return typeof value === 'string' && /^[0-9a-f]{32}$/.test(value) ? value : null
-}
-/**
- * `failure` 协议（.diagnostics/mimo-failure-20261031/FAILURE-CONTRACT.md）：
- * `null | {code, stage}`；status 外层 ok/code 仍只表示接口层结果（可 E_NONE）。
- * code 用 Host 固定的 vendor/fallback 白名单；stage 只有 flow|qr|balance|unknown。
- * 其余（含自由文本、URL、错误栈、金额）一律折叠：code→E_MIMO_AUTH_FLOW，stage→unknown。
- */
-var MIMO_AUTH_HOST_FAILURE_CODES = {
-  E_MIMO_AUTH_FLOW: true,
-  E_FLOW_ARGS_INVALID: true,
-  E_RUN_ALREADY_ACTIVE: true,
-  E_CALL_BUDGET: true,
-  E_BUDGET_EXHAUSTED: true,
-  E_ABORTED: true,
-  E_DISPLAY_CANCELLED: true,
-  E_DISPLAY_ERROR: true,
-  E_NETWORK: true,
-  E_STATUS_UNEXPECTED: true,
-  E_DYNAMIC_URL_REJECTED: true,
-  E_URL_PURPOSE_MISMATCH: true,
-  E_URL_NOT_REGISTERED: true,
-  E_RESPONSE_NOT_JSON: true,
-  E_RESPONSE_TOO_LARGE: true,
-  E_NEEDS_HUMAN_VERIFICATION: true,
-  E_QR_IMAGE_INVALID: true,
-  E_QR_IMAGE_TOO_LARGE: true,
-  E_SID_MISMATCH: true,
-  E_CREDENTIAL_FIELD_INVALID: true,
-  // [post-QR local] 身份/用途相关的固定拒因（HOST-CONTRACT §3/§4）
-  E_MIMO_AUTH_POSTQR_DISABLED: true,
-  E_MIMO_AUTH_IDENTITY_MISMATCH: true,
-  E_PASS_TOKEN_REJECTED: true,
-  E_SSO_INCOMPLETE: true,
-  E_REDIRECT_LIMIT: true,
-  E_QR_GATE_INCOMPLETE: true,
-  E_SET_COOKIE_REJECTED: true,
-  E_COOKIE_HEADER_INCOMPLETE: true,
-  E_BALANCE_HTTP: true,
-  E_BALANCE_CODE: true,
-  E_BALANCE_PARSE: true,
-  E_BALANCE_INPUT_INVALID: true,
-  E_STAGE_INCOMPLETE: true,
-  E_TARGET_NOT_APPROVED: true,
-  E_REQUEST_TIMEOUT: true,
-}
-/** Host stage 只有四个值；未知/非字符串 → unknown（不发明 qr-image 等更细值）。 */
-var MIMO_AUTH_HOST_STAGES = { flow: true, qr: true, balance: true, unknown: true }
-/**
- * `failure.diagnostic` 的三个固定枚举（vendor 原名，不做同义改名）：
- * rejectedPurpose / rejectedReason / hostClass；未知或非 string → `unknown`。
- * 表保持普通字面量（冻结由 Host 侧负责），不做 freeze 包装；多余字段一律丢弃。
- */
-var MIMO_AUTH_DIAG_PURPOSES = {
-  serviceLogin: true, callback: true, qrImage: true, longPoll: true, scanReceipt: true, ssoLocation: true, unknown: true,
-}
-var MIMO_AUTH_DIAG_REASONS = { host: true, purpose: true, unknown: true }
-var MIMO_AUTH_DIAG_HOST_CLASSES = {
-  'account-exact': true, 'platform-exact': true, 'account-subdomain': true, other: true, unknown: true,
-}
-function mimoAuthDiagEnum(value, table) {
-  return typeof value === 'string' && table[value] === true ? value : 'unknown'
-}
-/** Host `diagnostic`：`null` 或 `{rejectedPurpose, rejectedReason, hostClass}`（只这三个键）。 */
-function mimoAuthDiagnosticOf(raw) {
-  if (raw === null || raw === undefined || typeof raw !== 'object') return null
-  // 与 Host `normalizeDiagnostic` 一致：数组不是对象形态，直接拒绝。
-  if (Array.isArray(raw)) return null
-  return {
-    rejectedPurpose: mimoAuthDiagEnum(raw.rejectedPurpose, MIMO_AUTH_DIAG_PURPOSES),
-    rejectedReason: mimoAuthDiagEnum(raw.rejectedReason, MIMO_AUTH_DIAG_REASONS),
-    hostClass: mimoAuthDiagEnum(raw.hostClass, MIMO_AUTH_DIAG_HOST_CLASSES),
-  }
-}
-/**
- * Host `failure.code` **专用**映射：只认 Host 固定白名单；表外（包括本机码
- * `E_MIMO_AUTH_QR_UNAVAILABLE` / `E_MIMO_AUTH_BOOT_STALE` / `E_NONE`）→ `E_MIMO_AUTH_FLOW`。
- * 表格保持普通字面量（真正冻结由 Host 侧负责），不额外的 freeze 包装冒 immutable。
- */
-function mimoAuthHostFailureCode(value) {
-  return typeof value === 'string' && MIMO_AUTH_HOST_FAILURE_CODES[value] === true ? value : 'E_MIMO_AUTH_FLOW'
-}
-/**
- * **本机**自证错误码（HTTP 层 / 取图 / begin / 传输）显示用：只认本文件的本机固定表，
- * 不参与 Host `failure.code` 的解析。
- */
-function mimoAuthLocalCode(value) {
-  if (typeof value === 'string' && value !== 'E_NONE' && MIMO_AUTH_CODES[value] === true) return value
-  return 'E_MIMO_AUTH_FLOW'
-}
-function mimoAuthFailureStage(value) {
-  return typeof value === 'string' && MIMO_AUTH_HOST_STAGES[value] === true ? value : 'unknown'
-}
-function mimoAuthSafeInt(value) {
-  return typeof value === 'number' && isFinite(value) && Math.floor(value) === value && value > 0 && value <= 9007199254740991
-}
-function mimoAuthVisibleText(value, max) {
-  if (typeof value !== 'string') return ''
-  var cleaned = value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim()
-  return cleaned.length > max ? cleaned.slice(0, max) + '…' : cleaned
-}
-function mimoAuthCodeOf(raw) {
-  if (typeof raw !== 'string' || raw.length === 0) return ''
-  return MIMO_AUTH_CODES[raw] === true ? raw : 'E_UNKNOWN'
-}
-/**
- * 动态 longPoll 候选目标的**纯 origin 校验**（Host 合同未到前先独立成型，不接 wire 字段）。
- * 只接受：https、443（显式或省略）、无 userinfo/path/query/fragment、全 ASCII 小写、无尾点、
- * 非 IPv4/IPv6、非 punycode(IDN)，且必须是 `<1..3 标签>.account.xiaomi.com` 的**精确**形态。
- * 不截断：超长或不合规直接拒绝（避免"截断后不同域显示相同"）。
- */
-var MIMO_AUTH_DYNAMIC_BASE = 'account.xiaomi.com'
-var MIMO_AUTH_DYNAMIC_MIN_SUB = 1
-var MIMO_AUTH_DYNAMIC_MAX_SUB = 3
-var MIMO_AUTH_DYNAMIC_MAX_LEN = 253
-/** 每个 DNS 标签的上限（含 prefix 子域标签与 base 各标签），与 Host 边界一致。 */
-var MIMO_AUTH_DYNAMIC_LABEL_MAX = 63
-function mimoAuthDynamicOrigin(value) {
-  if (typeof value !== 'string') return ''
-  var raw = value.trim()
-  if (raw.length === 0 || raw.length > MIMO_AUTH_DYNAMIC_MAX_LEN) return ''
-  if (/[\u0000-\u0020\u007f]/.test(raw)) return ''
-  var matched = /^https:\/\/([^/?#@\\]+)\/?$/.exec(raw)
-  if (matched === null) return ''
-  var authority = matched[1].toLowerCase()
-  var host = authority
-  var portMatch = /^(.*):(\d{1,5})$/.exec(authority)
-  if (portMatch !== null) {
-    host = portMatch[1]
-    if (portMatch[2] !== '443') return ''
-  }
-  if (host.length === 0 || host.length > MIMO_AUTH_DYNAMIC_MAX_LEN) return ''
-  if (host.charAt(host.length - 1) === '.') return ''
-  if (host === 'xn--' || host.indexOf('xn--') === 0 || host.indexOf('.xn--') >= 0) return ''
-  if (host.indexOf(':') >= 0 || host.indexOf('[') >= 0) return ''
-  if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) return ''
-  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/.test(host)) return ''
-  // 逐标签 ≤63（既含 prefix 子域标签，也含 base 的每个标签）；否则 Host 会拒，UI 不得先放行。
-  var allLabels = host.split('.')
-  for (var labelIndex = 0; labelIndex < allLabels.length; labelIndex += 1) {
-    if (allLabels[labelIndex].length === 0 || allLabels[labelIndex].length > MIMO_AUTH_DYNAMIC_LABEL_MAX) return ''
-  }
-  if (host !== MIMO_AUTH_DYNAMIC_BASE
-    && host.slice(-(MIMO_AUTH_DYNAMIC_BASE.length + 1)) !== '.' + MIMO_AUTH_DYNAMIC_BASE) return ''
-  var subPart = host === MIMO_AUTH_DYNAMIC_BASE ? '' : host.slice(0, host.length - MIMO_AUTH_DYNAMIC_BASE.length - 1)
-  var subLabels = subPart === '' ? [] : subPart.split('.')
-  if (subLabels.length < MIMO_AUTH_DYNAMIC_MIN_SUB || subLabels.length > MIMO_AUTH_DYNAMIC_MAX_SUB) return ''
-  return 'https://' + host
-}
-function mimoAuthStateOf(raw) {
-  return typeof raw === 'string' && MIMO_AUTH_STATES[raw] === true ? raw : ''
-}
-function mimoAuthNonNegNumber(value) {
-  return typeof value === 'number' && isFinite(value) && value >= 0
-}
-/**
- * `status.balance` 白名单：`null` 或 `{balance, cashBalance, giftBalance, currency}`。
- * **主 `balance` 必须是 finite 且 >=0**，否则整体为 `null`（不允许只显示现金/赠送）。
- * 辅助字段沿用旧口径：无效即 `null`；不 `Number(string)`、不钳零、不默认 0。
- */
-function mimoAuthBalanceOf(raw) {
-  if (raw === null || raw === undefined || typeof raw !== 'object') return null
-  if (!mimoAuthNonNegNumber(raw.balance)) return null
-  var out = { balance: raw.balance, cashBalance: null, giftBalance: null, currency: '' }
-  if (mimoAuthNonNegNumber(raw.cashBalance)) out.cashBalance = raw.cashBalance
-  if (mimoAuthNonNegNumber(raw.giftBalance)) out.giftBalance = raw.giftBalance
-  if (typeof raw.currency === 'string' && raw.currency.length > 0 && raw.currency.length <= 8) out.currency = raw.currency
-  return out
-}
-function mimoAuthPick(raw) {
-  var out = {
-    ok: false, supported: false, code: '', bootEpoch: null, flow: '',
-    ticketId: null, generation: null, expiresAt: null,
-    state: '', remainingMs: null, hasQr: false,
-    approvalId: '', approvalOrigin: '', approvalPurpose: '', approvalMethod: '', approvalExpiresAt: null,
-    identityMasked: '',
-    awaitingBalanceMatch: false, confirmedByUser: false,
-    balance: null,
-    failureCode: '', failureStage: '', diagnostic: null,
-    status: 0,
-  }
-  if (raw === null || raw === undefined || typeof raw !== 'object') return out
-  if (raw.ok === true) out.ok = true
-  if (raw.supported === true) out.supported = true
-  out.code = mimoAuthCodeOf(raw.code)
-  out.bootEpoch = mimoAuthBootEpoch(raw.bootEpoch)
-  if (typeof raw.flow === 'string' && raw.flow.length <= 32) out.flow = raw.flow
-  if (mimoAuthHex32(raw.ticketId)) out.ticketId = String(raw.ticketId).toLowerCase()
-  if (mimoAuthSafeInt(raw.generation)) out.generation = raw.generation
-  if (typeof raw.expiresAt === 'number' && isFinite(raw.expiresAt)) out.expiresAt = raw.expiresAt
-  out.state = mimoAuthStateOf(raw.state)
-  if (typeof raw.remainingMs === 'number' && isFinite(raw.remainingMs) && raw.remainingMs >= 0) out.remainingMs = raw.remainingMs
-  if (raw.hasQr === true) out.hasQr = true
-  if (raw.awaitingBalanceMatch === true) out.awaitingBalanceMatch = true
-  if (raw.confirmedByUser === true) out.confirmedByUser = true
-  out.balance = mimoAuthBalanceOf(raw.balance)
-  // [post-QR local] Host 身份投影：只取非密 mask（1..32），其余形状一律丢。
-  if (raw.identity !== null && raw.identity !== undefined && typeof raw.identity === 'object'
-    && Array.isArray(raw.identity) !== true) {
-    var maskedLabel = raw.identity.maskedLabel
-    if (typeof maskedLabel === 'string' && maskedLabel.length >= 1 && maskedLabel.length <= 32) {
-      out.identityMasked = maskedLabel
-    }
-  }
-  if (raw.failure !== null && raw.failure !== undefined && typeof raw.failure === 'object') {
-    out.failureCode = mimoAuthHostFailureCode(raw.failure.code)
-    out.failureStage = mimoAuthFailureStage(raw.failure.stage)
-    // 合同：只有 E_URL_PURPOSE_MISMATCH + diagnostic 是对象时才重建三个固定枚举；其余一律 null。
-    out.diagnostic = out.failureCode === 'E_URL_PURPOSE_MISMATCH'
-      ? mimoAuthDiagnosticOf(raw.failure.diagnostic)
-      : null
-  }
-  if (raw.approval !== null && raw.approval !== undefined && typeof raw.approval === 'object') {
-    var approvalId = raw.approval.approvalId
-    if (typeof approvalId === 'string' && approvalId.length > 0 && approvalId.length <= 64) out.approvalId = approvalId
-    // originText 必须完整：**不截断**（超出 DNS 上限由 origin 校验拒绝），也不含 path/query/ticket。
-    out.approvalOrigin = typeof raw.approval.originText === 'string' ? raw.approval.originText.trim() : ''
-    out.approvalMethod = raw.approval.method === 'GET' ? 'GET' : ''
-    out.approvalPurpose = raw.approval.purpose === 'longPoll' ? 'longPoll' : ''
-    if (typeof raw.approval.expiresAt === 'number' && isFinite(raw.approval.expiresAt)) out.approvalExpiresAt = raw.approval.expiresAt
-  }
-  // [remembered 2026-11-07] managed 模式快照（同样逐字段重建；只有待确认态带候选 ID）
-  out.rememberedSupported = raw.rememberedSupported === true
-  out.remembered = mimoRememberedOf(raw.remembered)
-  return out
-}
-/** [remembered] 空快照（未启用/未观察到时用可信 absent，不是通信故障）。 */
-function mimoRememberedEmpty() {
-  return {
-    supported: false, managed: false, state: '', code: '', revision: 0,
-    authId: null, generation: 0, hasQr: false, candidate: null, identityMasked: '',
-    balance: null, fetchedAt: null, paused: false, intervalMs: null,
-    readFailures: 0, freshness: null,
-    storageSupported: false, storageCode: '', stats: null, approval: null,
-    /** 失败真因（协议固定码）+ 失败阶段：默认空/null，只有 Host 投影给了白名单值才填。 */
-    reasonCode: '', failureStage: null,
-    /** 交接摘要（5 字段关集合）；默认 null —— 非失败态/非法/未知一律 null。 */
-    handoffSummary: null,
-    canBegin: false, canConfirm: false, canPause: false, canResume: false,
-    canForget: false, canRetry: false
-  }
-}
-/**
- * [remembered] managed 快照白名单重建：不透 passToken / rawURL / query / seed / 自由文本。
- * `candidate` 是**唯一**允许出现原始账号 ID 的位置，且只有 owner 的待确认态才有。
- */
-function mimoRememberedOf(raw) {
-  var out = mimoRememberedEmpty()
-  if (raw === null || raw === undefined || typeof raw !== 'object' || Array.isArray(raw)) return out
-  if (raw.supported === true) out.supported = true
-  if (raw.managed === true) out.managed = true
-  if (typeof raw.state === 'string' && MIMO_REMEMBERED_STATES[raw.state] === true) out.state = raw.state
-  if (typeof raw.code === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(raw.code)) out.code = raw.code
-  if (typeof raw.revision === 'number' && isFinite(raw.revision) && raw.revision >= 0) out.revision = raw.revision
-  if (typeof raw.authId === 'string' && /^[a-f0-9]{32}$/.test(raw.authId)) out.authId = raw.authId
-  if (typeof raw.generation === 'number' && isFinite(raw.generation) && raw.generation >= 0) out.generation = raw.generation
-  if (raw.hasQr === true) out.hasQr = true
-  if (raw.paused === true) out.paused = true
-  if (typeof raw.intervalMs === 'number' && isFinite(raw.intervalMs) && raw.intervalMs > 0) out.intervalMs = raw.intervalMs
-  if (raw.storage !== null && typeof raw.storage === 'object') {
-    out.storageSupported = raw.storage.supported === true
-    if (typeof raw.storage.code === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(raw.storage.code)) out.storageCode = raw.storage.code
-  }
-  if (raw.identity !== null && raw.identity !== undefined && typeof raw.identity === 'object'
-    && typeof raw.identity.maskedLabel === 'string' && raw.identity.maskedLabel.length >= 1
-    && raw.identity.maskedLabel.length <= 32) {
-    out.identityMasked = raw.identity.maskedLabel
-  }
-  out.balance = mimoAuthBalanceOf(raw.balance)
-  if (typeof raw.fetchedAt === 'number' && isFinite(raw.fetchedAt)) out.fetchedAt = raw.fetchedAt
-  if (typeof raw.readFailures === 'number' && Number.isInteger(raw.readFailures) && raw.readFailures >= 0 && raw.readFailures <= 5) out.readFailures = raw.readFailures
-  if (raw.freshness === 'fresh' || raw.freshness === 'stale' || raw.freshness === 'failed' || raw.freshness === 'paused') out.freshness = raw.freshness
-  if (raw.state === 'awaiting_confirmation' && raw.candidate !== null && typeof raw.candidate === 'object'
-    && raw.candidate.label === '小米账号ID'
-    && typeof raw.candidate.identifier === 'string' && raw.candidate.identifier.length >= 1
-    && raw.candidate.identifier.length <= 64 && !/[\u0000-\u001f]/.test(raw.candidate.identifier)) {
-    out.candidate = { label: '小米账号ID', identifier: raw.candidate.identifier }
-  }
-  if (raw.stats !== null && typeof raw.stats === 'object') {
-    var st = raw.stats
-    out.stats = {
-      readAttempts: typeof st.readAttempts === 'number' && st.readAttempts >= 0 ? st.readAttempts : 0,
-      readSuccesses: typeof st.readSuccesses === 'number' && st.readSuccesses >= 0 ? st.readSuccesses : 0,
-      refreshCount: typeof st.refreshCount === 'number' && st.refreshCount >= 0 ? st.refreshCount : 0,
-      restoreAttempts: typeof st.restoreAttempts === 'number' && st.restoreAttempts >= 0 ? st.restoreAttempts : 0,
-      restoreSuccesses: typeof st.restoreSuccesses === 'number' && st.restoreSuccesses >= 0 ? st.restoreSuccesses : 0,
-      transientStreak: typeof st.transientStreak === 'number' && st.transientStreak >= 0 ? st.transientStreak : 0,
-      renewalAttempts: typeof st.renewalAttempts === 'number' && st.renewalAttempts >= 0 ? st.renewalAttempts : 0,
-      renewalSuccesses: typeof st.renewalSuccesses === 'number' && st.renewalSuccesses >= 0 ? st.renewalSuccesses : 0
-    }
-  }
-  // [remembered] 审批只重建**四个固定字段**：不透 rawURL / query / source proof
-  if (raw.approval !== null && raw.approval !== undefined && typeof raw.approval === 'object') {
-    var ap = raw.approval
-    if (typeof ap.approvalId === 'string' && /^[a-f0-9]{32}$/.test(ap.approvalId)
-      && ap.purpose === 'consoleAuthResult' && ap.method === 'GET'
-      && typeof ap.origin === 'string' && /^[a-z0-9][a-z0-9.-]{0,253}$/i.test(ap.origin)) {
-      out.approval = { approvalId: ap.approvalId, origin: ap.origin, purpose: 'consoleAuthResult', method: 'GET' }
-    }
-  }
-  // 失败真因：**只认协议固定码**（关集合），未知/自造/自由文本一律留空；未知不猜、不映射、不落 DOM。
-  if (typeof raw.reasonCode === 'string' && MIMO_REMEMBERED_REASON_CODES[raw.reasonCode] === true) {
-    out.reasonCode = raw.reasonCode
-  }
-  if (typeof raw.failureStage === 'string' && MIMO_REMEMBERED_FAILURE_STAGES[raw.failureStage] === true) {
-    out.failureStage = raw.failureStage
-  }
-  // 交接摘要：只透 5 字段 sanitized 副本；未知/多余字段不 copy，非法即 null。
-  out.handoffSummary = mimoHandoffSummaryOf(raw.handoffSummary)
-  out.canBegin = raw.canBegin === true
-  out.canConfirm = raw.canConfirm === true
-  out.canPause = raw.canPause === true
-  out.canResume = raw.canResume === true
-  out.canForget = raw.canForget === true
-  out.canRetry = raw.canRetry === true
-  return out
-}
-/** 非 2xx 的固定 code 兜底（不带任何上游正文）。 */
-function mimoAuthHttpCode(status) {
-  if (status === 400) return 'E_MIMO_AUTH_BAD_REQUEST'
-  if (status === 403) return 'E_MIMO_AUTH_UNAVAILABLE'
-  if (status === 404) return 'E_MIMO_AUTH_SESSION_MISSING'
-  return 'E_UNKNOWN'
-}
-/**
- * 唯一文案出口：GET（capability，无 body）/ POST（白名单 action，严格 JSON）。
- * 只用 `globalThis.fetch`（同现有 `/api/plan-usage…` 的 owner 受保护通道）。
- */
-function mimoAuthRequest(payload, signal) {
-  var action = payload !== null && typeof payload === 'object' ? payload.action : undefined
-  var init = { credentials: 'same-origin', cache: 'no-store', redirect: 'error', headers: { accept: 'application/json' } }
-  if (action !== undefined) {
-    if (MIMO_AUTH_ACTIONS[action] !== true && MIMO_REMEMBERED_ACTIONS[action] !== true) {
-      var refused = mimoAuthPick(null)
-      refused.code = 'E_UNKNOWN'
-      return Promise.resolve(refused)
-    }
-    var body = { action: action }
-    if (typeof payload.bootEpoch === 'string') body.bootEpoch = payload.bootEpoch
-    if (typeof payload.ticketId === 'string') body.ticketId = payload.ticketId
-    if (typeof payload.generation === 'number') body.generation = payload.generation
-    // [remembered] pair 必需：严格 32 hex，非 hex 一律不发送（builder 不得丢字段）
-    if (typeof payload.authId === 'string' && /^[a-f0-9]{32}$/.test(payload.authId)) body.authId = payload.authId
-    if (typeof payload.approvalId === 'string') body.approvalId = payload.approvalId
-    // [remembered] 首扫只表示「本人同意扫一次码」：**不**携带任何 ID / 预期 / 原票。
-    if (payload.authConsent === true) body.authConsent = true
-    if (payload.consentVersion === 1) body.consentVersion = 1
-    // [remembered] confirm 的四项授权：服务端同样强制复核（UI 复选框不是凭据）
-    var CONSENT_KEYS = ['rememberConsent', 'autoRestore', 'autoReadBalance', 'autoRefresh']
-    for (var ci = 0; ci < CONSENT_KEYS.length; ci++) {
-      if (payload[CONSENT_KEYS[ci]] === true) body[CONSENT_KEYS[ci]] = true
-    }
-    if (MIMO_AUTH_VERDICTS[payload.verdict] === true) body.verdict = payload.verdict
-    // 合同：start 可选 boolean（省略=false）；只有显式 boolean 才发送。
-    if (typeof payload.allowDynamicLongPoll === 'boolean') body.allowDynamicLongPoll = payload.allowDynamicLongPoll
-    // [post-QR local] start 的三个精确字段：boolean + 固定 accountType + 64 hex digest（严格校验后才发）。
-    if (typeof payload.postQrConsent === 'boolean') body.postQrConsent = payload.postQrConsent
-    if (payload.expectedAccountType === 'mimo-platform') body.expectedAccountType = 'mimo-platform'
-    if (typeof payload.expectedIdentityDigest === 'string' && /^[0-9a-f]{64}$/.test(payload.expectedIdentityDigest)) {
-      body.expectedIdentityDigest = payload.expectedIdentityDigest
-    }
-    init.method = 'POST'
-    init.headers['content-type'] = 'application/json'
-    init.body = JSON.stringify(body)
-  }
-  if (signal !== undefined && signal !== null) init.signal = signal
-  var doFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch : null
-  if (doFetch === null) {
-    var noFetch = mimoAuthPick(null)
-    noFetch.code = 'E_MIMO_AUTH_UNAVAILABLE'
-    return Promise.resolve(noFetch)
-  }
-  return doFetch(MIMO_AUTH_ROUTE, init).then(function (res) {
-    var status = res !== null && res !== undefined && typeof res.status === 'number' ? res.status : 0
-    if (status === 403) {
-      var denied = mimoAuthPick(null)
-      denied.ok = false
-      denied.code = 'E_MIMO_AUTH_UNAVAILABLE'
-      denied.status = status
-      return denied
-    }
-    if (res === null || res === undefined || typeof res.json !== 'function') {
-      var bad = mimoAuthPick(null)
-      bad.ok = false
-      bad.code = mimoAuthHttpCode(status)
-      bad.status = status
-      return bad
-    }
-    return res.json().then(function (raw) {
-      var picked = mimoAuthPick(raw)
-      picked.status = status
-      // **非 2xx 一律 ok:false**：响应体里的 ok:true 不得越过这里。
-      if (status < 200 || status >= 300) {
-        picked.ok = false
-        if (picked.code === '' || picked.code === 'E_UNKNOWN') picked.code = mimoAuthHttpCode(status)
-      }
-      return picked
-    }, function () {
-      var rejected = mimoAuthPick(null)
-      rejected.ok = false
-      rejected.code = mimoAuthHttpCode(status)
-      rejected.status = status
-      return rejected
-    })
-  }, function (err) {
-    var failed = mimoAuthPick(null)
-    failed.ok = false
-    failed.code = err !== null && err !== undefined && err.name === 'AbortError' ? 'E_ABORTED' : 'E_MIMO_AUTH_UNAVAILABLE'
-    return failed
-  })
-}
-/**
- * 二维码资源（POST，一次性 take）。合同只允许 `image/png` / `image/jpeg` **二进制**：
- * Response content-type 必须在白名单内、Blob 自身 type 必须与之一致，才由本方创建 objectURL。
- */
-function mimoAuthRequestQr(payload, signal) {
-  var failedResult = { ok: false, code: 'E_MIMO_AUTH_QR_UNAVAILABLE', src: null, objectUrl: null }
-  var doFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch : null
-  if (doFetch === null) return Promise.resolve(failedResult)
-  var body = {}
-  if (payload !== null && typeof payload === 'object') {
-    if (typeof payload.bootEpoch === 'string') body.bootEpoch = payload.bootEpoch
-    if (typeof payload.ticketId === 'string') body.ticketId = payload.ticketId
-    if (typeof payload.generation === 'number') body.generation = payload.generation
-  }
-  var init = {
-    method: 'POST',
-    credentials: 'same-origin',
-    cache: 'no-store',
-    redirect: 'error',
-    headers: { accept: 'image/png, image/jpeg', 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  }
-  if (signal !== undefined && signal !== null) init.signal = signal
-  return doFetch(MIMO_AUTH_QR_ROUTE, init).then(function (res) {
-    if (res === null || res === undefined) return failedResult
-    var status = typeof res.status === 'number' ? res.status : 0
-    if (status < 200 || status >= 300) return failedResult
-    var headerType = ''
-    if (res.headers !== null && res.headers !== undefined && typeof res.headers.get === 'function') {
-      headerType = String(res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase()
-    }
-    if (MIMO_AUTH_QR_TYPES[headerType] !== true) return failedResult
-    if (typeof res.blob !== 'function' || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
-      return failedResult
-    }
-    return res.blob().then(function (blob) {
-      var blobType = blob !== null && blob !== undefined && typeof blob.type === 'string'
-        ? blob.type.split(';')[0].trim().toLowerCase() : ''
-      // 无 type / 类型与响应头不一致（含 SVG、JSON 伪装）一律拒绝。
-      if (blobType !== headerType || MIMO_AUTH_QR_TYPES[blobType] !== true) return failedResult
-      var url = URL.createObjectURL(blob)
-      return { ok: true, code: 'E_NONE', src: url, objectUrl: url }
-    }, function () { return failedResult })
-  }, function (err) {
-    return {
-      ok: false,
-      code: err !== null && err !== undefined && err.name === 'AbortError' ? 'E_ABORTED' : 'E_MIMO_AUTH_QR_UNAVAILABLE',
-      src: null,
-      objectUrl: null,
-    }
-  })
-}
-/**
- * [remembered 2026-11-07] 「记住登录」managed 面板（占位式独立组件，不改旧手动面板）。
- * 约束：首扫**无输入**；候选 ID 只在待确认态临时显示并随时清除；确认按钮 = 四项授权全 true
- * + consentVersion 1；取消是**纯本地**清（不写 tombstone）；全程不接收 raw ID / expected / secret。
- */
-/** 阶段枚举 → 中文标注（只四个固定值；未知一律空串，不猜）。 */
-function mimoRememberedStageText(stage) {
-  if (stage === 'restore') return '恢复登录'
-  if (stage === 'read') return '读取余额'
-  if (stage === 'login') return '登录校验'
-  if (stage === 'store') return '本地保存'
-  return ''
-}
-/**
- * 失败**附注**：只附加「阶段 / 原因」两个白名单字段，主码仍由调用方显示 `snap.code`。
- * 两者都为空时返回空串（不显示半截括注）；原因码在白名单之外时 picker 已丢弃，这里拿不到。
- */
-// [handoff-summary 2026-11-09] 交接摘要：**只** 5 个字段的关集合重建（无 URL/host/query/票/ID/自由文本）。
-var MIMO_HANDOFF_PATH_TOKENS = {
-  fe: true, pass: true, service: true, login: true, servicelogin: true, auth: true, notification: true,
-  security: true, password: true, phone: true, qr: true, qrlogin: true, qrcode: true, verify: true,
-  verification: true, identity: true, account: true, passport: true, callback: true, sts: true, api: true,
-  v1: true, v2: true, login2: true, loginurl: true, home: true, index: true, confirmation: true,
-  authorize: true, oauth: true, web: true, ui: true, other: true
-}
-var MIMO_HANDOFF_STATUS = { 200: true, 301: true, 302: true, 303: true, 307: true, 308: true }
-/** 只接受契约里的 5 字段；任何未知词/非法枚举/超界 ⇒ 整体 null（不猜、不截断成"像"）。 */
-function mimoHandoffSummaryOf(raw) {
-  if (raw === null || raw === undefined || typeof raw !== 'object' || Array.isArray(raw)) return null
-  var source = raw.source === 'header' || raw.source === 'json' ? raw.source : ''
-  if (source === '') return null
-  if (typeof raw.status !== 'number' || MIMO_HANDOFF_STATUS[raw.status] !== true) return null
-  var scheme = raw.scheme === 'http' || raw.scheme === 'https' || raw.scheme === 'other' ? raw.scheme : ''
-  if (scheme === '') return null
-  if (Array.isArray(raw.pathTokens) !== true || raw.pathTokens.length > 8) return null   // 允许 0..8：root 首页可能正是 []
-  var tokens = []
-  for (var i = 0; i < raw.pathTokens.length; i += 1) {
-    var t = raw.pathTokens[i]
-    if (typeof t !== 'string' || MIMO_HANDOFF_PATH_TOKENS[t] !== true) return null
-    tokens.push(t)
-  }
-  if (typeof raw.truncated !== 'boolean') return null
-  return { source: source, status: raw.status, scheme: scheme, pathTokens: tokens, truncated: raw.truncated }
-}
-/** 中文单行展示；`other` → `*`，truncated → 末尾 `/…`。**不是 href、不是 URL**。 */
-function mimoHandoffSummaryText(sum) {
-  if (sum === null || sum === undefined || typeof sum !== 'object') return ''
-  var labels = ''
-  for (var i = 0; i < sum.pathTokens.length; i += 1) {
-    labels += '/' + (sum.pathTokens[i] === 'other' ? '*' : sum.pathTokens[i])
-  }
-  if (labels === '') labels = '/'
-  if (sum.truncated === true) labels += '/…'
-  return '交接摘要：来源=' + (sum.source === 'header' ? '响应跳转' : 'JSON')
-    + '；HTTP=' + String(sum.status) + '；协议=' + String(sum.scheme) + '；路径标签=' + labels
-}
-function mimoRememberedReasonNote(snap) {
-  if (snap === null || snap === undefined || typeof snap !== 'object') return ''
-  var parts = []
-  var stageText = mimoRememberedStageText(snap.failureStage)
-  if (stageText !== '') parts.push('阶段：' + stageText)
-  if (typeof snap.reasonCode === 'string' && snap.reasonCode !== '') parts.push('原因：' + snap.reasonCode)
-  return parts.length === 0 ? '' : '（' + parts.join('；') + '）'
-}
-/** [0.10.3] 整行按钮（居中、与卡片其它按钮同款）。 */
-/**
- * [0.10.3 修复] 二维码一律用 **data: URL**：blob URL 会在卸载时被 revoke，
- * 重挂载后缓存里的地址已失效（这就是「重开设置页只剩 alt 文字」的根因）。
- * 字节转二进制字符串按 0x8000 分块，避免 apply 超长参数栈；二维码通常 1–3 KB。
- */
-function mimoBytesToBase64(bytes) {
-  if (bytes === null || bytes === undefined) return ''
-  var arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
-  var bin = ''
-  var CHUNK = 0x8000
-  for (var i = 0; i < arr.length; i += CHUNK) {
-    bin += String.fromCharCode.apply(null, arr.subarray(i, i + CHUNK))
-  }
-  return typeof btoa === 'function' ? btoa(bin) : Buffer.from(arr).toString('base64')
-}
-/** [0.10.3] 把二维码字节变成 data URL（不再依赖 createObjectURL）。 */
-function mimoQrDataUrl(qr) {
-  var mime = qr !== null && qr !== undefined && typeof qr.mime === 'string' && qr.mime !== '' ? qr.mime : 'image/png'
-  var b64 = mimoBytesToBase64(qr !== null && qr !== undefined ? qr.bytes : null)
-  return b64 === '' ? '' : 'data:' + mime + ';base64,' + b64
-}
-
-function mimoWideButton(key, label, disabled, onClick) {
-  return h('button', {
-    key: key, type: 'button', 'data-mimo-wide': key,
-    style: Object.assign({}, settingsButtonStyle, { width: '100%', textAlign: 'center', justifyContent: 'center' },
-      disabled === true ? settingsButtonDisabledStyle : {}),
-    disabled: disabled === true, onClick: onClick,
-  }, label)
-}
-/** [0.10.3] 面板里所有文字统一走 12px 三级色；主状态行允许 13px 主色。 */
-var mimoCenterTextStyle = Object.assign({}, settingsHintStyle, { textAlign: 'center' })
-var mimoPrimaryTextStyle = Object.assign({}, settingsHintStyle, { fontSize: 13, color: 'var(--dsw-alias-label-primary)', textAlign: 'center' })
-
-function MimoRememberedPanel(props) {
-  var disabled = props !== null && props !== undefined && props.disabled === true
-  var snapHook = React.useState(null)
-  var snap = snapHook[0]
-  var setSnap = snapHook[1]
-  var bootHook = React.useState('')
-  var boot = bootHook[0]
-  var setBoot = bootHook[1]
-  var codeHook = React.useState('')
-  var code = codeHook[0]
-  var setCode = codeHook[1]
-  /** 只有**动作被拒**（BOOT_STALE / STALE 等固定码）才写这里；正常 outer `E_NONE` 不进来。 */
-  var actCodeHook = React.useState('')
-  var actCode = actCodeHook[0]
-  var setActCode = actCodeHook[1]
-  var qrUrlHook = React.useState('')
-  var qrUrl = qrUrlHook[0]
-  var setQrUrl = qrUrlHook[1]
-  var busyHook = React.useState(false)
-  var busy = busyHook[0]
-  var setBusy = busyHook[1]
-  // [0.10.3] 初值全 true：UI 已无勾选，共识一次性表达（协议字段语义不变）
-  var consentHook = React.useState({ a: true, b: true, c: true, d: true })
-  /** [0.10.3] 唯一可见勾选「记住登录」：默认勾选；其余 3 项 consent 恒 true（登录动作即视为同意）。 */
-  var rememberHook = React.useState(true)
-  var remember = rememberHook[0]
-  var setRemember = rememberHook[1]
-  var consent = consentHook[0]
-  var setConsent = consentHook[1]
-  var aliveRef = React.useRef(true)
-  var qrUrlRef = React.useRef('')
-  /** 最近一次**同 boot 同 epoch** 的权威快照：pair 观察、begin 携带都从这里取。 */
-  var snapRef = React.useRef(null)
-  /** 已采纳的权威 boot；新的 capability 发现可**采纳并退休**旧的，迟到旧响应一律拒。 */
-  var bootRef = React.useRef('')
-  /** 每次采纳新 boot +1：绑定请求必须携带发起时的 epoch，跨 epoch 结果不回填。 */
-  var epochRef = React.useRef(0)
-  /** 同 boot 内按 remembered.revision 单调拒旧（合法 forget/paused 的 gen 可能是 0）。 */
-  var revRef = React.useRef(-1)
-  /** 发现请求的单调序号：只有**最新一次**发现可以采纳新 boot。 */
-  var discSeqRef = React.useRef(0)
-  var latestDiscRef = React.useRef(0)
-  /** [0.10.3] 自动放行动态目标：同一 approvalId 只发一次（不循环、不重发）。 */
-  var approvedRef = React.useRef('')
-  /** [0.10.3] 重挂载自愈：拿不到 QR 且无缓存时，按 authId 只自动取消一次。 */
-  var cancelSentRef = React.useRef('')
-  React.useEffect(function () {
-    var ap = snap !== null && snap !== undefined ? snap.approval : null
-    if (ap === null || ap === undefined) return
-    var apId = typeof ap.approvalId === 'string' ? ap.approvalId : ''
-    if (apId === '' || approvedRef.current === apId) return
-    approvedRef.current = apId
-    send('rememberedApprove', { approvalId: apId })
-  }, [snap])
-
-  /** [0.10.3 真 bug] 重挂载后 authorizing 但拿不到图 ⇒ 自动取消一次，回到 empty。 */
-  React.useEffect(function () {
-    if (snap === null || snap === undefined) return
-    // [0.10.3 收窄] 登录未完成 = authorizing 或 awaiting_confirmation；其它状态一律不取消
-    var unfinished = snap.state === 'authorizing' || snap.state === 'awaiting_confirmation'
-    if (!unfinished) return
-    // 只在本次挂载从未拿到本地二维码/候选时才放弃（用户正看着界面时不得误取消）
-    var hasLocal = qrUrlRef.current !== '' || (snap.candidate !== null && snap.candidate !== undefined)
-    if (hasLocal) return
-    var authId = typeof snap.authId === 'string' ? snap.authId : ''
-    if (authId === '') return
-    if (cancelSentRef.current === authId) return
-    cancelSentRef.current = authId
-    send('rememberedCancel')
-  }, [snap])
-
-  function dropQr() {
-    // [0.10.3] data URL 无需 revoke，只清引用
-    qrUrlRef.current = ''
-    setQrUrl('')
-  }
-
-  /**
-   * 快照栅栏（两个方向都要正确）：
-   *   - `discovery`（capability GET）：只有**最新一次**发现可以**采纳**新 boot；
-   *     采纳时退休旧 boot（epoch+1、清 snap/pair/QR/errors、revision 归 -1）。
-   *   - `bound`（action / pair status）：必须归属**发起时**的 boot 与 epoch，
-   *     否则（Host 已重启或已有更新的发现）整包丢弃。
-   *   - 同 boot 内按 `remembered.revision` 单调拒旧（合法 forget/paused 可能 gen=0）。
-   */
-  function applySnap(next, ctx) {
-    if (!aliveRef.current) return false
-    if (next === null || typeof next !== 'object') return false
-    var rem = next.remembered
-    if (rem === null || rem === undefined) return false
-    var incomingBoot = typeof next.bootEpoch === 'string' ? next.bootEpoch : ''
-    if (ctx.kind === 'discovery') {
-      if (ctx.seq !== latestDiscRef.current) return false      // 已被更晚的发现取代
-      if (incomingBoot !== '' && incomingBoot !== bootRef.current) {
-        bootRef.current = incomingBoot
-        epochRef.current += 1
-        revRef.current = -1
-        snapRef.current = null
-        dropQr()
-        setCode('')
-        setBoot(incomingBoot)
-      }
-    } else {
-      if (ctx.epoch !== epochRef.current) return false
-      if (incomingBoot !== '' && incomingBoot !== bootRef.current) return false
-    }
-    if (typeof rem.revision === 'number' && rem.revision >= 0) {
-      if (rem.revision < revRef.current) return false
-      revRef.current = rem.revision
-    }
-    // **不能用外层 next.code**：正常观察 200 成功时它就是 `E_NONE`，会把真实恢复失败码盖掉。
-    // 只有非 E_NONE 的固定枚举（动作被拒）才进 actCode；会话失败一律读 `snap.code`。
-    if (typeof next.code === 'string' && next.code !== '' && next.code !== 'E_NONE'
-      && /^[A-Z][A-Z0-9_]{0,63}$/.test(next.code)) setActCode(next.code)
-    snapRef.current = rem
-    setSnap(rem)
-    // 候选/二维码只属于待确认前的两个阶段；离开即从 DOM 与记忆里清掉
-    if (rem.state !== 'authorizing') dropQr()
-    return true
-  }
-
-  /** 一次不触发账号动作的能力发现（0 账号请求）；BOOT_STALE 后也用它重新对齐 boot。 */
-  function discover() {
-    var seq = discSeqRef.current + 1
-    discSeqRef.current = seq
-    latestDiscRef.current = seq
-    return mimoAuthRequest({}).then(function (next) {
-      applySnap(next, { kind: 'discovery', seq: seq })
-      return next
-    }, function () { return null })
-  }
-
-  /** managed 的二进制取图：AUTH 路由的 rememberedQr（no-store、有界、参数只有 pair）。 */
-  function requestRememberedQr(bootEpoch, authId, generation) {
-    var doFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch : null
-    if (doFetch === null) return Promise.resolve(null)
-    return doFetch(MIMO_AUTH_ROUTE, {
-      method: 'POST',
-      credentials: 'same-origin',
-      cache: 'no-store',
-      redirect: 'error',
-      headers: { accept: 'image/png,image/jpeg', 'content-type': 'application/json' },
-      body: JSON.stringify({ action: 'rememberedQr', bootEpoch: bootEpoch, authId: authId, generation: generation })
-    }).then(function (res) {
-      if (res === null || res === undefined || res.status !== 200) return null
-      var type = ''
-      try { type = String(res.headers.get('content-type') || '') } catch (e) { type = '' }
-      var mime = type.indexOf('image/jpeg') === 0 ? 'image/jpeg' : (type.indexOf('image/png') === 0 ? 'image/png' : '')
-      if (mime === '') return null
-      if (typeof res.arrayBuffer !== 'function') return null
-      return res.arrayBuffer().then(function (buf) {
-        var bytes = new Uint8Array(buf)
-        if (bytes.byteLength < 8 || bytes.byteLength > 256 * 1024) return null
-        return { bytes: bytes, mime: mime }
-      }, function () { return null })
-    }, function () { return null })
-  }
-
-  React.useEffect(function () {
-    aliveRef.current = true
-    var stop = false
-    function tick() {
-      var cur = snapRef.current
-      // 只在需要 owner 语义的两个阶段带 pair 观察；其余用能力发现（候选恒 null）
-      var needsPair = cur !== null && typeof cur.authId === 'string' && cur.authId !== ''
-        && (cur.state === 'authorizing' || cur.state === 'awaiting_confirmation')
-      if (!needsPair) { discover(); return }
-      var epoch = epochRef.current
-      var issuerBoot = bootRef.current
-      mimoAuthRequest({ action: 'rememberedStatus', bootEpoch: issuerBoot, authId: cur.authId, generation: cur.generation })
-        .then(function (next) {
-          if (stop) return
-          applySnap(next, { kind: 'bound', epoch: epoch, boot: issuerBoot })
-          var rem = next !== null && typeof next === 'object' ? next.remembered : null
-          if (rem !== null && rem !== undefined && rem.state === 'authorizing' && rem.hasQr === true && qrUrlRef.current === '') {
-            requestRememberedQr(issuerBoot, rem.authId, rem.generation).then(function (qr) {
-              if (stop || qr === null) return
-              if (qrUrlRef.current !== '') return
-              if (epochRef.current !== epoch || bootRef.current !== issuerBoot) return
-              try {
-                // [0.10.3] data URL：卸载/重挂载都有效（不再 revoke）
-                var url = mimoQrDataUrl(qr)
-                if (url === '') return
-                qrUrlRef.current = url
-                setQrUrl(url)
-
-              } catch (e) { /* 无 objectURL：只显示状态 */ }
-            })
-          }
-        }, function () { /* 观察失败不报错 */ })
-    }
-    tick()
-    var timer = setInterval(tick, 3000)
-    return function () {
-      // 卸载：只清本机观察 + revoke URL，**不**停止 Host 自动 owner
-      aliveRef.current = false
-      stop = true
-      try { clearInterval(timer) } catch (e) { /* 已清理 */ }
-      dropQr()
-    }
-  }, [])
-
-  /**
-   * 统一动作出口。`override` = 刚拿到的**新**快照（start 之后立刻 begin 用它的 pair），
-   * 绝不把陈旧的用户点击切到另一个账号的 pair 上。
-   */
-  /** 只带 generation（不带 authId）的控制动作；start 两者都不带。 */
-  var MIMO_GEN_ONLY_ACTIONS = {
-    rememberedPause: true, rememberedResume: true, rememberedForget: true, rememberedRetry: true
-  }
-  var MIMO_NO_EXTRA_ACTIONS = { rememberedStart: true }
-
-  function send(action, extra, override) {
-    if (busy || disabled) return Promise.resolve(null)
-    setBusy(true)
-    var src = override !== undefined && override !== null ? override : snapRef.current
-    var epoch = epochRef.current
-    var issuerBoot = bootRef.current
-    var payload = { action: action, bootEpoch: issuerBoot }
-    var extraAllowed = MIMO_NO_EXTRA_ACTIONS[action] !== true
-    if (extraAllowed && MIMO_GEN_ONLY_ACTIONS[action] !== true
-      && src !== null && typeof src.authId === 'string' && src.authId !== '') {
-      payload.authId = src.authId
-    }
-    // generation：**有限非负 safe int（含 0）**原样回传；暂停态重启后 0 是合法值
-    if (extraAllowed && src !== null && Number.isSafeInteger(src.generation) && src.generation >= 0) {
-      payload.generation = src.generation
-    }
-    if (extra !== undefined && extra !== null) {
-      for (var k in extra) if (Object.prototype.hasOwnProperty.call(extra, k)) payload[k] = extra[k]
-    }
-    return mimoAuthRequest(payload).then(function (next) {
-      setBusy(false)
-      applySnap(next, { kind: 'bound', epoch: epoch, boot: issuerBoot })
-      // Host 已重启 ⇒ 只做 0 账号请求的能力重新发现（不是启动认证）
-      if (next !== null && typeof next === 'object' && next.status === 409 && next.code === 'E_MIMO_AUTH_BOOT_STALE') discover()
-      return next
-    }, function () { setBusy(false); return null })
-  }
-
-  var st = snap === null ? null : snap.state
-  var children = []
-  function mimoTiny(key, label, extraDisabled, onClick) {
-    var off = busy || disabled || extraDisabled === true
-    return h('button', {
-      key: key, type: 'button',
-      style: Object.assign({}, policyTinyButtonStyle, off ? settingsButtonDisabledStyle : {}),
-      disabled: off, onClick: onClick,
-    }, label)
-  }
-  if (st === null) children.push(h('div', { key: 'boot' }, '正在读取记住登录状态…'))
-  if (st === 'disabled') children.push(h('div', { key: 'off' }, '记住登录已关闭。'))
-  if (st === 'unsupported') children.push(h('div', { key: 'unsup' }, '此设备暂时无法安全保存登录。'))
-  if (st === 'unreadable') children.push(h('div', { key: 'bad' }, '本地登录记录读不到，请重新扫码。'))
-  if (st === 'empty') {
-    // [0.10.3] 登录前**只有这 4 行**：状态行 / 一行说明 / 扫码登录 / 记住登录勾选。
-    children.push(h('div', { key: 'e0', 'data-mimo-auth-status': 'signed-out', style: mimoPrimaryTextStyle }, '未配置 Key'))
-    children.push(h('div', { key: 'e0b', style: mimoCenterTextStyle }, '扫码登录后自动读取该账号余额。'))
-    children.push(mimoWideButton('e1', '扫码登录', busy || disabled, function () {
-      // [0.10.3] Host 只认 authConsent/consentVersion（routes.js 精确允许键），不得新增字段
-      send('rememberedStart', { authConsent: true, consentVersion: 1 }).then(function (r) {
-        if (r === null || r === undefined || r.ok !== true) return
-        var fresh = r.remembered
-        if (fresh === null || fresh === undefined || typeof fresh.authId !== 'string') return
-        send('rememberedBegin', null, fresh)
-      })
-    }))
-    children.push(h('div', { key: 'e2', style: mimoCenterTextStyle }, '登录后会记住本机登录状态，可随时退出或忘记。'))
-  }
-  if (st === 'authorizing') {
-    // [0.10.3] 顺序按反馈：二维码在上，文字与按钮在下
-    // [0.10.3 更新] 只显示**本次挂载内**真正拿到的图；重挂载后没有图就不渲染 img（走自动放弃）
-    if (qrUrl !== '') children.push(h('img', { key: 'a1', src: qrUrl, alt: '小米账号登录二维码', width: 180, height: 180, style: { alignSelf: 'center' } }))
-    children.push(h('div', { key: 'a0', style: mimoCenterTextStyle }, '请用手机扫码确认。'))
-    children.push(mimoWideButton('a5', '取消', busy || disabled, function () { send('rememberedCancel') }))
-  }
-  if (st === 'awaiting_confirmation' && snap.candidate !== null) {
-    children.push(h('div', { key: 'c0', style: mimoPrimaryTextStyle }, '确认这是你的账号？'))
-    // [0.10.3] 只显示 Host 给的账号标识本身，不拼昵称、不让用户输入
-    children.push(h('div', { key: 'c1', className: 'mimo-remembered-candidate', style: mimoCenterTextStyle }, '账号：' + snap.candidate.identifier))
-    // 一行两个按钮：各占一半、文字居中、高度与整行按钮一致
-    children.push(h('div', { key: 'c-row', style: { display: 'flex', gap: 8, alignItems: 'stretch' } },
-      h('button', {
-        key: 'c9', type: 'button', 'data-mimo-wide': 'c9',
-        style: Object.assign({}, settingsButtonStyle, { flex: '1 1 0', textAlign: 'center', justifyContent: 'center' }, (busy || disabled) ? settingsButtonDisabledStyle : {}),
-        disabled: busy || disabled,
-        onClick: function () { send('rememberedConfirm', { consentVersion: 1, rememberConsent: true, autoRestore: true, autoReadBalance: true, autoRefresh: true }) },
-      }, '确认这是我的账号'),
-      h('button', {
-        key: 'c8', type: 'button', 'data-mimo-wide': 'c8',
-        style: Object.assign({}, settingsButtonStyle, { flex: '1 1 0', textAlign: 'center', justifyContent: 'center' }, (busy || disabled) ? settingsButtonDisabledStyle : {}),
-        disabled: busy || disabled,
-        onClick: function () { send('rememberedCancel') },
-      }, '取消')))
-  }
-  if (st === 'restoring') children.push(h('div', { key: 'r0' }, '正在用已记住的登录恢复（不显示旧金额）。'))
-  if (st === 'verified') {
-    // 主定稿：正常登录只保留「更新于 / 已绑定账号」两行 + 退出账号；余额/统计/暂停不在本面板渲染
-    // [typography 2026-11-11] 这两行是**说明性状态**，必须与其它渠道的灰色小字（settingsHintStyle）一致，
-    // 不能是卡片正文的黑体大字；只给这两行加样式，不整块灰化（失败/QR/4 勾确认信息仍按原色强调）。
-    if (snap.fetchedAt !== null) children.push(h('div', { key: 'v1', style: settingsHintStyle }, '更新于 ' + new Date(snap.fetchedAt).toLocaleTimeString()))
-    if (snap.identityMasked !== '') children.push(h('div', { key: 'v2', style: settingsHintStyle }, '已绑定账号：' + snap.identityMasked))
-    children.push(mimoTiny('v5', '退出账号', false, function () { send('rememberedForget') }))
-  }
-  if (st === 'paused') {
-    children.push(h('div', { key: 'p0' }, '已暂停自动刷新（不会发起任何账号请求）。'))
-    children.push(mimoTiny('p1', '恢复刷新', false, function () { send('rememberedResume') }))
-    children.push(mimoTiny('p2', '退出账号', false, function () { send('rememberedForget') }))
-  }
-  if (st === 'failed') {
-    // 显示**快照里的会话失败码**（不是外层 200 的 E_NONE），中性文案，不吞失败也不谎报成功
-    var failCode = snap !== null && typeof snap.code === 'string' ? snap.code : ''
-    if (failCode === '' && actCode !== '') failCode = actCode
-    children.push(h('div', { key: 'f0' }, failCode === '' ? '恢复失败（未取得原因码）' : '恢复失败：' + failCode))
-    var failNote = mimoRememberedReasonNote(snap)
-    if (failNote !== '') {
-      children.push(h('div', { key: 'f3', className: 'mimo-remembered-reason' }, failNote))
-    }
-    var handoffText = mimoHandoffSummaryText(snap !== null && snap !== undefined ? snap.handoffSummary : null)
-    if (handoffText !== '') {
-      children.push(h('div', { key: 'f5', className: 'mimo-remembered-handoff' }, handoffText))
-    }
-    if (snap.canRetry === true) children.push(mimoTiny('f1', '重试恢复', false, function () { send('rememberedRetry') }))
-    children.push(mimoTiny('f2', '退出账号', false, function () { send('rememberedForget') }))
-  }
-  if (st === 'stopped') {
-    var stopCode = snap !== null && typeof snap.code === 'string' && snap.code !== '' ? snap.code : actCode
-    children.push(h('div', { key: 's0' }, stopCode === '' ? '会话已停止' : '会话已停止：' + stopCode))
-    var stopNote = mimoRememberedReasonNote(snap)
-    if (stopNote !== '') {
-      children.push(h('div', { key: 's1', className: 'mimo-remembered-reason' }, stopNote))
-    }
-  }
-  return h('div', {
-    className: 'mimo-remembered-panel',
-    style: { display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'stretch' },
-  }, children)
-}
-
-/**
- * [remembered] 设置页**唯一**入口闸门（一次探测，无副作用）：
- *   - managed：只渲染新的 MimoRememberedPanel（旧 auth/display 面板完全不挂载，
- *     不会闪出 expected 表单或旧「15 min/14 次」文案）；
- *   - 非 managed：保持旧两面板原语义（auth + display 一起渲染）；
- *   - 能力未知：显示中性占位，**不**闪旧表单，也不用中途 return 打乱旧面板 hooks。
- */
-function MimoAuthMount(props) {
-  var managedHook = React.useState(false)
-  var managed = managedHook[0]
-  var setManaged = managedHook[1]
-  var readyHook = React.useState(false)
-  var ready = readyHook[0]
-  var setReady = readyHook[1]
-  React.useEffect(function () {
-    var alive = true
-    mimoAuthRequest({}).then(function (snap) {
-      if (!alive) return
-      setManaged(snap !== null && typeof snap === 'object' && snap.rememberedSupported === true)
-      setReady(true)
-    }, function () { if (alive) setReady(true) })
-    return function () { alive = false }
-  }, [])
-  if (managed === true) return h(MimoRememberedPanel, props)
-  if (ready !== true) return h('div', { className: 'mimo-auth-probe' }, '正在读取登录能力…')
-  /**
-   * [0.10.3] managed 之外的宿主**不再挂载旧实验面板**（新装环境回退到它正是本次事故）：
-   * 只给一行明确提示，不含任何勾选框 / 输入框 / 实验措辞。旧组件定义保留（测试引用），生产不渲染。
-   */
-  return h('p', { className: 'mimo-auth-unavailable', 'data-mimo-auth-unavailable': '1', style: settingsHintStyle },
-    '登录不可用（需要新版宿主），请升级 DSH')
-}
-
-function MimoAuthPanel(props) {
-  var disabled = props !== null && props !== undefined && props.disabled === true
-  var openHook = React.useState(false)
-  var open = openHook[0]
-  var setOpen = openHook[1]
-  var phaseHook = React.useState('closed')
-  var phase = phaseHook[0]
-  var setPhase = phaseHook[1]
-  var codeHook = React.useState('')
-  var code = codeHook[0]
-  var setCode = codeHook[1]
-  var qrHook = React.useState(null)
-  var qr = qrHook[0]
-  var setQr = qrHook[1]
-  var viewHook = React.useState(null)
-  var view = viewHook[0]
-  var setView = viewHook[1]
-  /** 可见失败信息：{code, stage}；code 来自 Host `failure` 或本地固定 enum，stage 为阶段枚举。 */
-  var failureHook = React.useState(null)
-  var failure = failureHook[0]
-  var setFailure = failureHook[1]
-  /** 本机动作（capability/start/begin/status/qr/cancel/logout）——只作提示，不当 Host 阶段/根因。 */
-  var uiActionHook = React.useState('')
-  var uiAction = uiActionHook[0]
-  var setUiAction = uiActionHook[1]
-  /** 二维码取图失败的固定码（会话继续，不整页失败）。 */
-  var qrErrorHook = React.useState('')
-  var qrError = qrErrorHook[0]
-  var setQrError = qrErrorHook[1]
-  /** 本会话的「动态目标批准」选择：默认关闭，start 时锁入 ref，关闭/注销/重开清零。 */
-  var dynamicOptInHook = React.useState(false)
-  var dynamicOptIn = dynamicOptInHook[0]
-  var setDynamicOptIn = dynamicOptInHook[1]
-  /** 待选值（checkbox 当前勾选状态）：onChange 同步写，只影响「尚未创建」的会话。 */
-  var dynamicChoiceRef = React.useRef(false)
-  /** 已创建会话的**锁定值**：只在 start 时从 choiceRef 原子拷贝；旧 checkbox 回调改不到它。 */
-  var sessionOptInRef = React.useRef(false)
-  /** 已经为哪个 approvalId 发送过 approve/deny（双击/竞态去重；一次性审批）。 */
-  var approvalSentRef = React.useRef('')
-  /** [post-QR local / G1] postQrConsent：onChange 同步的待选值 + start 时原子锁定的值（与动态 LP 完全独立）。 */
-  var postQrChoiceRef = React.useRef(false)
-  var postQrSessionRef = React.useRef(false)
-  var postQrOnHook = React.useState(false)
-  var postQrOn = postQrOnHook[0]
-  var setPostQrOn = postQrOnHook[1]
-  /** 本机 dummy typed 参考：保存两个原生 input（用于算后清 input.value）与短时 state。 */
-  var userIdInputRef = React.useRef(null)
-  var cUserIdInputRef = React.useRef(null)
-  var typedRefHook = React.useState({ userId: '', cUserId: '' })
-  var typedRef = typedRefHook[0]
-  var setTypedRef = typedRefHook[1]
-  /** G2：pending=已发出（去重）；confirmed=**控制 ACK 确实成功之后**才置，G3 只读它。 */
-  var identityPendingRef = React.useRef('')
-  var identityConfirmedRef = React.useRef('')
-  /** G3 一次性：已经为哪个 generation 发过 readBalance（UI 去重仅体验层）。 */
-  var balanceSentRef = React.useRef('')
-  /** 本机固定码提示（如 E_MIMO_AUTH_POSTQR_DISABLED）。 */
-  var postQrNoticeHook = React.useState('')
-  var postQrNotice = postQrNoticeHook[0]
-  var setPostQrNotice = postQrNoticeHook[1]
-  /** Host boot epoch（来自 capability）。 */
-  var epochRef = React.useRef(null)
-  /** Host ticket（32 hex，仅内存）。 */
-  var ticketRef = React.useRef(null)
-  /** **Host** generation（只从响应学习，绝不本地自增）。 */
-  var hostGenRef = React.useRef(null)
-  /** **本地** request epoch（只用于作废迟到回调，绝不进 body）。 */
-  var localEpochRef = React.useRef(0)
-  /** 当前阶段的同步镜像（供闭包内判断"是否已 failed/取消"，不依赖 render 快照）。 */
-  var phaseRef = React.useRef('closed')
-  var openRef = React.useRef(false)
-  /** 本方所有在途 controller（轮询 / QR / 一次性动作）；stopLocal 全部 abort。 */
-  var controllersRef = React.useRef([])
-  /** 取消请求专用 controller（独立于轮询，不被 stopLocal abort）。 */
-  var cancelControllersRef = React.useRef([])
-  var timerRef = React.useRef(null)
-  var qrUrlRef = React.useRef(null)
-  var qrFlagRef = React.useRef(false)
-
-  function revokeQr() {
-    if (qrUrlRef.current !== null && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
-      try { URL.revokeObjectURL(qrUrlRef.current) } catch (err) { /* 忽略 */ }
-    }
-    // [0.10.3] 二维码是 data URL：revoke 只是空操作，保留调用以维持既有卸载语义
-    qrUrlRef.current = null
-  }
-  function clearTimer() {
-    if (timerRef.current !== null) { clearTimeout(timerRef.current); timerRef.current = null }
-  }
-  function trackController(controller) { if (controller !== null) controllersRef.current.push(controller); return controller }
-  function dropController(controller) {
-    var list = controllersRef.current
-    var index = controller === null ? -1 : list.indexOf(controller)
-    if (index >= 0) list.splice(index, 1)
-  }
-  function abortAll() {
-    var list = controllersRef.current
-    controllersRef.current = []
-    for (var i = 0; i < list.length; i += 1) { try { list[i].abort() } catch (err) { /* 忽略 */ } }
-  }
-  function newSignal() {
-    if (typeof AbortController !== 'function') return { controller: null, signal: undefined }
-    var controller = trackController(new AbortController())
-    return { controller: controller, signal: controller.signal }
-  }
-  function isCurrent(epoch) { return localEpochRef.current === epoch && openRef.current === true }
-  function bumpLocalEpoch() { localEpochRef.current += 1; return localEpochRef.current }
-  function forgetSession() { ticketRef.current = null; qrFlagRef.current = false; setQr(null); revokeQr() }
-  /** 关闭 / 注销 / 重开：本次会话的动态批准选择必须清零（不写 config、不持久化）。 */
-  function resetDynamicOptIn() {
-    dynamicChoiceRef.current = false
-    sessionOptInRef.current = false
-    setDynamicOptIn(false)
-  }
-  /** [post-QR local] 关闭 / 注销 / 重开 / 取消：清本机同意、身份确认、一次性余额标记与输入框值。 */
-  function resetPostQr() {
-    postQrChoiceRef.current = false
-    postQrSessionRef.current = false
-    setPostQrOn(false)
-    identityPendingRef.current = ''
-    identityConfirmedRef.current = ''
-    balanceSentRef.current = ''
-    setPostQrNotice('')
-    clearTypedReference()
-  }
-  function goPhase(next) { phaseRef.current = next; setPhase(next) }
-  /** 统一失败呈现：code 走 Host 白名单或本机固定表；stage 只允许 flow|qr|balance|unknown。 */
-  function showFailure(code, stage, diagnostic) {
-    // 传进来的 code 必须已按来源映射过（Host failure → Host mapper；本机 → local mapper）。
-    var safeCode = typeof code === 'string' && code !== '' && code !== 'E_NONE' ? code : 'E_MIMO_AUTH_FLOW'
-    var safeStage = mimoAuthFailureStage(stage)
-    setFailure({
-      code: safeCode,
-      stage: safeStage,
-      diagnostic: diagnostic === undefined ? null : diagnostic,
-    })
-    setCode(safeCode)
-  }
-  /** 取消/登出前捕获的**不可变快照**（boot / ticket / Host generation）。 */
-  function snapshotOf() {
-    if (typeof ticketRef.current !== 'string') return null
-    return {
-      bootEpoch: epochRef.current,
-      ticketId: ticketRef.current,
-      generation: typeof hostGenRef.current === 'number' ? hostGenRef.current : null,
-    }
-  }
-  /** 停在本地：abort 所有自有 controller、清 timer、revoke objectURL。 */
-  function stopLocal() { abortAll(); clearTimer(); revokeQr() }
-
-  React.useEffect(function () {
-    openRef.current = open === true
-    if (open !== true) stopLocal()
-  }, [open])
-  React.useEffect(function () {
-    return function () {
-      // 卸载：按已持有票向 Host 发一次有界取消；该请求不被 abort（交给自己的 TTL）。
-      var snapshot = snapshotOf()
-      bumpLocalEpoch()
-      stopLocal()
-      forgetSession()
-      if (snapshot !== null) sendCancel('cancel', snapshot)
-    }
-  }, [])
-
-  /** 有界取消请求：独立 controller + 独立 TTL；失败只如实标记，不自动重试。 */
-  function sendCancel(action, snapshot) {
-    if (snapshot === null || typeof snapshot.ticketId !== 'string' || snapshot.ticketId === '') return Promise.resolve(null)
-    var body = { action: action, ticketId: snapshot.ticketId }
-    if (typeof snapshot.bootEpoch === 'string') body.bootEpoch = snapshot.bootEpoch
-    if (typeof snapshot.generation === 'number') body.generation = snapshot.generation
-    var controller = null
-    var timer = null
-    var signal
-    if (typeof AbortController === 'function') {
-      controller = new AbortController()
-      signal = controller.signal
-      cancelControllersRef.current.push(controller)
-      timer = setTimeout(function () { try { controller.abort() } catch (err) { /* 忽略 */ } }, MIMO_AUTH_CANCEL_TIMEOUT_MS)
-    }
-    function settle() {
-      if (timer !== null) { clearTimeout(timer); timer = null }
-      var list = cancelControllersRef.current
-      var index = controller === null ? -1 : list.indexOf(controller)
-      if (index >= 0) list.splice(index, 1)
-    }
-    return mimoAuthRequest(body, signal).then(function (reply) { settle(); return reply }, function () { settle(); return null })
-  }
-  /** 用户点击入口：本面板**唯一**的第一次请求点（GET capability）。 */
-  function begin() {
-    if (disabled === true) return null
-    var previous = snapshotOf()
-    bumpLocalEpoch()
-    stopLocal()
-    setQr(null)
-    setView(null)
-    setFailure(null)
-    setQrError('')
-    if (previous !== null) sendCancel('cancel', previous)
-    ticketRef.current = null
-    hostGenRef.current = null
-    epochRef.current = null
-    var epoch = localEpochRef.current
-    openRef.current = true
-    setOpen(true)
-    setUiAction('capability')
-    goPhase('opening')
-    setCode('')
-    var slot = newSignal()
-    return mimoAuthRequest(undefined, slot.signal).then(function (capability) {
-      dropController(slot.controller)
-      if (!isCurrent(epoch)) return null
-      if (capability.status === 403) {
-        goPhase('forbidden'); showFailure(mimoAuthLocalCode(capability.code === '' ? 'E_MIMO_AUTH_UNAVAILABLE' : capability.code), '', null); return null
-      }
-      if (capability.ok !== true || capability.supported !== true) {
-        goPhase('unsupported'); showFailure(mimoAuthLocalCode(capability.code === '' ? 'E_MIMO_AUTH_UNAVAILABLE' : capability.code), '', null); return null
-      }
-      epochRef.current = capability.bootEpoch
-      goPhase('ready')
-      return null
-    })
-  }
-  function close() {
-    var snapshot = snapshotOf()
-    bumpLocalEpoch()
-    stopLocal()
-    forgetSession()
-    resetDynamicOptIn()
-    resetPostQr()
-    setView(null)
-    goPhase('closed')
-    setOpen(false)
-    if (snapshot !== null) sendCancel('cancel', snapshot)
-  }
-  /** 统一 POST：body 用**Host** generation；迟到判断用**本地** epoch。 */
-  function post(action, extra, skipState) {
-    var epoch = localEpochRef.current
-    var payload = { action: action }
-    if (typeof epochRef.current === 'string') payload.bootEpoch = epochRef.current
-    if (typeof ticketRef.current === 'string') payload.ticketId = ticketRef.current
-    if (typeof hostGenRef.current === 'number') payload.generation = hostGenRef.current
-    if (extra !== null && extra !== undefined) {
-      if (typeof extra.approvalId === 'string') payload.approvalId = extra.approvalId
-      if (MIMO_AUTH_VERDICTS[extra.verdict] === true) payload.verdict = extra.verdict
-      // start 的可选布尔（合同：省略=false；这里显式发送会话锁定的值）。
-      if (typeof extra.allowDynamicLongPoll === 'boolean') payload.allowDynamicLongPoll = extra.allowDynamicLongPoll
-      // [post-QR local] G1 同意 + 预期身份（只发 digest；raw 值不出本机）。
-      if (typeof extra.postQrConsent === 'boolean') payload.postQrConsent = extra.postQrConsent
-      if (extra.expectedAccountType === 'mimo-platform') payload.expectedAccountType = 'mimo-platform'
-      if (typeof extra.expectedIdentityDigest === 'string') payload.expectedIdentityDigest = extra.expectedIdentityDigest
-    }
-    var slot = newSignal()
-    return mimoAuthRequest(payload, slot.signal).then(function (reply) {
-      dropController(slot.controller)
-      if (!isCurrent(epoch)) return null
-      applyReply(reply, skipState === true, action)
-      return reply
-    }, function () { dropController(slot.controller); return null })
-  }
-  function applyReply(reply, skipState, action) {
-    if (reply.code === 'E_ABORTED') return
-    if (reply.status === 403) {
-      clearTimer(); goPhase('forbidden')
-      showFailure(reply.failureCode !== '' ? reply.failureCode : mimoAuthLocalCode('E_MIMO_AUTH_UNAVAILABLE'), reply.failureStage, reply.diagnostic)
-      return
-    }
-    if (reply.ok !== true) {
-      clearTimer()
-      if (reply.code === 'E_MIMO_AUTH_CANCELLED') { forgetSession(); setFailure(null); goPhase('cancelled'); setCode(''); return }
-      if (reply.code === 'E_MIMO_AUTH_SESSION_MISSING' || reply.code === 'E_MIMO_AUTH_SESSION_EXPIRED'
-        || reply.code === 'E_MIMO_AUTH_BOOT_STALE' || reply.code === 'E_MIMO_AUTH_STALE_TICKET') {
-        forgetSession(); goPhase('failed')
-        showFailure(reply.failureCode !== '' ? reply.failureCode : mimoAuthLocalCode(reply.code), reply.failureStage, reply.diagnostic)
-        return
-      }
-      goPhase('failed')
-      showFailure(reply.failureCode !== '' ? reply.failureCode : mimoAuthLocalCode(reply.code === '' ? 'E_UNKNOWN' : reply.code), reply.failureStage, reply.diagnostic)
-      return
-    }
-    if (mimoAuthHex32(reply.ticketId)) ticketRef.current = reply.ticketId
-    if (mimoAuthSafeInt(reply.generation)) hostGenRef.current = reply.generation
-    if (reply.bootEpoch !== null && epochRef.current !== null && reply.bootEpoch !== epochRef.current) {
-      clearTimer(); forgetSession(); goPhase('failed'); setCode('E_MIMO_AUTH_BOOT_STALE'); return
-    }
-    if (skipState === true) return
-    setView({
-      state: reply.state,
-      remainingMs: reply.remainingMs,
-      hasQr: reply.hasQr,
-      approvalId: reply.approvalId,
-      approvalOrigin: reply.approvalOrigin,
-      approvalPurpose: reply.approvalPurpose,
-      approvalMethod: reply.approvalMethod,
-      approvalExpiresAt: reply.approvalExpiresAt,
-      awaitingBalanceMatch: reply.awaitingBalanceMatch,
-      confirmedByUser: reply.confirmedByUser,
-      balance: reply.balance,
-      identityMasked: reply.identityMasked,
-    })
-    if (reply.state === 'running') {
-      goPhase('running')
-      var epoch = localEpochRef.current
-      if (reply.hasQr === true && qrFlagRef.current !== true) takeQr(epoch)
-      schedule(epoch)
-      return
-    }
-    if (reply.state === 'idle') { clearTimer(); setFailure(null); goPhase('created'); return }
-    if (reply.state === 'done') { clearTimer(); setFailure(null); goPhase('done'); return }
-    if (reply.state === 'cancelled') { clearTimer(); setFailure(null); forgetSession(); goPhase('cancelled'); return }
-    if (reply.state === 'failed' || reply.state === 'expired' || reply.state === 'disposed') {
-      clearTimer(); goPhase('failed')
-      var hostCode = reply.failureCode !== '' ? reply.failureCode : mimoAuthLocalCode(reply.code === '' ? 'E_MIMO_AUTH_FLOW' : reply.code)
-      showFailure(hostCode, reply.failureStage, reply.diagnostic)
-      return
-    }
-    clearTimer(); goPhase('failed'); setCode('E_UNKNOWN')
-  }
-  function schedule(epoch) {
-    clearTimer()
-    timerRef.current = setTimeout(function () {
-      timerRef.current = null
-      if (!isCurrent(epoch)) return
-      setUiAction('status')
-      post('status')
-    }, MIMO_AUTH_POLL_MS)
-  }
-  /** 二维码一次性 take（本地 epoch 判迟到；body 用 Host generation）。 */
-  function takeQr(epoch) {
-    var payload = { ticketId: ticketRef.current }
-    if (typeof epochRef.current === 'string') payload.bootEpoch = epochRef.current
-    if (typeof hostGenRef.current === 'number') payload.generation = hostGenRef.current
-    setUiAction('qr')
-    var slot = newSignal()
-    return mimoAuthRequestQr(payload, slot.signal).then(function (result) {
-      dropController(slot.controller)
-      if (!isCurrent(epoch)) {
-        if (result.objectUrl !== null && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
-          try { URL.revokeObjectURL(result.objectUrl) } catch (err) { /* 忽略 */ }
-        }
-        return null
-      }
-      // 实际取图请求失败 → 在二维码区域显示固定码；会话保持原状态（不整页失败、不自动重试）。
-      if (result.ok !== true) {
-        if (result.code !== 'E_ABORTED') setQrError(mimoAuthLocalCode(result.code))
-        return null
-      }
-      setQrError('')
-      revokeQr()
-      if (result.objectUrl !== null) qrUrlRef.current = result.objectUrl
-      qrFlagRef.current = true
-      setQr(result.src)
-      return null
-    }, function () { dropController(slot.controller); return null })
-  }
-  /** 读一次本机 dummy typed 参考（只从 input.value 取，不落其它 DOM）。 */
-  function readTypedPair() {
-    function valueOf(ref) {
-      var node = ref.current
-      if (node === null || node === undefined) return ''
-      var raw = typeof node.value === 'string' ? node.value
-        : (node.props && typeof node.props.value === 'string' ? node.props.value : '')
-      return raw.length > 0 && raw.length <= 128 ? raw : ''
-    }
-    var userId = valueOf(userIdInputRef)
-    var cUserId = valueOf(cUserIdInputRef)
-    if (userId === '') userId = typedRef.userId
-    if (cUserId === '') cUserId = typedRef.cUserId
-    if (userId === '' || cUserId === '') return null
-    return { userId: userId, cUserId: cUserId }
-  }
-  /** 清掉输入框 DOM 值与短时 state/ref（取消/关闭/算完都调用）。 */
-  function clearTypedReference() {
-    var nodes = [userIdInputRef.current, cUserIdInputRef.current]
-    for (var i = 0; i < nodes.length; i += 1) {
-      var node = nodes[i]
-      if (node !== null && node !== undefined) {
-        try { node.value = '' } catch (err) { /* 只读节点忽略 */ }
-      }
-    }
-    setTypedRef({ userId: '', cUserId: '' })
-  }
-  /** SHA-256("mimo-platform\0"+userId+"\0"+cUserId) → 64 lowercase hex；无 crypto 返回 null（不降级）。 */
-  function computeExpectedDigest(pair) {
-    var subtle = typeof globalThis.crypto !== 'undefined' && globalThis.crypto !== null ? globalThis.crypto.subtle : null
-    if (subtle === null || subtle === undefined || typeof subtle.digest !== 'function') return Promise.resolve(null)
-    if (typeof TextEncoder !== 'function') return Promise.resolve(null)
-    var text = 'mimo-platform\u0000' + pair.userId + '\u0000' + pair.cUserId
-    var bytes = new TextEncoder().encode(text)
-    return Promise.resolve(subtle.digest('SHA-256', bytes)).then(function (buffer) {
-      var view = new Uint8Array(buffer)
-      var hex = ''
-      for (var i = 0; i < view.length; i += 1) hex += (view[i] < 16 ? '0' : '') + view[i].toString(16)
-      return hex.length === 64 ? hex : null
-    }, function () { return null })
-  }
-  function startSession() {
-    var epoch = localEpochRef.current
-    setUiAction('start')
-    // 只读「当前待选值」的原子快照：即使本闭包来自旧渲染（同 tick 勾选+点击）也拿到最新勾选。
-    var lockedChoice = dynamicChoiceRef.current === true
-    sessionOptInRef.current = lockedChoice
-    var extra = { allowDynamicLongPoll: lockedChoice, postQrConsent: false }
-    // G1 独立同意：默认 false；只有本机能算出 digest 才允许以 true 发出（其余 unsupported，绝不降级）。
-    var consentChoice = postQrChoiceRef.current === true
-    if (consentChoice !== true) {
-      postQrSessionRef.current = false
-      setPostQrNotice('')
-      clearTypedReference()
-      return doStart(epoch, extra)
-    }
-    var pair = readTypedPair()
-    if (pair === null) {
-      postQrSessionRef.current = false
-      setPostQrNotice('E_MIMO_AUTH_POSTQR_DISABLED')
-      clearTypedReference()
-      return doStart(epoch, extra)
-    }
-    return computeExpectedDigest(pair).then(function (digest) {
-      pair.userId = ''
-      pair.cUserId = ''
-      clearTypedReference()          // 算完立刻清 input.value + state/ref
-      if (typeof digest !== 'string' || !/^[0-9a-f]{64}$/.test(digest)) {
-        postQrSessionRef.current = false
-        setPostQrNotice('E_MIMO_AUTH_POSTQR_DISABLED')
-        return doStart(epoch, extra)
-      }
-      postQrSessionRef.current = true
-      setPostQrNotice('')
-      extra.postQrConsent = true
-      extra.expectedAccountType = 'mimo-platform'
-      extra.expectedIdentityDigest = digest
-      return doStart(epoch, extra)
-    })
-  }
-  function doStart(epoch, extra) {
-    return post('start', extra, true).then(function (reply) {
-      if (!isCurrent(epoch)) return null
-      if (reply === null || reply.ok !== true) return null
-      if (typeof ticketRef.current !== 'string') { goPhase('failed'); showFailure('E_MIMO_AUTH_FLOW', 'unknown'); return null }
-      setFailure(null)
-      goPhase('created')
-      return null
-    })
-  }
-  function beginFlow() {
-    var epoch = localEpochRef.current
-    setQr(null)
-    setQrError('')
-    revokeQr()
-    qrFlagRef.current = false
-    setUiAction('begin')
-    return post('begin', null, true).then(function (reply) {
-      if (!isCurrent(epoch)) return null
-      // begin 没成功（失败/取消/旧代次）时不得再 goRunning 覆盖已经写下的 failure。
-      if (reply === null || reply.ok !== true) return null
-      if (phaseRef.current === 'failed' || phaseRef.current === 'forbidden' || phaseRef.current === 'cancelled') return null
-      goPhase('running')
-      setUiAction('status')
-      return post('status')
-    })
-  }
-  /**
-   * 控制类 ACK（approve/deny/confirm）：Host 成功包**只有** `{ok,code,bootEpoch}`（routes.js:139-148），
-   * 不是状态快照。所以：
-   *  - 成功 → 不伪造任何 state，立刻取**一次真实 status** 推进/结束（不依赖既有 timer，
-   *    `confirm` 在 done 相位时 timer 可能已停）；
-   *  - 失败 → `applyReply` 已按固定码+阶段呈现，这里不再补 status、不吞码；
-   *  - 已关闭/旧代次 → `isCurrent` 拦住，迟到 ACK 不复活、不发请求。
-   */
-  function ackThenStatus(action, extra, onAck) {
-    var epoch = localEpochRef.current
-    return post(action, extra, true).then(function (reply) {
-      if (!isCurrent(epoch)) return null
-      if (reply === null || reply.ok !== true) return null
-      if (phaseRef.current === 'failed' || phaseRef.current === 'forbidden' || phaseRef.current === 'cancelled') return null
-      // 只有**控制 ACK 确实成功**且会话仍有效时才回调（不是靠 status 200 代替）。
-      if (typeof onAck === 'function') onAck()
-      setUiAction('status')
-      return post('status')
-    })
-  }
-  function approveTarget() {
-    if (view === null || typeof view.approvalId !== 'string' || view.approvalId === '') return null
-    if (approvalSentRef.current === view.approvalId) return null // 双击/竞态：同一 approvalId 只发一次
-    approvalSentRef.current = view.approvalId
-    return ackThenStatus('approve', { approvalId: view.approvalId })
-  }
-  /** 拒绝：只回传 opaque approvalId（无 URL/method/purpose），Host 生效、零目标请求。 */
-  function denyTarget() {
-    if (view === null || typeof view.approvalId !== 'string' || view.approvalId === '') return null
-    if (approvalSentRef.current === view.approvalId) return null
-    approvalSentRef.current = view.approvalId
-    return ackThenStatus('deny', { approvalId: view.approvalId })
-  }
-  function confirmVerdict(verdict) { return ackThenStatus('confirm', { verdict: verdict }) }
-  /** G2：本人意图确认（不创造身份）；ACK 后由 ackThenStatus 取一次真实 snapshot。只允许一次。 */
-  function confirmIdentityIntent(verdict) {
-    if (view === null || view.identityMasked === '') return null
-    if (identityPendingRef.current !== '' || identityConfirmedRef.current !== '') return null
-    var safeVerdict = verdict === 'match' ? 'match' : 'mismatch'
-    identityPendingRef.current = safeVerdict
-    return ackThenStatus('confirmIdentity', { verdict: safeVerdict }, function () {
-      // 控制 ACK 成功后才确认；mismatch 不放出 G3。
-      identityConfirmedRef.current = safeVerdict
-    })
-  }
-  /** G3：一次只读余额；UI 去重（同 generation 只发一次），Host 侧仍单次权威。 */
-  function readBalanceOnce() {
-    if (identityConfirmedRef.current !== 'match') return null
-    var key = typeof hostGenRef.current === 'number' ? String(hostGenRef.current) : 'gen'
-    if (balanceSentRef.current === key) return null
-    balanceSentRef.current = key
-    return ackThenStatus('readBalance', null)
-  }
-  /** 取消：先快照 → 本地全清 → 再用独立有界请求通知 Host。 */
-  function cancelFlow() {
-    var snapshot = snapshotOf()
-    bumpLocalEpoch()
-    stopLocal()
-    forgetSession()
-    resetDynamicOptIn()
-    resetPostQr()
-    setView(null)
-    setUiAction('cancel')
-    setFailure(null)
-    setQrError('')
-    goPhase('cancelled')
-    setCode('')
-    if (snapshot === null) return Promise.resolve(null)
-    return sendCancel('cancel', snapshot).then(function (reply) {
-      if (reply !== null && reply.ok === true) return null
-      // 传输失败/被拒：只停止本地工作，不声称 Host 已确认。
-      showFailure(mimoAuthLocalCode(reply !== null && reply.code !== '' ? reply.code : 'E_UNKNOWN'), '', null)
-      return null
-    })
-  }
-  function logoutFlow() {
-    var snapshot = snapshotOf()
-    bumpLocalEpoch()
-    stopLocal()
-    forgetSession()
-    resetDynamicOptIn()
-    resetPostQr()
-    setView(null)
-    setUiAction('logout')
-    setFailure(null)
-    setQrError('')
-    goPhase('ready')
-    setCode('')
-    if (snapshot === null) return Promise.resolve(null)
-    return sendCancel('logout', snapshot).then(function (reply) {
-      if (reply !== null && reply.ok === true) return null
-      showFailure(mimoAuthLocalCode(reply !== null && reply.code !== '' ? reply.code : 'E_UNKNOWN'), '', null)
-      return null
-    })
-  }
-  function retry() {
-    var snapshot = snapshotOf()
-    bumpLocalEpoch()
-    stopLocal()
-    forgetSession()
-    resetDynamicOptIn()
-    resetPostQr()
-    setView(null)
-    setCode('')
-    setFailure(null)
-    setQrError('')
-    setUiAction('')
-    goPhase('ready')
-    if (snapshot !== null) sendCancel('cancel', snapshot)
-  }
-
-  function balanceLine(balance) {
-    if (balance === null || balance === undefined) return null
-    if (typeof balance.balance !== 'number') return null
-    var parts = ['余额 ' + String(balance.balance)]
-    if (typeof balance.cashBalance === 'number') parts.push('现金 ' + String(balance.cashBalance))
-    if (typeof balance.giftBalance === 'number') parts.push('赠送 ' + String(balance.giftBalance))
-    var currency = typeof balance.currency === 'string' && balance.currency !== '' ? ' ' + balance.currency : ''
-    return MIMO_AUTH_TEXT.balanceTitle + '：' + parts.join(' / ') + currency
-  }
-
-  var body = []
-  if (phase === 'opening') {
-    body.push(h('p', { key: 'opening', style: settingsHintStyle, 'data-mimo-auth-phase': 'opening' }, MIMO_AUTH_TEXT.opening))
-  } else if (phase === 'unsupported' || phase === 'forbidden' || phase === 'failed') {
-    var head = phase === 'unsupported' ? MIMO_AUTH_TEXT.unsupported
-      : phase === 'forbidden' ? MIMO_AUTH_TEXT.forbidden
-      : MIMO_AUTH_TEXT.failed
-    var shownCode = failure !== null && typeof failure.code === 'string' && failure.code !== ''
-      ? failure.code
-      : (code !== '' ? code : 'E_MIMO_AUTH_FLOW')
-    var shownStage = mimoAuthFailureStage(failure === null ? '' : failure.stage)
-    var detail = '（' + MIMO_AUTH_TEXT.failureDetail + '：' + shownCode
-      + (shownStage === 'unknown' ? '' : ' / ' + MIMO_AUTH_TEXT.hostStage + '：' + shownStage) + '）'
-    body.push(h('p', {
-      key: 'problem', style: settingsHintStyle, 'data-mimo-auth-phase': phase,
-      'data-mimo-auth-code': shownCode,
-      'data-mimo-auth-stage': shownStage,
-    }, head + detail))
-    // Host 诊断（仅 E_URL_PURPOSE_MISMATCH + 对象）：三个固定枚举，绝不放 URL/hostname/path/query。
-    var diag = failure !== null && failure !== undefined ? failure.diagnostic : null
-    if (diag !== null && diag !== undefined) {
-      body.push(h('p', {
-        key: 'diag', style: settingsHintStyle, 'data-mimo-auth-diag': 'shown',
-        'data-mimo-auth-purpose': diag.rejectedPurpose,
-        'data-mimo-auth-reason': diag.rejectedReason,
-        'data-mimo-auth-host-class': diag.hostClass,
-      }, MIMO_AUTH_TEXT.diagPurpose + '：' + diag.rejectedPurpose
-        + ' · ' + MIMO_AUTH_TEXT.diagReason + '：' + diag.rejectedReason
-        + ' · ' + MIMO_AUTH_TEXT.diagHostClass + '：' + diag.hostClass))
-    }
-    if (uiAction !== '') {
-      body.push(h('p', { key: 'ui-action', style: settingsHintStyle, 'data-mimo-auth-ui-action': uiAction },
-        MIMO_AUTH_TEXT.localAction + '：' + uiAction))
-    }
-    body.push(h('button', { key: 'retry', type: 'button', 'data-mimo-auth': 'retry', style: settingsButtonStyle, onClick: retry }, MIMO_AUTH_TEXT.retry))
-  } else if (phase === 'ready') {
-    body.push(h('p', { key: 'ready', style: settingsHintStyle, 'data-mimo-auth-phase': 'ready' }, MIMO_AUTH_TEXT.idleHint))
-    // 仅当这次 ready 是"带错误的退出"时才加受控局部错误行（正常 ready 不加）。
-    if (code !== '') {
-      body.push(h('p', {
-        key: 'ready-local-error', style: settingsHintStyle, 'data-mimo-auth-local': 'unconfirmed',
-        'data-mimo-auth-code': code, 'data-mimo-auth-ui-action': uiAction === '' ? 'logout' : uiAction,
-      }, MIMO_AUTH_TEXT.logoutUnconfirmed + '（' + MIMO_AUTH_TEXT.failureDetail + '：' + code
-        + ' · ' + MIMO_AUTH_TEXT.localAction + '：' + (uiAction === '' ? 'logout' : uiAction) + '）'))
-    }
-    // 会话级、默认关闭的「动态目标批准」选择：不写 config/mutate/localStorage。
-    body.push(h('label', {
-      key: 'dynamic-optin', style: Object.assign({}, settingsRowStyle, { alignItems: 'flex-start', gap: 6 }),
-      'data-mimo-auth-dynamic': dynamicOptIn === true ? 'on' : 'off',
-    },
-    h('input', {
-      type: 'checkbox', checked: dynamicOptIn === true,
-      'data-mimo-auth-dynamic-optin': 'checkbox',
-      onChange: function (event) {
-        var checked = event !== null && event !== undefined && event.target !== null
-          && event.target !== undefined && event.target.checked === true
-        // 只改「待选值」；已创建会话的锁定值（sessionOptInRef）不会被旧回调改动。
-        dynamicChoiceRef.current = checked
-        setDynamicOptIn(checked)
-      },
-    }),
-    h('span', { style: settingsHintStyle }, MIMO_AUTH_TEXT.dynamicOptIn + ' —— ' + MIMO_AUTH_TEXT.dynamicOptInHint)))
-    // [post-QR local / G1] 独立同意（默认关闭）；与上面的动态 LP 开关完全独立，互不连带。
-    body.push(h('label', {
-      key: 'postqr-consent', style: Object.assign({}, settingsRowStyle, { alignItems: 'flex-start', gap: 6 }),
-      'data-mimo-auth-postqr': postQrOn === true ? 'on' : 'off',
-    },
-    h('input', {
-      type: 'checkbox', checked: postQrOn === true,
-      'data-mimo-auth-postqr-consent': 'checkbox',
-      onChange: function (event) {
-        var checked = event !== null && event !== undefined && event.target !== null
-          && event.target !== undefined && event.target.checked === true
-        postQrChoiceRef.current = checked
-        // 撤勾：**立即**清 typed（input.value + state/ref），避免卸载后残留、重勾恢复 raw。
-        if (checked !== true) clearTypedReference()
-        setPostQrOn(checked)
-      },
-    }),
-    h('span', { style: settingsHintStyle }, MIMO_AUTH_TEXT.postQrConsent + ' —— ' + MIMO_AUTH_TEXT.postQrConsentHint)))
-    if (postQrOn === true) {
-      body.push(h('input', {
-        key: 'postqr-user', type: 'password', autoComplete: 'off', spellCheck: false,
-        placeholder: MIMO_AUTH_TEXT.postQrUserLabel, value: typedRef.userId, style: settingsInputStyle,
-        'data-mimo-auth-postqr-input': 'userId',
-        ref: userIdInputRef,
-        onChange: function (event) {
-          var next = event !== null && event !== undefined && event.target !== undefined && typeof event.target.value === 'string'
-            ? event.target.value : ''
-          setTypedRef({ userId: next, cUserId: typedRef.cUserId })
-        },
-      }))
-      body.push(h('input', {
-        key: 'postqr-cid', type: 'password', autoComplete: 'off', spellCheck: false,
-        placeholder: MIMO_AUTH_TEXT.postQrCidLabel, value: typedRef.cUserId, style: settingsInputStyle,
-        'data-mimo-auth-postqr-input': 'cUserId',
-        ref: cUserIdInputRef,
-        onChange: function (event) {
-          var next = event !== null && event !== undefined && event.target !== undefined && typeof event.target.value === 'string'
-            ? event.target.value : ''
-          setTypedRef({ userId: typedRef.userId, cUserId: next })
-        },
-      }))
-      body.push(h('p', { key: 'postqr-mode', style: settingsHintStyle, 'data-mimo-auth-local': 'simulated' },
-        MIMO_AUTH_TEXT.localOnlyNote + '（producer 硬 disabled；不会发起真实余额请求）'))
-    }
-    if (postQrNotice !== '') {
-      body.push(h('p', {
-        key: 'postqr-notice', style: settingsHintStyle, 'data-mimo-auth-postqr-code': postQrNotice,
-      }, MIMO_AUTH_TEXT.postQrDisabled + '（' + postQrNotice + '）'))
-    }
-    body.push(h('button', { key: 'start', type: 'button', 'data-mimo-auth': 'start', style: settingsButtonStyle, onClick: startSession }, MIMO_AUTH_TEXT.start))
-  } else if (phase === 'created') {
-    body.push(h('p', { key: 'created', style: settingsHintStyle, 'data-mimo-auth-phase': 'created' }, MIMO_AUTH_TEXT.created))
-    body.push(h('p', { key: 'state', style: settingsHintStyle, 'data-mimo-auth-state': 'idle' }, MIMO_AUTH_TEXT.stateIdle))
-    if (postQrNotice !== '') {
-      body.push(h('p', {
-        key: 'postqr-notice-created', style: settingsHintStyle, 'data-mimo-auth-postqr-code': postQrNotice,
-      }, MIMO_AUTH_TEXT.postQrDisabled + '（' + postQrNotice + '）'))
-    }
-    body.push(h('button', { key: 'begin', type: 'button', 'data-mimo-auth': 'begin', style: settingsButtonStyle, onClick: beginFlow }, MIMO_AUTH_TEXT.begin))
-    body.push(h('button', { key: 'cancel', type: 'button', 'data-mimo-auth': 'cancel', style: settingsButtonStyle, onClick: cancelFlow }, MIMO_AUTH_TEXT.cancel))
-  } else if (phase === 'running' || phase === 'done' || phase === 'cancelled') {
-    var qrState = qr !== null ? 'shown' : (qrError !== '' ? 'failed' : (view !== null && view.hasQr === true ? 'loading' : 'pending'))
-    body.push(h('div', {
-      key: 'qr', 'data-mimo-auth-qr': qrState,
-      style: { width: 132, height: 132, borderRadius: 8, border: '1px dashed var(--dsw-alias-border-l2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: 'var(--dsw-alias-label-tertiary)', overflow: 'hidden', textAlign: 'center', padding: 4 },
-    }, qr !== null
-      ? h('img', { src: qr, alt: MIMO_AUTH_TEXT.qrAlt, width: 128, height: 128 })
-      : h('span', {
-        'data-mimo-auth-qr-code': qrState === 'failed' ? qrError : '',
-        'data-mimo-auth-ui-action': qrState === 'failed' ? 'qr' : '',
-      },
-      qrState === 'failed'
-        ? (MIMO_AUTH_TEXT.qrFailed + '（' + qrError + '） · ' + MIMO_AUTH_TEXT.localAction + '：qr')
-        : (qrState === 'loading' ? MIMO_AUTH_TEXT.qrLoading : MIMO_AUTH_TEXT.qrPending))))
-    body.push(h('p', { key: 'state', style: settingsHintStyle, 'data-mimo-auth-phase': phase, 'data-mimo-auth-state': view !== null ? view.state : '' },
-      phase === 'done' ? MIMO_AUTH_TEXT.done : (phase === 'cancelled' ? MIMO_AUTH_TEXT.cancelled : MIMO_AUTH_TEXT.running)))
-    if (phase === 'cancelled' && code !== '') {
-      body.push(h('p', {
-        key: 'cancel-unconfirmed', style: settingsHintStyle, 'data-mimo-auth-cancel': 'unconfirmed',
-        'data-mimo-auth-code': code, 'data-mimo-auth-ui-action': uiAction,
-      }, MIMO_AUTH_TEXT.cancelUnconfirmed + '（' + MIMO_AUTH_TEXT.failureDetail + '：' + code
-        + (uiAction === '' ? '' : ' · ' + MIMO_AUTH_TEXT.localAction + '：' + uiAction) + '）'))
-    }
-    if (view !== null && typeof view.remainingMs === 'number') {
-      body.push(h('p', { key: 'remain', style: settingsHintStyle, 'data-mimo-auth-remaining': String(Math.floor(view.remainingMs / 1000)) }, '剩余约 ' + String(Math.max(0, Math.floor(view.remainingMs / 1000))) + ' 秒'))
-    }
-    if (phase === 'running' && view !== null && typeof view.approvalId === 'string' && view.approvalId !== '') {
-      // 会话级开关 + 纯 origin 校验都通过才渲染"允许这一次"；否则只给固定码，不渲染任何批准控件。
-      var approvedOrigin = mimoAuthDynamicOrigin(view.approvalOrigin)
-      if (sessionOptInRef.current !== true) {
-        body.push(h('p', {
-          key: 'approval-opt-out', style: settingsHintStyle,
-          'data-mimo-auth-dynamic': 'opted-out', 'data-mimo-auth-code': 'E_MIMO_AUTH_DYNAMIC_OPTIN_REQUIRED',
-        }, MIMO_AUTH_TEXT.dynamicNoOptIn))
-      } else if (approvedOrigin === '') {
-        body.push(h('p', {
-          key: 'approval-invalid', style: settingsHintStyle,
-          'data-mimo-auth-dynamic': 'invalid', 'data-mimo-auth-code': 'E_MIMO_AUTH_DYNAMIC_TARGET_INVALID',
-        }, MIMO_AUTH_TEXT.dynamicTargetInvalid))
-      } else if (view.approvalMethod !== 'GET' || view.approvalPurpose !== 'longPoll') {
-        // 合同只允许 GET + purpose=longPoll；其它一律不渲染可批准控件。
-        body.push(h('p', {
-          key: 'approval-scope', style: settingsHintStyle,
-          'data-mimo-auth-dynamic': 'out-of-scope', 'data-mimo-auth-code': 'E_MIMO_AUTH_DYNAMIC_TARGET_INVALID',
-        }, MIMO_AUTH_TEXT.dynamicTargetInvalid))
-      } else {
-        body.push(h('div', { key: 'approval', 'data-mimo-auth-approval': 'shown', style: { display: 'flex', flexDirection: 'column', gap: 4 } },
-          h('p', { style: settingsHintStyle }, MIMO_AUTH_TEXT.dynamicTitle),
-          // 完整 origin（不截断、不含 path/query/nonce/ticket）
-          h('p', { style: settingsHintStyle, 'data-mimo-auth-origin': 'shown' }, approvedOrigin),
-          h('p', { style: settingsHintStyle, 'data-mimo-auth-method': 'GET' }, MIMO_AUTH_TEXT.dynamicMethod + '：GET'),
-          h('p', { style: settingsHintStyle, 'data-mimo-auth-purpose-fixed': 'longPoll' },
-            MIMO_AUTH_TEXT.dynamicPurposeLabel + '：' + MIMO_AUTH_TEXT.dynamicPurposeLongPoll),
-          h('button', { type: 'button', 'data-mimo-auth': 'approve', style: settingsButtonStyle, onClick: approveTarget }, MIMO_AUTH_TEXT.approveOnce),
-          // 拒绝走真实 `deny` action（只带 approvalId，不带 URL）；Host 生效、零目标请求。
-          h('button', { type: 'button', 'data-mimo-auth': 'deny', style: settingsButtonStyle, onClick: denyTarget }, MIMO_AUTH_TEXT.refuseOnce)))
-      }
-    }
-    // [post-QR local] G2 身份（只展示 Host 的 mask）+ 本人意图；G3 独立一次性 readBalance。
-    if (phase === 'running' && postQrSessionRef.current === true && view !== null) {
-      body.push(h('p', { key: 'postqr-running-note', style: settingsHintStyle, 'data-mimo-auth-local': 'simulated' },
-        MIMO_AUTH_TEXT.localOnlyNote + '（producer 硬 disabled）'))
-      if (view.identityMasked !== '') {
-        body.push(h('p', {
-          key: 'identity', style: settingsHintStyle, 'data-mimo-auth-identity': view.identityMasked,
-        }, MIMO_AUTH_TEXT.identityTitle + '：' + view.identityMasked))
-        if (identityPendingRef.current === '' && identityConfirmedRef.current === '') {
-          body.push(h('div', { key: 'identity-actions', style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
-            h('button', { type: 'button', 'data-mimo-auth': 'identity-match', style: settingsButtonStyle, onClick: function () { return confirmIdentityIntent('match') } }, MIMO_AUTH_TEXT.identityMine),
-            h('button', { type: 'button', 'data-mimo-auth': 'identity-mismatch', style: settingsButtonStyle, onClick: function () { return confirmIdentityIntent('mismatch') } }, MIMO_AUTH_TEXT.identityNotMine)))
-        } else if (identityConfirmedRef.current === 'match') {
-          body.push(h('button', { type: 'button', 'data-mimo-auth': 'read-balance', style: settingsButtonStyle, onClick: readBalanceOnce }, MIMO_AUTH_TEXT.readBalanceOnce))
-        } else if (identityPendingRef.current !== '') {
-          body.push(h('p', { key: 'identity-pending', style: settingsHintStyle, 'data-mimo-auth-identity-pending': 'waiting' },
-            MIMO_AUTH_TEXT.identityPending))
-        }
-      }
-      if (view.balance !== null) {
-        var balLine = balanceLine(view.balance)
-        if (balLine !== null) {
-          body.push(h('p', { key: 'postqr-balance', style: settingsHintStyle, 'data-mimo-auth-balance': 'shown' }, balLine))
-        }
-      }
-    }
-    if (phase === 'running' && view !== null && view.awaitingBalanceMatch === true) {
-      body.push(h('div', { key: 'confirm', style: { display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' } },
-        h('p', { style: settingsHintStyle }, MIMO_AUTH_TEXT.confirmTitle),
-        h('button', { type: 'button', 'data-mimo-auth': 'confirm-match', style: settingsButtonStyle, onClick: function () { return confirmVerdict('match') } }, MIMO_AUTH_TEXT.confirmMatch),
-        h('button', { type: 'button', 'data-mimo-auth': 'confirm-mismatch', style: settingsButtonStyle, onClick: function () { return confirmVerdict('mismatch') } }, MIMO_AUTH_TEXT.confirmMismatch),
-        h('button', { type: 'button', 'data-mimo-auth': 'confirm-later', style: settingsButtonStyle, onClick: function () { return confirmVerdict('later') } }, MIMO_AUTH_TEXT.confirmLater)))
-    }
-    if (phase === 'running' || phase === 'cancelled') {
-      body.push(h('button', { key: 'cancel', type: 'button', 'data-mimo-auth': 'cancel', style: settingsButtonStyle, onClick: cancelFlow }, MIMO_AUTH_TEXT.cancel))
-    } else {
-      var line = view !== null ? balanceLine(view.balance) : null
-      if (line !== null) body.push(h('p', { key: 'balance', style: settingsHintStyle, 'data-mimo-auth-balance': 'shown' }, line))
-      body.push(h('button', { key: 'logout', type: 'button', 'data-mimo-auth': 'logout', style: settingsButtonStyle, onClick: logoutFlow }, MIMO_AUTH_TEXT.logout))
-    }
-  }
-
-  if (open !== true) {
-    return h('div', { 'data-mimo-auth-panel': 'closed', style: { display: 'flex', flexDirection: 'column', gap: 6 } },
-      // [0.10.2] 默认态只保留：状态一行 + 主按钮 + 一行操作提示（开发者说明不在默认态渲染）。
-      h('p', { key: 'status', style: settingsHintStyle, 'data-mimo-auth-status': 'signed-out' }, '未配置 Key'),
-      h('button', {
-        type: 'button', 'data-mimo-auth': 'entry', disabled: disabled === true,
-        style: Object.assign({}, settingsButtonStyle, disabled === true ? settingsButtonDisabledStyle : {}),
-        onClick: begin,
-      }, MIMO_AUTH_TEXT.entry),
-      h('p', { style: settingsHintStyle }, MIMO_AUTH_TEXT.closedHint),
-    )
-  }
-  return h('div', { 'data-mimo-auth-panel': phase, style: { display: 'flex', flexDirection: 'column', gap: 6 } },
-    h('div', { key: 'head', style: { display: 'flex', alignItems: 'center', gap: 8 } },
-      h('span', { style: Object.assign({}, settingsHintStyle, { flex: '1 1 auto' }) }, MIMO_AUTH_TEXT.entry),
-      h('button', { key: 'close', type: 'button', 'data-mimo-auth': 'close', style: settingsButtonStyle, onClick: close }, MIMO_AUTH_TEXT.close)),
-    h('p', { key: 'notice', style: settingsHintStyle }, MIMO_AUTH_TEXT.notice),
-    body,
-  )
-}
-
-// ===========================================================================
-// [display 2026-11-05] MiMo 本机显示会话（sessionDisplay）· 客户端半
-//
-// 分工与硬边界：
-//   - 数据只来自 Host 的白名单 DTO（本文件 picker 逐字段重建）。**客户端永不持有凭据**：
-//     credential / expected / actual / accountRef / grant 内部一律不出现。
-//   - **单例 store**：胶囊、详情、设置面板共用**一条**轮询定时器。Host 侧 displayStatus
-//     是纯观察（0 上游调用），因此多挂载/多订阅不会放大请求。
-//   - boot 变化（Host 重启）立刻丢弃旧 snapshot 与全部旧动作代次；迟到的旧 boot
-//     status/stop 一律按 epoch 丢弃，**不得覆盖新 boot**。
-//   - 生产 DI 未注入 ⇒ Host 回 `displaySupported:false` 的**可信 absent**（不是通信故障）；
-//     此时 overlay 不生效，手工 Cookie 来源原样保留，不被遮蔽。
-//   - 收起/卸载只停本地轮询，**不 stop** Host 会话；只有显式「停止」或 pending 视图被
-//     明确取消才发 displayStop。
-// ===========================================================================
-var MIMO_DISPLAY_ROUTE = MIMO_AUTH_ROUTE
-var MIMO_DISPLAY_ACTIONS = {
-  displayStart: true,
-  displayStatus: true,
-  displayRead: true,
-  displayConfirm: true,
-  displayGrant: true,
-  displayStop: true,
-}
-var MIMO_DISPLAY_STATES = { absent: true, holding: true, verified: true, stopped: true, expired: true }
-// display 侧公开 freshness 闭集与 Host（remembered-session.js / routes.js）**同一套**：
-// Host 在「本人暂停」时如实给 'paused'（暂停不冒充 fresh），客户端若把它折叠成 null，
-// 「详情展开不得强刷」的 paused 闸门就永远不可达、暂停也会被当成正常值。
-var MIMO_DISPLAY_FRESHNESS = { fresh: true, stale: true, failed: true, paused: true }
-/** DTO 里允许出现的 code（其余一律折叠成空串，绝不透上游自由文本）。 */
-var MIMO_DISPLAY_CODES = {
-  E_NONE: true,
-  E_MIMO_AUTH_DISPLAY_DISABLED: true,
-  E_MIMO_AUTH_BAD_REQUEST: true,
-  E_MIMO_AUTH_BOOT_STALE: true,
-  E_MIMO_AUTH_DISPLAY_STALE_ID: true,
-  E_MIMO_AUTH_DISPLAY_ACTIVE: true,
-  E_MIMO_AUTH_DISPLAY_BUSY: true,
-  E_MIMO_AUTH_DISPLAY_READ_USED: true,
-  E_MIMO_AUTH_DISPLAY_NOT_VERIFIED: true,
-  E_MIMO_AUTH_DISPLAY_CONFIRM_REQUIRED: true,
-  E_MIMO_AUTH_DISPLAY_NO_PENDING: true,
-  E_MIMO_AUTH_DISPLAY_GRANT_USED: true,
-  E_MIMO_AUTH_DISPLAY_STOPPED: true,
-  E_MIMO_AUTH_DISPLAY_TRANSIENT_LIMIT: true,
-  E_MIMO_AUTH_DISPLAY_REFRESH_EXHAUSTED: true,
-  E_MIMO_AUTH_DISPLAY_AUTH_REJECTED: true,
-  E_MIMO_AUTH_DISPLAY_IDENTITY_UNKNOWN: true,
-  E_MIMO_AUTH_IDENTITY_MISMATCH: true,
-  E_CREDENTIAL_FIELD_INVALID: true,
-  E_MIMO_AUTH_SESSION_EXPIRED: true,
-  E_REQUEST_TIMEOUT: true,
-  E_NETWORK: true,
-  E_BALANCE_HTTP: true,
-  E_BALANCE_CODE: true,
-  E_BALANCE_PARSE: true,
-  E_ABORTED: true,
-  E_MIMO_AUTH_UNAVAILABLE: true,
-}
-/**
- * managed 显示会话的 `code` 直接来自 remembered controller，闭集是
- * `plans/mimo-auth/remembered-session.js: REMEMBERED_CODES`。这里只镜像**另外两张表里没有的**
- * 固定值（其余已在上面的 display / console 表里），**逐条显式列出、不用正则一概放行** ——
- * 未知码仍旧折叠成 ''，绝不把上游自由文本送进 DOM。
- * 典型：读超时 `E_MIMO_REMEMBERED_READ_TIMEOUT`（counted read failure，第 5 次会公开 failed）。
- */
-var MIMO_REMEMBERED_CODES = {
-  E_MIMO_REMEMBERED_DISABLED: true,
-  E_MIMO_REMEMBERED_UNSUPPORTED: true,
-  E_MIMO_REMEMBERED_STALE_ID: true,
-  E_MIMO_REMEMBERED_BUSY: true,
-  E_MIMO_REMEMBERED_NOT_READY: true,
-  E_MIMO_REMEMBERED_QR_UNAVAILABLE: true,
-  E_MIMO_REMEMBERED_CONSENT_REQUIRED: true,
-  E_MIMO_REMEMBERED_CONFIRM_FAILED: true,
-  E_MIMO_REMEMBERED_SAVE_FAILED: true,
-  E_MIMO_REMEMBERED_PAUSE_SAVE_FAILED: true,
-  E_MIMO_REMEMBERED_FORGET_FAILED: true,
-  E_MIMO_REMEMBERED_RESTORE_FAILED: true,
-  E_MIMO_REMEMBERED_RECORD_UNREADABLE: true,
-  E_MIMO_REMEMBERED_BINDING_MISMATCH: true,
-  E_MIMO_REMEMBERED_READ_TIMEOUT: true,
-}
-var MIMO_DISPLAY_POLL_MS = 3000
-/** [N3] 单次请求上限（含 JSON 解析）；超时按"无结果"处理，迟到结果丢弃。 */
-var MIMO_DISPLAY_REQUEST_TIMEOUT_MS = 10000
-var MIMO_DISPLAY_NAMESPACE_MAX = 64
-var MIMO_DISPLAY_IDENTIFIER_MAX = 128
-
-// ===========================================================================
-// [console 2026-11-06] 正式 console 扫码登录：**复用**上面同一个 store / pump / flight /
-// boot / generation / revision / action barrier，不另起一套后台上游调度。
-// 观察只靠 displayStatus（Host 在同一条响应里附带 console 白名单快照）。
-// ===========================================================================
-var MIMO_CONSOLE_ACTIONS = {
-  consoleStart: true,
-  consoleBegin: true,
-  consoleStatus: true,
-  consoleStop: true,
-  consoleAttach: true,
-  consoleApprove: true,
-  consoleDeny: true,
-}
-var MIMO_CONSOLE_STATES = {
-  absent: true, idle: true, authorizing: true, ready: true, failed: true, stopped: true, expired: true, claimed: true,
-}
-var MIMO_CONSOLE_CODES = {
-  E_NONE: true,
-  E_MIMO_CONSOLE_SESSION_DISABLED: true,
-  E_MIMO_AUTH_BAD_REQUEST: true,
-  E_MIMO_CONSOLE_STALE_ID: true,
-  E_MIMO_CONSOLE_SESSION_BUSY: true,
-  E_MIMO_CONSOLE_BEGIN_USED: true,
-  E_MIMO_CONSOLE_NOT_READY: true,
-  E_MIMO_CONSOLE_QR_UNAVAILABLE: true,
-  E_MIMO_AUTH_BOOT_STALE: true,
-  E_MIMO_AUTH_TARGET_EXPIRED: true,
-  E_MIMO_AUTH_TARGET_INVALID: true,
-  E_MIMO_AUTH_CANCELLED: true,
-  E_MIMO_AUTH_REJECTED: true,
-  E_MIMO_AUTH_APPROVAL_MISSING: true,
-  E_MIMO_AUTH_APPROVAL_UNKNOWN: true,
-  E_MIMO_AUTH_APPROVAL_EXPIRED: true,
-  E_MIMO_AUTH_UNAVAILABLE: true,
-  E_MIMO_CONSOLE_AUTH_REQUIRED: true,
-  E_MIMO_CONSOLE_AUTH_RESULT_SEED_MISSING: true,
-  E_MIMO_CONSOLE_AUTH_RESULT_ID_INVALID: true,
-  E_MIMO_CONSOLE_ACCOUNT_CREDENTIAL_MISSING: true,
-  E_MIMO_CONSOLE_PLATFORM_CREDENTIAL_MISSING: true,
-  E_MIMO_CONSOLE_IDENTITY_MISMATCH: true,
-  E_MIMO_CONSOLE_UNSUPPORTED: true,
-  E_MIMO_CONSOLE_JSON_UNSUPPORTED: true,
-  E_MIMO_CONSOLE_COOKIE_HEADER_LIMIT: true,
-  E_MIMO_CONSOLE_LP_COOKIE_DOMAIN: true,
-  E_MIMO_CONSOLE_LP_COOKIE_POLICY: true,
-  E_MIMO_CONSOLE_LP_COOKIE_EMPTY: true,
-  E_MIMO_CONSOLE_LP_COOKIE_CRLF: true,
-  E_MIMO_CONSOLE_LP_COOKIE_TOO_LARGE: true,
-  E_MIMO_CONSOLE_LP_COOKIE_BAD_NAME: true,
-  E_MIMO_CONSOLE_LP_COOKIE_BAD_VALUE: true,
-  E_MIMO_CONSOLE_LP_COOKIE_VALUE_FORMAT: true,
-  E_MIMO_CONSOLE_LP_COOKIE_EXPIRY_FORMAT: true,
-  E_MIMO_CONSOLE_LP_COOKIE_STORE_FULL: true,
-  E_MIMO_CONSOLE_LP_COOKIE_BAD_SOURCE: true,
-  E_MIMO_CONSOLE_LP_COOKIE_DUP_DOMAIN: true,
-  E_MIMO_CONSOLE_LP_COOKIE_DUP_VALUE: true,
-  E_MIMO_CONSOLE_LP_COOKIE_COUNT_LIMIT: true,
-  E_MIMO_CONSOLE_LP_COOKIE_PARSE_ERROR: true,
-  E_MIMO_CONSOLE_ACCOUNT_COOKIE_EMPTY: true,
-  E_MIMO_CONSOLE_ACCOUNT_COOKIE_CRLF: true,
-  E_MIMO_CONSOLE_ACCOUNT_COOKIE_TOO_LARGE: true,
-  E_MIMO_CONSOLE_ACCOUNT_COOKIE_BAD_NAME: true,
-  E_MIMO_CONSOLE_ACCOUNT_COOKIE_BAD_VALUE: true,
-  E_MIMO_CONSOLE_ACCOUNT_COOKIE_VALUE_FORMAT: true,
-  E_MIMO_CONSOLE_ACCOUNT_COOKIE_EXPIRY_FORMAT: true,
-  E_MIMO_CONSOLE_ACCOUNT_COOKIE_STORE_FULL: true,
-  E_MIMO_CONSOLE_ACCOUNT_COOKIE_BAD_SOURCE: true,
-  E_MIMO_CONSOLE_ACCOUNT_COOKIE_DUP_DOMAIN: true,
-  E_MIMO_CONSOLE_ACCOUNT_COOKIE_DUP_VALUE: true,
-  E_MIMO_CONSOLE_ACCOUNT_COOKIE_COUNT_LIMIT: true,
-  E_MIMO_CONSOLE_ACCOUNT_COOKIE_PARSE_ERROR: true,
-  E_MIMO_CONSOLE_ACCOUNT_COOKIE_DOMAIN: true,
-  E_MIMO_CONSOLE_ACCOUNT_COOKIE_POLICY: true,
-  E_MIMO_CONSOLE_PLATFORM_COOKIE_DOMAIN: true,
-  E_MIMO_CONSOLE_PLATFORM_COOKIE_POLICY: true,
-  E_MIMO_CONSOLE_PLATFORM_COOKIE_EMPTY: true,
-  E_MIMO_CONSOLE_PLATFORM_COOKIE_CRLF: true,
-  E_MIMO_CONSOLE_PLATFORM_COOKIE_TOO_LARGE: true,
-  E_MIMO_CONSOLE_PLATFORM_COOKIE_BAD_NAME: true,
-  E_MIMO_CONSOLE_PLATFORM_COOKIE_BAD_VALUE: true,
-  E_MIMO_CONSOLE_PLATFORM_COOKIE_VALUE_FORMAT: true,
-  E_MIMO_CONSOLE_PLATFORM_COOKIE_EXPIRY_FORMAT: true,
-  E_MIMO_CONSOLE_PLATFORM_COOKIE_STORE_FULL: true,
-  E_MIMO_CONSOLE_PLATFORM_COOKIE_BAD_SOURCE: true,
-  E_MIMO_CONSOLE_PLATFORM_COOKIE_DUP_DOMAIN: true,
-  E_MIMO_CONSOLE_PLATFORM_COOKIE_DUP_VALUE: true,
-  E_MIMO_CONSOLE_PLATFORM_COOKIE_COUNT_LIMIT: true,
-  E_MIMO_CONSOLE_PLATFORM_COOKIE_PARSE_ERROR: true,
-  E_MIMO_CONSOLE_LP_SEED_CONFLICT: true,
-  E_MIMO_CONSOLE_LP_CHALLENGE: true,
-  E_MIMO_CONSOLE_SSO_CHALLENGE: true,
-  E_MIMO_CONSOLE_SSO_RESPONSE_UNSUPPORTED: true,
-  E_MIMO_CONSOLE_SSO_TARGET_UNSUPPORTED: true,
-  // [sso-target-shape 2026-11-09] 分类枚举镜像（9 个固定值，old generic 保留）
-  E_MIMO_CONSOLE_SSO_TARGET_HTTP_PLATFORM_STS: true,
-  E_MIMO_CONSOLE_SSO_TARGET_HTTP_PLATFORM_OTHER: true,
-  E_MIMO_CONSOLE_SSO_TARGET_HTTPS_PLATFORM_API_STS: true,
-  E_MIMO_CONSOLE_SSO_TARGET_HTTPS_PLATFORM_STS_SLASH: true,
-  E_MIMO_CONSOLE_SSO_TARGET_HTTPS_PLATFORM_OTHER: true,
-  E_MIMO_CONSOLE_SSO_TARGET_ACCOUNT_OTHER: true,
-  E_MIMO_CONSOLE_SSO_TARGET_OTHER_HOST: true,
-  E_MIMO_CONSOLE_SSO_TARGET_UNSAFE_AUTHORITY: true,
-  E_MIMO_CONSOLE_SSO_TARGET_OTHER_SCHEME: true,
-  E_MIMO_CONSOLE_LP_TARGET_UNSUPPORTED: true,
-  E_MIMO_CONSOLE_LP_SID_UNSUPPORTED: true,
-  E_MIMO_CONSOLE_LP_CALLBACK_UNSUPPORTED: true,
-  E_MIMO_CONSOLE_LP_SCHEMA_UNSUPPORTED: true,
-  E_MIMO_CONSOLE_LP_HOST_UNSUPPORTED: true,
-  E_MIMO_CONSOLE_RESPONSE_SIZE: true,
-  E_MIMO_CONSOLE_RESPONSE_REDIRECT: true,
-  E_MIMO_CONSOLE_FLOW: true,
-  E_MIMO_CONSOLE_BUSY: true,
-  E_MIMO_CONSOLE_NOT_VERIFIED: true,
-  E_MIMO_CONSOLE_TRANSIENT: true,
-  E_MIMO_CONSOLE_BALANCE_PARSE: true,
-  E_MIMO_CONSOLE_CREDENTIAL_INVALID: true,
-  E_ABORTED: true,
-}
-var MIMO_CONSOLE_NAMESPACE_FALLBACK = 'xiaomi-account-user-id'
-
-function mimoConsoleCodeOf(value) {
-  return typeof value === 'string' && MIMO_CONSOLE_CODES[value] === true ? value : ''
-}
-/** 逐字段白名单重建 console 快照：不透 rawURL / query / expected / actual / token。 */
-function mimoConsoleOf(raw) {
-  if (raw === null || raw === undefined || typeof raw !== 'object') return null
-  var identity = null
-  if (raw.identity !== null && typeof raw.identity === 'object'
-    && typeof raw.identity.maskedLabel === 'string' && raw.identity.maskedLabel.length > 0) {
-    identity = { maskedLabel: String(raw.identity.maskedLabel).slice(0, 32) }
-  }
-  var approval = null
-  if (raw.approval !== null && typeof raw.approval === 'object'
-    && typeof raw.approval.approvalId === 'string' && mimoAuthHex32(raw.approval.approvalId)
-    && typeof raw.approval.origin === 'string' && raw.approval.origin.length > 0
-    && raw.approval.purpose === 'consoleAuthResult' && raw.approval.method === 'GET') {
-    approval = {
-      approvalId: String(raw.approval.approvalId),
-      origin: String(raw.approval.origin).slice(0, 253),
-      purpose: 'consoleAuthResult',
-      method: 'GET',
-    }
-  }
-  return {
-    supported: raw.supported === true,
-    state: typeof raw.state === 'string' && MIMO_CONSOLE_STATES[raw.state] === true ? raw.state : 'absent',
-    authId: mimoAuthHex32(raw.authId) ? String(raw.authId) : null,
-    generation: mimoAuthSafeInt(raw.generation) ? raw.generation : 0,
-    revision: mimoAuthSafeInt(raw.revision) ? raw.revision : 0,
-    code: mimoConsoleCodeOf(raw.code),
-    expiresAt: typeof raw.expiresAt === 'number' && isFinite(raw.expiresAt) ? raw.expiresAt : null,
-    hasQr: raw.hasQr === true,
-    identity: identity,
-    approval: approval,
-    canBegin: raw.canBegin === true,
-    canAttach: raw.canAttach === true,
-    canStop: raw.canStop === true,
-  }
-}
-
-function mimoDisplayCodeOf(value) {
-  if (typeof value !== 'string') return ''
-  if (MIMO_DISPLAY_CODES[value] === true) return value
-  // managed 显示会话的 `code` 来自 remembered controller（固定 console 协议码闭集，
-  // 例如读失败 E_MIMO_CONSOLE_TRANSIENT / E_MIMO_CONSOLE_BALANCE_PARSE）。
-  // 两张表都在本文件里、都是闭集，未知码仍旧折叠成 ''，绝不透上游自由文本。
-  if (MIMO_CONSOLE_CODES[value] === true) return value
-  // REMEMBERED 固定码（读超时/记录不可读/binding 不符…）：同样逐条白名单，不用正则。
-  return MIMO_REMEMBERED_CODES[value] === true ? value : ''
-}
-function mimoDisplayAmount(value) {
-  return typeof value === 'number' && isFinite(value) && value >= 0 ? value : null
-}
-/** 币种必须可证：缺失**不默认 CNY**（旧 session.js 的 projectBalance 会补 CNY，这里刻意不复用）。 */
-function mimoDisplayBalanceOf(raw) {
-  if (raw === null || typeof raw !== 'object') return null
-  var main = mimoDisplayAmount(raw.balance)
-  if (main === null) return null
-  var currency = typeof raw.currency === 'string' ? raw.currency.replace(/\s+/g, '').toUpperCase() : ''
-  if (!/^[A-Z]{2,8}$/.test(currency)) return null
-  var out = { balance: main, currency: currency }
-  var cash = mimoDisplayAmount(raw.cashBalance)
-  if (cash !== null) out.cashBalance = cash
-  var gift = mimoDisplayAmount(raw.giftBalance)
-  if (gift !== null) out.giftBalance = gift
-  return out
-}
-/** 逐字段重建 DTO；未知字段一律丢弃（防上游塞 token/URL/错误正文）。 */
-function mimoDisplayDisplayOf(raw) {
-  if (raw === null || typeof raw !== 'object') return null
-  var state = typeof raw.state === 'string' && MIMO_DISPLAY_STATES[raw.state] === true ? raw.state : 'absent'
-  var freshness = typeof raw.freshness === 'string' && MIMO_DISPLAY_FRESHNESS[raw.freshness] === true ? raw.freshness : null
-  var identity = null
-  if (raw.identity !== null && typeof raw.identity === 'object'
-    && typeof raw.identity.maskedLabel === 'string' && raw.identity.maskedLabel.length > 0) {
-    identity = { maskedLabel: String(raw.identity.maskedLabel).slice(0, 32) }
-  }
-  var fetchedAt = typeof raw.fetchedAt === 'number' && isFinite(raw.fetchedAt) && raw.fetchedAt > 0 ? raw.fetchedAt : null
-  var local = raw.localLimits !== null && typeof raw.localLimits === 'object' ? raw.localLimits : null
-  return {
-    displaySupported: raw.displaySupported === true,
-    selected: raw.selected === true,
-    managed: raw.managed === true,
-    readFailures: mimoAuthSafeInt(raw.readFailures) && raw.readFailures >= 0 && raw.readFailures <= 5 ? raw.readFailures : 0,
-    state: state,
-    displayId: mimoAuthHex32(raw.displayId) ? String(raw.displayId).toLowerCase() : null,
-    generation: mimoAuthSafeInt(raw.generation) ? raw.generation : 0,
-    // 非密单调修订号：只接受不倒退的值（N1）
-    revision: mimoAuthSafeInt(raw.revision) ? raw.revision : 0,
-    identity: identity,
-    balance: mimoDisplayBalanceOf(raw.balance),
-    fetchedAt: fetchedAt,
-    freshness: freshness,
-    code: mimoDisplayCodeOf(raw.code),
-    awaitingBalanceMatch: raw.awaitingBalanceMatch === true,
-    canRead: raw.canRead === true,
-    canGrant: raw.canGrant === true,
-    canStop: raw.canStop === true,
-    refreshCount: mimoAuthSafeInt(raw.refreshCount) ? raw.refreshCount : 0,
-    maxAutoRefresh: mimoAuthSafeInt(raw.maxAutoRefresh) ? raw.maxAutoRefresh : 0,
-    nextRefreshAt: typeof raw.nextRefreshAt === 'number' && isFinite(raw.nextRefreshAt) ? raw.nextRefreshAt : null,
-    credentialExpiresAt: typeof raw.credentialExpiresAt === 'number' && isFinite(raw.credentialExpiresAt)
-      ? raw.credentialExpiresAt : null,
-    pendingExpiresAt: typeof raw.pendingExpiresAt === 'number' && isFinite(raw.pendingExpiresAt)
-      ? raw.pendingExpiresAt : null,
-    localLimits: local === null ? null : {
-      minIntervalMs: mimoAuthSafeInt(local.minIntervalMs) ? local.minIntervalMs : 0,
-      credentialHoldMs: mimoAuthSafeInt(local.credentialHoldMs) ? local.credentialHoldMs : 0,
-      pendingMs: mimoAuthSafeInt(local.pendingMs) ? local.pendingMs : 0,
-      maxAutoRefresh: mimoAuthSafeInt(local.maxAutoRefresh) ? local.maxAutoRefresh : 0,
-      transientLimit: mimoAuthSafeInt(local.transientLimit) ? local.transientLimit : 0,
-    },
-  }
-}
-function mimoDisplayPick(raw) {
-  var out = {
-    ok: false, code: '', bootEpoch: null, display: null, status: 0, displaySupported: false, namespaces: [],
-    console: null, consoleSupported: false, consoleNamespaces: [],
-  }
-  if (raw === null || typeof raw !== 'object') return out
-  out.ok = raw.ok === true
-  out.code = mimoDisplayCodeOf(raw.code)
-  out.bootEpoch = mimoAuthBootEpoch(raw.bootEpoch)
-  out.displaySupported = raw.displaySupported === true
-  out.display = mimoDisplayDisplayOf(raw.display)
-  if (out.display !== null && out.display.displaySupported === true) out.displaySupported = true
-  if (Array.isArray(raw.displayNamespaces)) {
-    for (var i = 0; i < raw.displayNamespaces.length; i++) {
-      var ns = raw.displayNamespaces[i]
-      if (typeof ns === 'string' && /^[a-z0-9][a-z0-9._-]{0,63}$/.test(ns)) out.namespaces.push(ns)
-    }
-  }
-  // [console] 同一条响应里的 console 快照（白名单重建）；code 可能只属于 console 枚举
-  out.console = mimoConsoleOf(raw.console)
-  if (out.code === '' && raw.code !== undefined) out.code = mimoConsoleCodeOf(raw.code)
-  out.consoleSupported = raw.consoleSupported === true
-    || (out.console !== null && out.console.supported === true)
-  if (Array.isArray(raw.consoleNamespaces)) {
-    for (var j = 0; j < raw.consoleNamespaces.length; j++) {
-      var cns = raw.consoleNamespaces[j]
-      if (typeof cns === 'string' && /^[a-z0-9][a-z0-9._-]{0,63}$/.test(cns)) out.consoleNamespaces.push(cns)
-    }
-  }
-  return out
-}
-/**
- * 唯一出口：GET（capability，无 body）/ POST（display 动作，严格 JSON）。
- * 与旧 `mimoAuthRequest` 共用同一条 owner-only 路由，不另造通道。
- */
-function mimoDisplayRequest(payload, signal) {
-  var init = { credentials: 'same-origin', cache: 'no-store', redirect: 'error', headers: { accept: 'application/json' } }
-  if (payload !== null && payload !== undefined) {
-    var action = payload.action
-    if (MIMO_CONSOLE_ACTIONS[action] === true) {
-      var consoleBody = { action: action }
-      if (typeof payload.bootEpoch === 'string') consoleBody.bootEpoch = payload.bootEpoch
-      if (action === 'consoleStart') {
-        var expectedIn = payload.expected
-        if (payload.authConsent !== true || expectedIn === null || typeof expectedIn !== 'object') {
-          var badStart = mimoDisplayPick(null)
-          badStart.code = 'E_MIMO_AUTH_BAD_REQUEST'
-          return Promise.resolve(badStart)
-        }
-        var nsIn = typeof expectedIn.namespace === 'string' ? expectedIn.namespace : ''
-        var idIn = typeof expectedIn.identifier === 'string' ? expectedIn.identifier.trim() : ''
-        if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(nsIn) || idIn.length === 0
-          || idIn.length > MIMO_DISPLAY_IDENTIFIER_MAX || !/^[A-Za-z0-9._~+/=%-]+$/.test(idIn)) {
-          var badPair2 = mimoDisplayPick(null)
-          badPair2.code = 'E_MIMO_AUTH_BAD_REQUEST'
-          return Promise.resolve(badPair2)
-        }
-        consoleBody.expected = { namespace: nsIn, identifier: idIn }
-        consoleBody.authConsent = true
-      } else if (action !== 'consoleStatus') {
-        if (typeof payload.authId !== 'string' || !mimoAuthHex32(payload.authId)
-          || !mimoAuthSafeInt(payload.generation) || payload.generation < 1) {
-          var badId = mimoDisplayPick(null)
-          badId.code = 'E_MIMO_AUTH_BAD_REQUEST'
-          return Promise.resolve(badId)
-        }
-        consoleBody.authId = String(payload.authId)
-        consoleBody.generation = payload.generation
-        if (action === 'consoleApprove' || action === 'consoleDeny') {
-          if (typeof payload.approvalId !== 'string' || !mimoAuthHex32(payload.approvalId)) {
-            var badApproval = mimoDisplayPick(null)
-            badApproval.code = 'E_MIMO_AUTH_BAD_REQUEST'
-            return Promise.resolve(badApproval)
-          }
-          consoleBody.approvalId = String(payload.approvalId)
-        }
-      }
-      init.method = 'POST'
-      init.headers['content-type'] = 'application/json'
-      init.body = JSON.stringify(consoleBody)
-      if (signal !== undefined && signal !== null) init.signal = signal
-      return mimoDisplayFetchRaw(init)
-    }
-    if (MIMO_DISPLAY_ACTIONS[action] !== true) {
-      var refused = mimoDisplayPick(null)
-      refused.code = 'E_MIMO_AUTH_BAD_REQUEST'
-      return Promise.resolve(refused)
-    }
-    var body = { action: action }
-    if (typeof payload.bootEpoch === 'string') body.bootEpoch = payload.bootEpoch
-    if (typeof payload.displayId === 'string') body.displayId = payload.displayId
-    if (typeof payload.generation === 'number') body.generation = payload.generation
-    if (payload.verdict === 'match' || payload.verdict === 'mismatch' || payload.verdict === 'later') {
-      body.verdict = payload.verdict
-    }
-    if (action === 'displayStart') {
-      var expected = payload.expected
-      if (expected === null || typeof expected !== 'object') {
-        var bad = mimoDisplayPick(null)
-        bad.code = 'E_MIMO_AUTH_BAD_REQUEST'
-        return Promise.resolve(bad)
-      }
-      var ns = typeof expected.namespace === 'string' ? expected.namespace : ''
-      var id = typeof expected.identifier === 'string' ? expected.identifier.trim() : ''
-      if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(ns) || id.length === 0
-        || id.length > MIMO_DISPLAY_IDENTIFIER_MAX || !/^[A-Za-z0-9._~+/=%-]+$/.test(id)) {
-        var badPair = mimoDisplayPick(null)
-        badPair.code = 'E_MIMO_AUTH_BAD_REQUEST'
-        return Promise.resolve(badPair)
-      }
-      body.expected = { namespace: ns, identifier: id }
-    }
-    init.method = 'POST'
-    init.headers['content-type'] = 'application/json'
-    init.body = JSON.stringify(body)
-  }
-  if (signal !== undefined && signal !== null) init.signal = signal
-  return mimoDisplayFetchRaw(init)
-}
-
-/** 唯一网络出口：POST/GET 同一条 owner-only 路由，逐字段白名单重建响应。 */
-function mimoDisplayFetchRaw(init) {
-  var doFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch : null
-  if (doFetch === null) {
-    var noFetch = mimoDisplayPick(null)
-    noFetch.code = 'E_MIMO_AUTH_UNAVAILABLE'
-    return Promise.resolve(noFetch)
-  }
-  return doFetch(MIMO_DISPLAY_ROUTE, init).then(function (res) {
-    var status = res !== null && res !== undefined && typeof res.status === 'number' ? res.status : 0
-    if (res === null || res === undefined || typeof res.json !== 'function') {
-      var badRes = mimoDisplayPick(null)
-      badRes.ok = false
-      badRes.status = status
-      badRes.code = status === 403 ? 'E_MIMO_AUTH_UNAVAILABLE'
-        : status === 409 ? 'E_MIMO_AUTH_BOOT_STALE' : 'E_MIMO_AUTH_UNAVAILABLE'
-      return badRes
-    }
-    return res.json().then(function (raw) {
-      var picked = mimoDisplayPick(raw)
-      picked.status = status
-      // 非 2xx 一律 ok:false：响应体里的 ok:true 不得越过这里。
-      if (status < 200 || status >= 300) {
-        picked.ok = false
-        if (picked.code === '') {
-          picked.code = status === 403 ? 'E_MIMO_AUTH_UNAVAILABLE'
-            : status === 409 ? 'E_MIMO_AUTH_BOOT_STALE'
-              : status === 400 ? 'E_MIMO_AUTH_BAD_REQUEST' : 'E_MIMO_AUTH_UNAVAILABLE'
-        }
-      }
-      return picked
-    }, function () {
-      var badJson = mimoDisplayPick(null)
-      badJson.ok = false
-      badJson.status = status
-      badJson.code = 'E_MIMO_AUTH_UNAVAILABLE'
-      return badJson
-    })
-  }, function (err) {
-    var failed = mimoDisplayPick(null)
-    failed.ok = false
-    failed.code = err !== null && err !== undefined && err.name === 'AbortError' ? 'E_ABORTED' : 'E_MIMO_AUTH_UNAVAILABLE'
-    return failed
-  })
-}
-
-/**
- * 二维码只在本机内存里变成 objectURL（一次性 takeQr）；不上传、不截图、不进模型、不缓存/落盘。
- * 浏览器不支持 createObjectURL（或非 2xx）时返回 null —— 只影响预览，不影响流程。
- */
-function mimoObjectUrlApi() {
-  // 浏览器与 Node 里 `URL` 都是**构造函数**（typeof 'function'），旧写法只认 'object' 会永远拿不到。
-  var candidate = globalThis.URL
-  if (candidate === null || candidate === undefined) return null
-  if (typeof candidate !== 'function' && typeof candidate !== 'object') return null
-  return candidate
-}
-function mimoConsoleQrFetch(snapshot) {
-  if (snapshot === null || snapshot === undefined || snapshot.authId === null) return Promise.resolve(null)
-  if (typeof globalThis.fetch !== 'function') return Promise.resolve(null)
-  var body = JSON.stringify({
-    action: 'consoleQr',
-    bootEpoch: snapshot.bootEpoch === undefined ? null : snapshot.bootEpoch,
-    authId: snapshot.authId,
-    generation: snapshot.generation,
-  })
-  return globalThis.fetch(MIMO_DISPLAY_ROUTE, {
-    method: 'POST',
-    credentials: 'same-origin',
-    cache: 'no-store',
-    redirect: 'error',
-    headers: { 'content-type': 'application/json', accept: 'image/png,image/jpeg' },
-    body: body,
-  }).then(function (res) {
-    if (res === null || res === undefined || res.status !== 200) return null
-    if (typeof res.blob !== 'function') return null
-    return res.blob().then(function (blob) {
-      if (blob === null || blob === undefined) return null
-      var api = mimoObjectUrlApi()
-      if (api === null || typeof api.createObjectURL !== 'function') return null
-      return String(api.createObjectURL(blob))
-    }, function () { return null })
-  }, function () { return null })
-}
-function mimoConsoleQrRevoke(url) {
-  if (typeof url !== 'string' || url === '') return
-  var api = mimoObjectUrlApi()
-  if (api === null || typeof api.revokeObjectURL !== 'function') return
-  try { api.revokeObjectURL(url) } catch (err) { /* 已释放 */ }
-}
-
-// —— 单例 store：唯一轮询定时器；不持有任何凭据 ——
-var mimoDisplayStore = {
-  snapshot: null,
-  capability: null,
-  listeners: [],
-  timer: null,
-  epoch: 0,
-  pollMs: MIMO_DISPLAY_POLL_MS,
-  mounted: 0,
-  inflight: null,
-  // [N1] 本地动作屏障：动作发出后，revision 更旧的 status 一律不得覆盖。
-  barrier: 0,
-  lastRevision: 0,
-  // [N4] 尚未拿到可信 Host 状态（首挂/换 boot）时遮蔽手工 MiMo 值。
-  resolving: true,
-  // [N1] 停止已发出、Host 未确认期间的本地遮蔽。
-  stopping: null,
-  // [console 2026-11-06] 正式扫码登录的观察快照：**同一套** store/pump，不另起轮询。
-  console: null,
-}
-function mimoDisplayEmit() {
-  var list = mimoDisplayStore.listeners.slice()
-  for (var i = 0; i < list.length; i++) {
-    try { list[i](mimoDisplayStore.snapshot) } catch (err) { /* 订阅者异常不得影响他人 */ }
-  }
-}
-function mimoDisplaySubscribe(fn) {
-  mimoDisplayStore.listeners.push(fn)
-  return function () {
-    var i = mimoDisplayStore.listeners.indexOf(fn)
-    if (i >= 0) mimoDisplayStore.listeners.splice(i, 1)
-  }
-}
-/** 测试用：改/关本地轮询间隔（0 = 不自动排下一轮）。 */
-function mimoDisplaySetPoll(ms) {
-  mimoDisplayStore.pollMs = typeof ms === 'number' && ms >= 0 ? ms : MIMO_DISPLAY_POLL_MS
-}
-/** 测试用：清空 store 与定时器（不触碰 Host 会话）。 */
-function mimoDisplayReset() {
-  if (mimoDisplayStore.timer !== null) {
-    try { clearTimeout(mimoDisplayStore.timer) } catch (err) { /* 忽略 */ }
-    mimoDisplayStore.timer = null
-  }
-  mimoDisplayStore.epoch += 1
-  mimoDisplayStore.barrier += 1
-  mimoDisplayStore.lastRevision = 0
-  mimoDisplayStore.snapshot = null
-  mimoDisplayStore.capability = null
-  mimoDisplayStore.mounted = 0
-  mimoDisplayStore.inflight = null
-  mimoDisplayStore.resolving = true
-  mimoDisplayStore.stopping = null
-  mimoDisplayStore.console = null
-}
-function mimoDisplayArm() {
-  if (mimoDisplayStore.timer !== null) return
-  if (mimoDisplayStore.pollMs <= 0) return
-  if (mimoDisplayStore.mounted <= 0) return
-  if (mimoDisplayStore.capability === null) return
-  mimoDisplayStore.timer = setTimeout(function () {
-    mimoDisplayStore.timer = null
-    mimoDisplayPump()
-  }, mimoDisplayStore.pollMs)
-}
-/** [N3] 单次请求都要有 10 s 上限；超时按"无结果"处理，迟到结果被丢弃。 */
-function mimoDisplayFetch(payload) {
-  var controller = typeof AbortController === 'function' ? new AbortController() : null
-  var timer = null
-  // 真正的 deadline race：即使底层不理会 abort，也由 timeout 落定，绝不永挂 single-flight。
-  var timeout = new Promise(function (resolve) {
-    timer = setTimeout(function () {
-      if (controller !== null) { try { controller.abort() } catch (err) { /* 忽略 */ } }
-      resolve(null)
-    }, MIMO_DISPLAY_REQUEST_TIMEOUT_MS)
-  })
-  var request = mimoDisplayRequest(payload, controller === null ? null : controller.signal)
-    .then(function (reply) { return reply }, function () { return null })
-  return Promise.race([request, timeout]).then(function (reply) {
-    try { if (timer !== null) clearTimeout(timer) } catch (err) { /* 忽略 */ }
-    return reply === undefined ? null : reply
-  })
-}
-/** [N2] 单飞：同一时刻只有一个在途请求；旧任务的 finally 不得清掉新 flight。 */
-function mimoDisplayFlight(runner) {
-  if (mimoDisplayStore.inflight !== null) return mimoDisplayStore.inflight
-  var epoch = mimoDisplayStore.epoch
-  var tracked = null
-  tracked = Promise.resolve()
-    .then(function () { return runner(epoch) })
-    .then(function (value) {
-      if (mimoDisplayStore.inflight === tracked) mimoDisplayStore.inflight = null
-      return value
-    }, function () {
-      if (mimoDisplayStore.inflight === tracked) mimoDisplayStore.inflight = null
-      return null
-    })
-  mimoDisplayStore.inflight = tracked
-  return tracked
-}
-/** 接受规则：generation 前进即接受（即便 revision 更小）；旧 generation **永拒**；
- *  同 generation 时才比 revision，且同 gen 不同 displayId 直接拒。 */
-function mimoDisplayApply(display) {
-  if (display === null || display === undefined) return
-  var prev = mimoDisplayStore.snapshot
-  if (prev !== null) {
-    if (display.generation < prev.generation) return
-    if (display.generation === prev.generation) {
-      if (display.displayId !== null && prev.displayId !== null && display.displayId !== prev.displayId) return
-      if (display.revision < mimoDisplayStore.lastRevision) return
-    }
-  }
-  mimoDisplayStore.lastRevision = display.revision
-  mimoDisplayStore.snapshot = display
-  // 可信状态到手（含"可信 absent"）→ 不再遮蔽手工来源。
-  mimoDisplayStore.resolving = false
-  if (mimoDisplayStore.stopping !== null && display.displayId !== null
-    && display.displayId === mimoDisplayStore.stopping.displayId
-    && (display.state === 'stopped' || display.state === 'expired')) {
-    mimoDisplayStore.stopping = null
-  }
-  mimoDisplayEmit()
-}
-/**
- * [console] 接受规则：新 generation 一律接受；旧 generation 永拒；
- * 同 generation 时比对 authId + revision（动作 barrier 之外再加一层单调性，
- * 保证「选 stop / 换代次 / 换 boot」之前发出的旧 status 不会回填）。
- */
-function mimoConsoleApply(view) {
-  if (view === null || view === undefined || typeof view !== 'object') return
-  var prev = mimoDisplayStore.console
-  if (prev !== null) {
-    if (view.generation < prev.generation) return
-    if (view.generation === prev.generation) {
-      if (view.authId !== null && prev.authId !== null && view.authId !== prev.authId) return
-      if (view.revision < prev.revision) return
-    }
-  }
-  mimoDisplayStore.console = view
-  mimoDisplayEmit()
-}
-function mimoConsoleSupported() {
-  var capability = mimoDisplayStore.capability
-  if (capability !== null && capability.consoleSupported === true) return true
-  var snapshot = mimoDisplayStore.console
-  return snapshot !== null && snapshot.supported === true
-}
-function mimoConsoleNamespace() {
-  var capability = mimoDisplayStore.capability
-  if (capability !== null && Array.isArray(capability.consoleNamespaces) && capability.consoleNamespaces.length > 0) {
-    return capability.consoleNamespaces[0]
-  }
-  return MIMO_CONSOLE_NAMESPACE_FALLBACK
-}
-/** boot 变化：立刻丢旧 snapshot / 旧 revision / 旧动作代次，等待可信新状态。 */
-function mimoDisplayDropBoot() {
-  mimoDisplayStore.epoch += 1
-  mimoDisplayStore.barrier += 1
-  mimoDisplayStore.lastRevision = 0
-  mimoDisplayStore.snapshot = null
-  mimoDisplayStore.capability = null
-  mimoDisplayStore.stopping = null
-  mimoDisplayStore.console = null
-  mimoDisplayStore.resolving = true
-  if (mimoDisplayStore.timer !== null) {
-    try { clearTimeout(mimoDisplayStore.timer) } catch (err) { /* 忽略 */ }
-    mimoDisplayStore.timer = null
-  }
-  mimoDisplayEmit()
-}
-function mimoDisplayBootChanged(reply, capability) {
-  if (reply === null || capability === null) return false
-  if (reply.bootEpoch === null || capability.bootEpoch === null) return false
-  if (reply.bootEpoch === capability.bootEpoch) return false
-  mimoDisplayDropBoot()
-  return true
-}
-/** capability（GET，无 body）：只读本机能力与 namespace 白名单，不加载 flow。 */
-function mimoDisplayCapabilityOf(reply) {
-  return {
-    bootEpoch: reply.bootEpoch,
-    displaySupported: reply.displaySupported === true,
-    namespaces: reply.namespaces,
-    // [console] 代码级开关是否打开 + 安全白名单（route/UI 无法打开它）
-    consoleSupported: reply.consoleSupported === true,
-    consoleNamespaces: reply.consoleNamespaces,
-  }
-}
-function mimoDisplayBootstrap() {
-  return mimoDisplayFlight(function (epoch) {
-    return mimoDisplayFetch(null).then(function (reply) {
-      if (epoch !== mimoDisplayStore.epoch) return null
-      if (reply === null) return null
-      mimoDisplayStore.capability = mimoDisplayCapabilityOf(reply)
-      if (reply.console !== null) mimoConsoleApply(reply.console)
-      if (reply.display !== null) {
-        // disabled 时 Host 仍给可信 absent（不是通信故障）：照常投影，绝不遮蔽手工来源。
-        mimoDisplayApply(reply.display)
-        return null
-      }
-      // 直接在这里取一次状态（**不**再进 flight，避免自己等自己）。
-      return mimoDisplayStatus(epoch)
-    })
-  })
-}
-function mimoDisplayStatus(epoch) {
-  var capability = mimoDisplayStore.capability
-  if (capability === null) return Promise.resolve(null)
-  // [N1] 发起时捕获 barrier：期间若有动作发出（stop/grant…），本回 reply 一律丢弃，
-  // 不更新 lastRevision，也不覆盖 snapshot。
-  var barrierAt = mimoDisplayStore.barrier
-  return mimoDisplayFetch({ action: 'displayStatus', bootEpoch: capability.bootEpoch }).then(function (reply) {
-    if (epoch !== undefined && epoch !== null && epoch !== mimoDisplayStore.epoch) return null
-    if (barrierAt !== mimoDisplayStore.barrier) return null
-    if (reply === null) return null
-    if (mimoDisplayBootChanged(reply, capability)) return null
-    if (reply.code === 'E_MIMO_AUTH_BOOT_STALE') { mimoDisplayDropBoot(); return null }
-    if (reply.display !== null) mimoDisplayApply(reply.display)
-    // [console] 同一条 displayStatus 响应里附带 console 快照 ⇒ 只用一个观察定时器
-    if (reply.console !== null) mimoConsoleApply(reply.console)
-    return null
-  })
-}
-function mimoDisplayPump() {
-  return mimoDisplayFlight(function (epoch) {
-    if (mimoDisplayStore.capability === null) {
-      return mimoDisplayFetch(null).then(function (reply) {
-        if (epoch !== mimoDisplayStore.epoch || reply === null) return null
-        mimoDisplayStore.capability = mimoDisplayCapabilityOf(reply)
-        if (reply.console !== null) mimoConsoleApply(reply.console)
-        if (reply.display !== null) { mimoDisplayApply(reply.display); return null }
-        return mimoDisplayStatus(epoch)
-      })
-    }
-    return mimoDisplayStatus(epoch)
-  }).then(function (value) {
-    if (mimoDisplayStore.mounted > 0) mimoDisplayArm()
-    return value
-  })
-}
-function mimoDisplayStart() {
-  mimoDisplayStore.mounted += 1
-  // 多挂载共用**同一条**轮询：判据是"已有在途请求 / 已排好定时器"，
-  // 而不是挂载计数——否则「胶囊仍在挂 + 面板新挂」时会把首个轮询也挡掉，
-  // 导致 reset 之后 capability 永远为 null（start/read 都无处发送）。
-  if (mimoDisplayStore.inflight !== null) return
-  if (mimoDisplayStore.capability !== null && mimoDisplayStore.timer !== null) return
-  var run = mimoDisplayStore.capability === null ? mimoDisplayBootstrap() : mimoDisplayPump()
-  Promise.resolve(run).then(function () {
-    if (mimoDisplayStore.mounted > 0) mimoDisplayArm()
-  }, function () { /* 失败不清状态，下一轮 poll 重试 */ })
-}
-/** 卸载只减少挂载计数并停本地轮询：**不**发 displayStop（收起 ≠ 取消）。 */
-function mimoDisplayRelease() {
-  mimoDisplayStore.mounted = Math.max(0, mimoDisplayStore.mounted - 1)
-  if (mimoDisplayStore.mounted > 0) return
-  if (mimoDisplayStore.timer !== null) {
-    try { clearTimeout(mimoDisplayStore.timer) } catch (err) { /* 忽略 */ }
-    mimoDisplayStore.timer = null
-  }
-}
-function mimoDisplayLocallyStopped(snapshot) {
-  if (snapshot === null) return null
-  return Object.assign({}, snapshot, {
-    state: 'stopped',
-    balance: null,
-    freshness: null,
-    canStop: false,
-    canRead: false,
-    canGrant: false,
-    awaitingBalanceMatch: false,
-    localPendingStop: true,
-  })
-}
-/** 显式动作（开始 / 读一次 / 确认 / 授权 / 停止）。 */
-function mimoDisplayAction(payload) {
-  var capability = mimoDisplayStore.capability
-  if (capability === null) return Promise.resolve(null)
-  var body = {}
-  for (var key in payload) {
-    if (Object.prototype.hasOwnProperty.call(payload, key)) body[key] = payload[key]
-  }
-  body.bootEpoch = capability.bootEpoch
-  var epoch = mimoDisplayStore.epoch
-  // [N1] 动作一发出即提升屏障：更旧的 status 不许回写。
-  mimoDisplayStore.barrier += 1
-  if (payload.action === 'displayStop') {
-    mimoDisplayStore.stopping = { displayId: payload.displayId, generation: payload.generation }
-    // 立刻本地遮蔽旧数值（不等 Host 确认，也不声称 Host 已清）。
-    mimoDisplayStore.snapshot = mimoDisplayLocallyStopped(mimoDisplayStore.snapshot)
-    mimoDisplayEmit()
-  }
-  return mimoDisplayFetch(body).then(function (reply) {
-    if (epoch !== mimoDisplayStore.epoch) return reply // 旧代次结果不得覆盖新 boot
-    if (reply === null) return null
-    if (reply.code === 'E_MIMO_AUTH_BOOT_STALE') { mimoDisplayDropBoot(); return reply }
-    if (reply.display !== null) mimoDisplayApply(reply.display)
-    if (reply.console !== null) mimoConsoleApply(reply.console)
-    if (reply.ok !== true) mimoDisplayPump() // 语义拒绝：补一次纯观察 status 对齐
-    return reply
-  })
-}
-/** 显式停止：正常详情里必须能直接结束会话，不必去设置页。 */
-function mimoDisplayStopNow() {
-  var snapshot = mimoDisplayStore.snapshot
-  if (snapshot === null || snapshot.displayId === null) return Promise.resolve(null)
-  return mimoDisplayAction({
-    action: 'displayStop',
-    displayId: snapshot.displayId,
-    generation: snapshot.generation,
-  })
-}
-/** pending 认证/核对视图被**明确关闭**时才 cancel：与"被动页面刷新"区分。 */
-function mimoDisplayAbandonPending() {
-  var snapshot = mimoDisplayStore.snapshot
-  if (snapshot === null || snapshot.displayId === null) return Promise.resolve(null)
-  if (snapshot.state === 'holding' || snapshot.state === 'verified' || snapshot.awaitingBalanceMatch === true) {
-    return mimoDisplayStopNow()
-  }
-  return Promise.resolve(null)
-}
-/** 渲染视图：叠加"停止待确认遮蔽"与"局部新鲜度降级"（N1/N5）。 */
-function mimoDisplayView() {
-  var snapshot = mimoDisplayStore.snapshot
-  if (snapshot === null) return null
-  var view = snapshot
-  if (mimoDisplayStore.stopping !== null && snapshot.displayId === mimoDisplayStore.stopping.displayId
-    && snapshot.state !== 'stopped' && snapshot.state !== 'expired') {
-    view = mimoDisplayLocallyStopped(view)
-  }
-  if (view.freshness === 'fresh' && typeof view.fetchedAt === 'number' && view.localLimits !== null
-    && view.localLimits.minIntervalMs > 0
-    && (Date.now() - view.fetchedAt) > (2 * view.localLimits.minIntervalMs)) {
-    // 路由整体不可达时 Host 无法标记 stale：本地按 2×间隔降级，绝不假装 fresh。
-    view = Object.assign({}, view, { freshness: 'stale' })
-  }
-  return view
-}
-function useMimoDisplay() {
-  var pair = React.useState(mimoDisplayView())
-  React.useEffect(function () {
-    var alive = true
-    var off = mimoDisplaySubscribe(function () { if (alive) pair[1](mimoDisplayView()) })
-    mimoDisplayStart()
-    return function () {
-      alive = false
-      off()
-      mimoDisplayRelease()
-    }
-  }, [])
-  return pair[0]
-}
-
-/**
- * managed 非活态：只有**已知固定失败码**才算「登录状态不可用」。
- * 空码 / E_NONE（= 只是没登录或已退出）不算失败，避免把空态说成故障。
- */
-function mimoDisplayFailureCodeOf(snapshot) {
-  var code = snapshot !== null && snapshot !== undefined && typeof snapshot.code === 'string' ? snapshot.code : ''
-  return code === '' || code === 'E_NONE' ? '' : code
-}
-function mimoDisplayStateText(snapshot) {
-  if (snapshot === null) return '未就绪'
-  if (snapshot.displaySupported !== true) {
-    // managed：**没有活会话 ≠ 本机没启用**。空态/无错 → 「请先登录」；有已知固定失败码 →
-    // 「登录状态不可用」（具体原因只进详情）。legacy 非 managed 仍沿用原「合成边界」文案。
-    if (snapshot.managed === true) {
-      // [0.10.3] 未登录账号 / 获取余额失败（1..4 次 stale 仍保旧值，第 5 次才 failed——阈值未改）
-      return mimoDisplayFailureCodeOf(snapshot) === '' ? '未配置 Key' : '获取余额失败'
-    }
-    return '本机未启用'
-  }
-  if (snapshot.state === 'holding') return '正在核对身份'
-  if (snapshot.state === 'verified') return snapshot.freshness === 'failed' ? '获取余额失败' : (snapshot.balance === null ? '正在读取余额' : '显示中')
-  if (snapshot.state === 'stopped') return '已停止（不显示数值）'
-  if (snapshot.state === 'expired') return '已过期（不显示数值）'
-  return '未开始'
-}
-/** [console] 正式扫码登录的状态文案（不夸大、不承诺厂商有效期）。 */
-function mimoConsoleStateText(snapshot) {
-  if (snapshot === null || snapshot === undefined) return '未就绪'
-  if (snapshot.supported !== true) return '未启用（Host 代码级开关关闭）'
-  if (snapshot.state === 'idle') return '已创建，待开始'
-  if (snapshot.state === 'authorizing') return '等待本人扫码'
-  if (snapshot.state === 'ready') return '已确认，待接入显示'
-  if (snapshot.state === 'claimed') return '已接入显示会话'
-  if (snapshot.state === 'failed') return '上次登录失败'
-  if (snapshot.state === 'stopped') return '已停止'
-  if (snapshot.state === 'expired') return '已过期（120 秒窗口）'
-  return '未开始'
-}
-function mimoDisplayShortText(snapshot, resolving) {  if (snapshot === null || snapshot === undefined) return resolving === true ? '读取中…' : '—'
-  if (snapshot.displaySupported !== true) {
-    // 与 stateText 同一套 managed 语义：未登录/已退出 ≠ 本机未启用。
-    if (snapshot.managed === true) {
-      // [0.10.3] 胶囊：未登录 / 获取失败（与其它渠道同一套用词）
-      return mimoDisplayFailureCodeOf(snapshot) === '' ? '未配置 Key' : '获取失败'
-    }
-    return '未启用'
-  }
-  if (snapshot.localPendingStop === true) return '已停止'
-  if (snapshot.state === 'holding') return '核对中…'
-  if (snapshot.state === 'stopped') return '已停止'
-  if (snapshot.state === 'expired') return '已过期'
-  if (snapshot.state === 'verified') return snapshot.freshness === 'failed' ? '获取失败' : '待读取'
-  return '未开始'
-}
-function mimoDisplayTimeText(ms) {
-  if (typeof ms !== 'number' || !isFinite(ms)) return ''
-  var at = new Date(ms)
-  return isFinite(at.getTime()) ? at.toLocaleString() : ''
-}
-/**
- * 胶囊/详情 overlay：只在 Host 明确 `selected:true`（已选该来源）时替换 MiMo 行。
- * 已选中但无值 ⇒ 显示状态文本，**不回填手工 Cookie 旧值**（selected 墓碑）。
- */
-/**
  * [2026-11-12 批次 G] 启动占位：把「已保存配置里已启用、但这一轮还没有数据」的渠道
  * 先铺成占位行（中性灰点 + '…'），真实 wire 到达后由各分支**逐行替换**。
  *
@@ -7544,8 +5316,7 @@ function mimoDisplayTimeText(ms) {
  *     `fields.enabled` 缺省视为启用（与 `settingBool(config, key, true)` 同一语义）；
  *   - 自定义条目：`parseCustomBalances(config.customBalances)` 里 `enabled !== false` 的，
  *     名称取条目 `name`，缺省「自定义余额」；
- *   - **只补尚未出现的 id**（已有真实 plan 的不重复）；MiMo 由 `mimoDisplayOverlay`
- *     后续覆盖/追加，所以这里不必特判——占位先铺、overlay 负责替换；
+ *   - **只补尚未出现的 id**（已有真实 plan 的不重复）；
  *   - 顺序仍走 `sortPlansByOrder(…, config.planOrder)`：占位参与同一 planOrder，
  *     未列出的按「内置注册表顺序 + 自定义顺序」追加。
  *
@@ -7590,547 +5361,16 @@ function withPendingPlaceholders(plans, config) {
 }
 
 /**
- * 胶囊/详情 overlay：
- *   - `options.allowMimo === false`（渠道被停用）⇒ 原样返回，**不得**把 MiMo 加回来（B5）；
- *   - `options.resolving === true`（首挂/换 boot，尚未拿到可信 Host 状态）⇒ 用"读取中"占位，
- *     不回落手工 Cookie 旧值（N4）；
- *   - Host 明确 `selected:true` ⇒ 完全由 DTO 驱动；已选中但无值 ⇒ 显示状态文本，不回填手工值。
+ * 自定义余额编辑区。props：
+ *   entries    当前（草稿优先）条目数组
+ *   onChange   接收新数组（整页草稿的一部分）
+ *   keyDrafts  { id: 新 Key 文本 }（空串 = 不修改）
+ *   keyClears  { id: true }（显式清除已保存 Key）
+ *   keyStatus  { id: true } 表示该条已保存 Key（布尔摘要，来自 Host）
+ *   refStatus  { id: true } 表示所选凭据引用当前有值
+ *   disabled / saving / writable
+ *   onKeyChange(id, text) / onKeyClear(id) / onKeyUndoClear(id)
  */
-function mimoDisplayOverlay(plans, snapshot, options) {
-  /**
-   * [0.11.4] **MiMo 扫码登录通道下线**：不再用「本机显示会话」快照覆盖 Host 返回的 MiMo 条目。
-   *
-   * 旧行为：只要显示会话 selected，就把 Host 的 wire（可能已经是 `via:'api-key'` 的真实余额）
-   * 替换成 display 快照的合成行；未登录时合成行显示「未登录」，于是**明明拿到了余额也显示未登录**。
-   * 现在 MiMo 只认 API Key 通道，直接返回原 plans。
-   */
-  return plans
-}
-
-function mimoDisplayOverlayLegacy(plans, snapshot, options) {
-  var opts = options === null || options === undefined ? {} : options
-  var allowMimo = opts.allowMimo !== false
-  if (!allowMimo) return plans
-  var resolving = opts.resolving === true
-  if ((snapshot === null || snapshot === undefined) && resolving) {
-    var masked = []
-    var replacedPending = false
-    for (var k = 0; k < plans.length; k++) {
-      var item = plans[k]
-      if (item !== null && typeof item === 'object' && item.id === 'mimo') {
-        /**
-         * [0.10.5] 只有"本机显示会话"来的 wire 才允许在 resolving 期间直接展示。
-         *
-         * 真机故障：Host 已返回 14.58 CNY，胶囊却长期显示「读取中…」——因为旧代码无条件用
-         * hold 占位盖掉了真实余额。但**旧 Cookie 通道**的遗留值（带 `via:'console'` /
-         * `cashBalance` / `giftBalance` 标记）仍必须遮蔽：那是"手工旧值"，不是可信来源，
-         * 这条安全语义（N4 墓碑）不能丢。
-         */
-        var looksLegacyCookie = item.via === 'console'
-          || item.cashBalance !== undefined || item.giftBalance !== undefined
-          || item.isAvailable !== undefined
-        if (!looksLegacyCookie && typeof item.balance === 'number' && isFinite(item.balance)) {
-          masked.push(item)
-          continue
-        }
-        replacedPending = true
-        masked.push(mimoDisplayPlanOf({ displaySupported: true, selected: true, state: 'holding', balance: null, freshness: null, fetchedAt: null, revision: 0, refreshCount: 0, maxAutoRefresh: 0, identity: null, code: '', awaitingBalanceMatch: false }, item))
-        continue
-      }
-      masked.push(item)
-    }
-    return masked
-  }
-  if (snapshot === null || snapshot === undefined || snapshot.selected !== true) return plans
-  var out = []
-  var replaced = false
-  for (var i = 0; i < plans.length; i++) {
-    var plan = plans[i]
-    if (plan !== null && typeof plan === 'object' && plan.id === 'mimo') {
-      replaced = true
-      out.push(mimoDisplayPlanOf(snapshot, plan))
-      continue
-    }
-    out.push(plan)
-  }
-  if (!replaced) out.push(mimoDisplayPlanOf(snapshot, null))
-  return out
-}
-function mimoDisplayPlanOf(snapshot, base) {
-  var plan = {
-    id: 'mimo',
-    name: base !== null && typeof base.name === 'string' && base.name.length > 0 ? base.name : 'Xiaomi MiMo',
-    displaySource: true,
-    displayState: snapshot.state,
-    displayFreshness: snapshot.freshness,
-    displayFetchedAt: snapshot.fetchedAt,
-    displayRefreshes: snapshot.refreshCount,
-    displayMaxRefresh: snapshot.maxAutoRefresh,
-    displayIdentity: snapshot.identity,
-    displayCode: snapshot.code,
-    displayPending: snapshot.awaitingBalanceMatch,
-    displayReadFailures: snapshot.readFailures === undefined ? 0 : snapshot.readFailures,
-  }
-  var readFailures = snapshot.readFailures === undefined ? 0 : snapshot.readFailures
-  if (snapshot.state === 'verified' && (snapshot.freshness === 'failed' || readFailures >= 5)) {
-    // fail-closed：即使 DTO 仍带 balance，也一律不显示金额
-    plan.error = 'display'
-    plan.displayFailureText = '获取余额失败：' + (typeof snapshot.code === 'string' && snapshot.code !== '' ? snapshot.code : 'E_UNKNOWN')
-    plan.message = '获取余额失败'
-    return plan
-  }
-  if (snapshot.state === 'verified' && snapshot.balance !== null && typeof snapshot.balance.balance === 'number') {
-    plan.balance = snapshot.balance.balance
-    plan.currency = snapshot.balance.currency
-    if (typeof snapshot.balance.cashBalance === 'number') plan.cashBalance = snapshot.balance.cashBalance
-    if (typeof snapshot.balance.giftBalance === 'number') plan.giftBalance = snapshot.balance.giftBalance
-    plan.stale = snapshot.freshness === 'stale' || readFailures > 0
-    return plan
-  }
-  plan.error = 'display'
-  if (snapshot.managed === true && snapshot.displaySupported !== true && mimoDisplayFailureCodeOf(snapshot) !== '') {
-    // managed 非活态但带着**已知固定失败码**（记录不可读 / binding 不符 / 登录后未验证…）：
-    // 胶囊只说「获取失败」，具体固定码只给详情。
-    plan.displayFailureText = '获取余额失败：' + mimoDisplayFailureCodeOf(snapshot)
-  } else if (snapshot.freshness === 'failed' || (snapshot.readFailures === undefined ? 0 : snapshot.readFailures) >= 5) {
-    // 第 5 次失败：固定码/固定理由（code 已在 DTO 白名单内，未知也只用 generic）
-    plan.displayFailureText = '获取余额失败：' + (typeof snapshot.code === 'string' && snapshot.code !== '' ? snapshot.code : 'E_UNKNOWN')
-  }
-  plan.message = mimoDisplayStateText(snapshot)
-  return plan
-}
-
-/** 正常详情里的「显示会话」控制行：可见状态 + **可直接停止**（不必去设置页）。
- *  以**普通函数**返回节点（不是子组件），这样真实 DOM 与离线 mock 树都能直接看到。 */
-function mimoDisplaySessionRowsOf(snapshot) {
-  if (snapshot === null || snapshot === undefined || snapshot.displaySupported !== true || snapshot.selected !== true) return null
-  var rows = []
-  rows.push(h('div', { key: 'state', style: sectionNoteStyle, 'data-mimo-display': 'state', 'data-mimo-display-state': snapshot.state },
-    '本机显示会话：' + mimoDisplayStateText(snapshot)
-    + (snapshot.localPendingStop === true ? '（本地已清，Host 未确认）' : '')))
-  if (snapshot.identity !== null) {
-    rows.push(h('div', { key: 'identity', style: sectionNoteStyle, 'data-mimo-display': 'identity' },
-      '身份（遮蔽，仅展示）：' + snapshot.identity.maskedLabel))
-  }
-  if (snapshot.fetchedAt !== null) {
-    var at = new Date(snapshot.fetchedAt)
-    rows.push(h('div', { key: 'fetched', style: sectionNoteStyle, 'data-mimo-display': 'fetched', 'data-mimo-display-freshness': snapshot.freshness === 'stale' ? 'stale' : 'fresh' },
-      (snapshot.freshness === 'stale' ? '历史值（刷新失败，未确认最新）：' : '取数时间：')
-      + (isFinite(at.getTime()) ? at.toLocaleString() : String(snapshot.fetchedAt))))
-  }
-  if (snapshot.maxAutoRefresh > 0 && snapshot.state === 'verified') {
-    rows.push(h('div', { key: 'refresh', style: sectionNoteStyle, 'data-mimo-display': 'refresh' },
-      '自动刷新：' + String(snapshot.refreshCount) + ' / ' + String(snapshot.maxAutoRefresh)
-      + '（本地界 60 秒间隔，不代表厂商有效期）'))
-  }
-  if (snapshot.awaitingBalanceMatch === true) {
-    rows.push(h('div', { key: 'pending', style: sectionNoteStyle, 'data-mimo-display': 'pending' },
-      '等待本人比对余额（120 秒内有效）；未比对不会自动刷新或保存。'))
-  }
-  if (snapshot.code !== '' && snapshot.state !== 'verified') {
-    rows.push(h('div', { key: 'code', style: sectionNoteStyle, 'data-mimo-display': 'code', 'data-mimo-display-code': snapshot.code },
-      '状态码：' + snapshot.code))
-  }
-  if (snapshot.canStop === true) {
-    rows.push(h('button', {
-      key: 'stop',
-      type: 'button',
-      'data-mimo-display': 'stop',
-      style: settingsButtonStyle,
-      onClick: function () {
-        if (mimoDisplayStore.localBusy === true) return
-        mimoDisplayStore.localBusy = true
-        mimoDisplayStopNow().then(function () { mimoDisplayStore.localBusy = false }, function () { mimoDisplayStore.localBusy = false })
-      },
-    }, '停止本机显示会话（清空本次凭据与数值）'))
-  }
-  return h('div', { key: 'display-session', 'data-mimo-display': 'session' }, rows)
-}
-
-/** 兼容旧调用点（面板/离线测试）：仍是组件外壳，内部复用同一渲染函数。 */
-function MimoDisplaySessionRows(props) {
-  var snapshot = props !== null && props !== undefined ? props.snapshot : null
-  var busyHook = React.useState(false)
-  void busyHook
-  return mimoDisplaySessionRowsOf(snapshot)
-}
-
-function MimoDisplayPanel(props) {
-  var disabled = props !== null && props !== undefined && props.disabled === true
-  var snapshot = useMimoDisplay()
-  var nsHook = React.useState('')
-  var setNamespace = nsHook[1]
-  var idHook = React.useState('')
-  var identifier = idHook[0]
-  var setId = idHook[1]
-  var busyHook = React.useState(false)
-  var busy = busyHook[0]
-  var setBusy = busyHook[1]
-  var noticeHook = React.useState('')
-  var notice = noticeHook[0]
-  var setNotice = noticeHook[1]
-  // [console] 事前预期账号：**非受控** DOM（.value + ref），不经组件 state、不序列化、
-  // 不进 store；点下按钮先清空再只发一次请求。
-  var consoleInputRef = React.useRef(null)
-  var qrHook = React.useState(null)
-  var qr = qrHook[0]
-  var setQr = qrHook[1]
-
-  var capability = mimoDisplayStore.capability
-  var namespaces = capability !== null && Array.isArray(capability.namespaces) ? capability.namespaces : []
-  // 默认取能力里公布的唯一 namespace（同步派发，避免首帧空值导致 400）。
-  var namespace = nsHook[0] !== '' ? nsHook[0] : (namespaces.length > 0 ? namespaces[0] : '')
-  var consoleSupported = mimoConsoleSupported()
-  var consoleSnap = mimoDisplayStore.console
-  var consoleState = consoleSnap === null ? 'absent' : consoleSnap.state
-  var consoleAuthId = consoleSnap === null || consoleSnap.authId === null ? '' : consoleSnap.authId
-  var consoleGeneration = consoleSnap === null ? 0 : consoleSnap.generation
-
-  function run(payload) {
-    if (busy) return Promise.resolve(null)
-    setBusy(true)
-    setNotice('')
-    return mimoDisplayAction(payload).then(function (reply) {
-      setBusy(false)
-      if (reply !== null && reply !== undefined && reply.ok !== true && reply.code !== '') setNotice(reply.code)
-      return reply
-    }, function () { setBusy(false); return null })
-  }
-
-  /** console 动作：与 display 动作走**同一** store / barrier / 单飞请求，不另开通道。 */
-  function consoleRun(payload) {
-    if (busy) return Promise.resolve(null)
-    setBusy(true)
-    setNotice('')
-    return mimoDisplayAction(payload).then(function (reply) {
-      setBusy(false)
-      if (reply !== null && reply !== undefined && reply.ok !== true && reply.code !== '') setNotice(reply.code)
-      return reply
-    }, function () { setBusy(false); return null })
-  }
-
-  // 二维码：只在**本机内存**里取一次 bytes → objectURL；换代/结束/卸载立刻 revoke。
-  React.useEffect(function () {
-    if (consoleSupported !== true) return undefined
-    var wantQr = consoleSnap !== null && consoleSnap.hasQr === true
-    if (!wantQr) return undefined
-    if (qr !== null && qr.authId === consoleAuthId && qr.generation === consoleGeneration) return undefined
-    var alive = true
-    var view = capability === null ? null : capability.bootEpoch
-    mimoConsoleQrFetch({
-      authId: consoleAuthId,
-      generation: consoleGeneration,
-      bootEpoch: view,
-    }).then(function (url) {
-      if (!alive || url === null) return
-      setQr({ authId: consoleAuthId, generation: consoleGeneration, url: url })
-    }, function () { /* 预览失败不影响流程 */ })
-    return function () { alive = false }
-  }, [consoleSupported, consoleSnap === null ? false : consoleSnap.hasQr, consoleAuthId, consoleGeneration])
-  var qrUrl = qr === null ? '' : qr.url
-  React.useEffect(function () {
-    return function () { mimoConsoleQrRevoke(qrUrl) }
-  }, [qrUrl])
-  React.useEffect(function () {
-    if (qr === null) return
-    var dead = consoleState === 'absent' || consoleState === 'stopped'
-      || consoleState === 'expired' || consoleState === 'failed'
-      || (consoleAuthId !== '' && consoleAuthId !== qr.authId)
-    if (!dead) return
-    mimoConsoleQrRevoke(qr.url)
-    setQr(null)
-  }, [consoleState, consoleAuthId])
-
-  /** 创建 → 开始：**同一次用户点击**里的两个本地动作；绝不因打开面板/capability 自动 begin。 */
-  function startConsoleLogin() {
-    if (disabled || busy) return
-    var el = consoleInputRef.current
-    var raw = el !== null && el !== undefined && typeof el.value === 'string' ? el.value : ''
-    // 立即清空输入（不等异步结果）：原始值不留在 DOM / 组件 state 里
-    try { if (el !== null && el !== undefined) el.value = '' } catch (err) { /* 忽略 */ }
-    var wanted = String(raw).trim()
-    if (wanted.length === 0) { setNotice('E_MIMO_AUTH_BAD_REQUEST'); return }
-    setBusy(true)
-    setNotice('')
-    mimoDisplayAction({
-      action: 'consoleStart',
-      expected: { namespace: mimoConsoleNamespace(), identifier: wanted },
-      authConsent: true,
-    }).then(function (created) {
-      if (created === null || created.ok !== true) {
-        setBusy(false)
-        if (created !== null && created.code !== '') setNotice(created.code)
-        return null
-      }
-      var created2 = mimoDisplayStore.console
-      if (created2 === null || created2.authId === null) { setBusy(false); return null }
-      return mimoDisplayAction({
-        action: 'consoleBegin',
-        authId: created2.authId,
-        generation: created2.generation,
-      }).then(function (started) {
-        setBusy(false)
-        if (started !== null && started.ok !== true && started.code !== '') setNotice(started.code)
-        return started
-      }, function () { setBusy(false); return null })
-    }, function () { setBusy(false); return null })
-  }
-
-  var body = []
-  body.push(h('p', { key: 'title', style: settingsHintStyle, 'data-mimo-display': 'title' },
-    consoleSupported === true ? 'MiMo 本机登录' : 'MiMo 本机登录'))
-  body.push(h('p', { key: 'note', style: settingsHintStyle, 'data-mimo-display': 'note' },
-    consoleSupported === true
-      ? '本人发起官方扫码与必要会话交换；凭据只存于 Host 内存；当前为 15 分钟本地界（60 秒刷新间隔、最多 14 次），重启后需重新登录。'
-      : ((snapshot !== null && snapshot.displaySupported === true)
-        ? '授权范围仅限**限期内存持有**：默认 120 秒内需完成身份核对与本人比对，最长本地持有 15 分钟；'
-          + '凭据只在 Host 内存，不写入配置、不生成二维码、不联网。数量口径为账户余额。'
-        : '正式个人扫码登录尚未启用真实试接入（Host 代码级开关未打开）；合成适配器也未注入，'
-          + '因此本机不提供显示会话（如实提示，不假装成功）。')))
-
-  // —— 正式扫码登录（只有代码级开关 true 才出现；默认如实显示「尚未启用」）——
-  if (consoleSupported === true) {
-    var consoleItems = []
-    consoleItems.push(h('p', {
-      key: 'cstate', style: settingsHintStyle,
-      'data-mimo-console': 'state', 'data-mimo-console-state': consoleState,
-    }, '扫码登录：' + mimoConsoleStateText(consoleSnap)))
-    if (consoleSnap !== null && consoleSnap.expiresAt !== null
-      && (consoleState === 'idle' || consoleState === 'authorizing' || consoleState === 'ready')) {
-      consoleItems.push(h('p', { key: 'cexp', style: settingsHintStyle, 'data-mimo-console': 'expires' },
-        '本次登录窗口（120 秒，不因读取/接入重置）到：' + mimoDisplayTimeText(consoleSnap.expiresAt)))
-    }
-    // —— 区域目标审批：独立可见，deny 立即取消 ——
-    if (consoleSnap !== null && consoleSnap.approval !== null) {
-      consoleItems.push(h('div', { key: 'capprove', 'data-mimo-console': 'approval', style: { display: 'flex', flexDirection: 'column', gap: 6 } }, [
-        h('p', { key: 'atxt', style: settingsHintStyle }, '本次登录需要额外授权一个官方登录目标：'),
-        h('p', { key: 'aorg', style: settingsHintStyle, 'data-mimo-console': 'approval-origin' },
-          '目标域：' + consoleSnap.approval.origin + '（用途 ' + consoleSnap.approval.purpose + '，方法 ' + consoleSnap.approval.method + '）'),
-        h('div', { key: 'abtn', style: { display: 'flex', gap: 8, flexWrap: 'wrap' } }, [
-          h('button', {
-            key: 'allow', type: 'button', 'data-mimo-console': 'approve', disabled: busy,
-            style: Object.assign({}, settingsButtonStyle, busy ? { opacity: 0.4, cursor: 'default' } : null),
-            onClick: function () {
-              consoleRun({
-                action: 'consoleApprove',
-                authId: consoleAuthId,
-                generation: consoleGeneration,
-                approvalId: consoleSnap.approval.approvalId,
-              })
-            },
-          }, '允许这个登录目标'),
-          h('button', {
-            key: 'deny', type: 'button', 'data-mimo-console': 'deny', disabled: busy,
-            style: Object.assign({}, settingsButtonStyle, busy ? { opacity: 0.4, cursor: 'default' } : null),
-            onClick: function () {
-              consoleRun({
-                action: 'consoleDeny',
-                authId: consoleAuthId,
-                generation: consoleGeneration,
-                approvalId: consoleSnap.approval.approvalId,
-              })
-            },
-          }, '拒绝（立即取消本次登录）'),
-        ]),
-      ]))
-    } else if (consoleState === 'authorizing' || consoleState === 'idle') {
-      consoleItems.push(h('p', { key: 'cwait', style: settingsHintStyle, 'data-mimo-console': 'wait' },
-        '等待本人用小米 App 扫码并在手机上确认；单次请求最多等 35 秒，未确认会继续等同一个二维码，不会重新生成。'))
-      if (qr !== null) {
-        consoleItems.push(h('img', {
-          key: 'cqr', 'data-mimo-console': 'qr', src: qr.url, alt: '登录二维码（仅本机内存）',
-          width: 240, height: 240, style: { width: 240, height: 240, borderRadius: 8 },
-        }))
-      } else {
-        consoleItems.push(h('p', { key: 'cqrwait', style: settingsHintStyle, 'data-mimo-console': 'qr-pending' }, '二维码尚未就绪…'))
-      }
-      consoleItems.push(h('button', {
-        key: 'cstop', type: 'button', 'data-mimo-console': 'stop', disabled: busy,
-        style: Object.assign({}, settingsButtonStyle, busy ? { opacity: 0.4, cursor: 'default' } : null),
-        onClick: function () {
-          consoleRun({ action: 'consoleStop', authId: consoleAuthId, generation: consoleGeneration })
-        },
-      }, '关闭并取消本次扫码登录（清空本次凭据）'))
-    }
-    if (consoleState === 'ready') {
-      consoleItems.push(h('p', { key: 'cmask', style: settingsHintStyle, 'data-mimo-console': 'identity' },
-        '已扫码确认；身份（遮蔽，仅展示）：'
-        + (consoleSnap !== null && consoleSnap.identity !== null ? consoleSnap.identity.maskedLabel : '未识别')))
-      consoleItems.push(h('p', { key: 'cattach-note', style: settingsHintStyle },
-        '接入显示**不会**读取余额；接入后仍需本人显式点「读取一次余额」并比对。'))
-      consoleItems.push(h('button', {
-        key: 'cattach', type: 'button', 'data-mimo-console': 'attach', disabled: busy,
-        style: Object.assign({}, settingsButtonStyle, busy ? { opacity: 0.4, cursor: 'default' } : null),
-        onClick: function () {
-          consoleRun({ action: 'consoleAttach', authId: consoleAuthId, generation: consoleGeneration })
-        },
-      }, '确认身份并接入显示（尚不读余额）'))
-      consoleItems.push(h('button', {
-        key: 'cstop2', type: 'button', 'data-mimo-console': 'stop', disabled: busy,
-        style: Object.assign({}, settingsButtonStyle, busy ? { opacity: 0.4, cursor: 'default' } : null),
-        onClick: function () {
-          consoleRun({ action: 'consoleStop', authId: consoleAuthId, generation: consoleGeneration })
-        },
-      }, '关闭并取消本次扫码登录（清空本次凭据）'))
-    }
-    if (consoleState === 'claimed') {
-      consoleItems.push(h('p', { key: 'cclaimed', style: settingsHintStyle, 'data-mimo-console': 'claimed' },
-        '已接入本机显示会话：下面的「读取一次余额 / 确认 / 授权持续刷新 / 停止」才是后续动作。'))
-    }
-    if (consoleState === 'absent' || consoleState === 'stopped' || consoleState === 'expired' || consoleState === 'failed') {
-      consoleItems.push(h('p', { key: 'cinput-note', style: settingsHintStyle },
-        '先写下本人预期账户 ID（密码框，只在本机内存；点击后立即清空输入再发送一次）。'))
-      consoleItems.push(h('input', {
-        key: 'cinput',
-        type: 'password',
-        autoComplete: 'off',
-        ref: consoleInputRef,
-        'data-mimo-console': 'identifier',
-        placeholder: '预期账户 ID（不写入配置、不进日志）',
-        style: settingsInputStyle,
-      }))
-      consoleItems.push(h('button', {
-        key: 'cstart', type: 'button', 'data-mimo-console': 'start',
-        disabled: disabled || busy,
-        style: Object.assign({}, settingsButtonStyle, (disabled || busy) ? { opacity: 0.4, cursor: 'default' } : null),
-        onClick: function () { startConsoleLogin() },
-      }, '创建并开始扫码登录'))
-      if (consoleState === 'failed' && consoleSnap !== null && consoleSnap.code !== '') {
-        consoleItems.push(h('p', { key: 'cfail', style: settingsHintStyle, 'data-mimo-console': 'failed', 'data-mimo-console-code': consoleSnap.code },
-          '上次登录失败：' + consoleSnap.code))
-      }
-    }
-    body.push(h('div', {
-      key: 'console',
-      'data-mimo-console': 'panel',
-      style: { display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 4 },
-    }, consoleItems))
-  }
-
-  if (snapshot !== null && snapshot.displaySupported === true && snapshot.selected === true) {
-  }
-  // [B6] 无 grant 阶段（核对中 / 已核对未读取 / 等待比对）**明确关闭**才取消；
-  // 被动卸载/收起一律不取消（页面刷新要能恢复）。
-  if (snapshot !== null && snapshot.displaySupported === true
-    && (snapshot.state === 'holding'
-      || (snapshot.state === 'verified' && snapshot.nextRefreshAt === null)
-      || snapshot.awaitingBalanceMatch === true)) {
-    body.push(h('button', {
-      key: 'close-pending',
-      type: 'button',
-      'data-mimo-display': 'close-pending',
-      style: Object.assign({}, settingsButtonStyle, busy ? { opacity: 0.4, cursor: 'default' } : null),
-      onClick: function () {
-        if (busy) return
-        setBusy(true)
-        mimoDisplayAbandonPending().then(function () { setBusy(false) }, function () { setBusy(false) })
-      },
-    }, '关闭并取消本次核对（清空本次凭据）'))
-  }
-
-  // 合成 DI 的「预期身份」表单只在**没有**正式 console 链路时出现：
-  // console 模式下入口是上面的「创建并开始扫码登录」，避免两条链混用。
-  if (consoleSupported !== true && snapshot !== null && snapshot.displaySupported === true
-    && (snapshot.state === 'absent' || snapshot.state === 'stopped' || snapshot.state === 'expired')) {
-    body.push(h('div', { key: 'start', style: { display: 'flex', flexDirection: 'column', gap: 6 } },
-      h('p', { style: settingsHintStyle }, '开始前请先写下本人预期身份（只是期望，不是真实性证明；Host 用可信适配器输出与之比较）。'),
-      namespaces.length > 1
-        ? h('select', {
-          'data-mimo-display': 'namespace',
-          style: settingsInputStyle,
-          value: namespace,
-          onChange: function (event) { setNamespace(event.target.value) },
-        }, namespaces.map(function (ns) { return h('option', { key: ns, value: ns }, ns) }))
-        : h('p', { style: settingsHintStyle, 'data-mimo-display': 'namespace-fixed' }, '身份命名空间：' + (namespaces[0] || '未提供')),
-      h('input', {
-        type: 'password',
-        autoComplete: 'off',
-        'data-mimo-display': 'identifier',
-        placeholder: '预期账户标识（仅本机，进入请求体后不落盘）',
-        value: identifier,
-        style: settingsInputStyle,
-        onChange: function (event) { setId(event.target.value) },
-      }),
-      h('button', {
-        type: 'button',
-        'data-mimo-display': 'start',
-        disabled: disabled || busy || namespaces.length === 0,
-        style: Object.assign({}, settingsButtonStyle, (disabled || busy || namespaces.length === 0) ? { opacity: 0.4, cursor: 'default' } : null),
-        onClick: function () {
-          if (disabled || busy || namespaces.length === 0) return
-          var expected = { namespace: namespace, identifier: identifier }
-          // 立即清空输入（不等异步结果），缩短原始值在组件 state 中的存活时间。
-          setId('')
-          run({ action: 'displayStart', expected: expected })
-        },
-      }, '开始本机显示会话（仅限期内存持有授权）'),
-    ))
-  }
-
-  if (snapshot !== null && snapshot.displaySupported === true && snapshot.state === 'verified') {
-    if (snapshot.canRead === true) {
-      body.push(h('button', {
-        key: 'read',
-        type: 'button',
-        'data-mimo-display': 'read',
-        disabled: busy,
-        style: Object.assign({}, settingsButtonStyle, busy ? { opacity: 0.4, cursor: 'default' } : null),
-        onClick: function () {
-          run({ action: 'displayRead', displayId: snapshot.displayId, generation: snapshot.generation })
-        },
-      }, '读取一次余额（只读，不兑换）'))
-    }
-    if (snapshot.awaitingBalanceMatch === true) {
-      body.push(h('div', { key: 'confirm', style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
-        h('button', {
-          type: 'button',
-          'data-mimo-display': 'confirm-match',
-          style: settingsButtonStyle,
-          onClick: function () {
-            run({ action: 'displayConfirm', displayId: snapshot.displayId, generation: snapshot.generation, verdict: 'match' })
-          },
-        }, '余额与我本人一致'),
-        h('button', {
-          type: 'button',
-          'data-mimo-display': 'confirm-mismatch',
-          style: settingsButtonStyle,
-          onClick: function () {
-            run({ action: 'displayConfirm', displayId: snapshot.displayId, generation: snapshot.generation, verdict: 'mismatch' })
-          },
-        }, '不一致（停止并清空）'),
-        h('button', {
-          type: 'button',
-          'data-mimo-display': 'confirm-later',
-          style: settingsButtonStyle,
-          onClick: function () {
-            run({ action: 'displayConfirm', displayId: snapshot.displayId, generation: snapshot.generation, verdict: 'later' })
-          },
-        }, '稍后再说')))
-    }
-    if (snapshot.canGrant === true) {
-      body.push(h('button', {
-        key: 'grant',
-        type: 'button',
-        'data-mimo-display': 'grant',
-        disabled: busy,
-        style: Object.assign({}, settingsButtonStyle, busy ? { opacity: 0.4, cursor: 'default' } : null),
-        onClick: function () {
-          run({ action: 'displayGrant', displayId: snapshot.displayId, generation: snapshot.generation })
-        },
-      }, '授权持续刷新（仅本次会话，60 秒间隔，最多 14 次，15 分钟内有效）'))
-    }
-  }
-
-  if (notice !== '') {
-    body.push(h('p', { key: 'notice', style: settingsHintStyle, 'data-mimo-display': 'notice', 'data-mimo-display-code': notice }, '状态码：' + notice))
-  }
-  body.push(h('p', { key: 'privacy', style: settingsHintStyle, 'data-mimo-display': 'privacy' },
-    '「核对中 / 等待比对」阶段点上面的「关闭并取消」会结束会话并清空凭据；'
-    + '已开始显示后收起面板或刷新页面**不会**结束会话（Host 内存可恢复，收起 ≠ 取消）。'
-    + '只有「停止」会清空凭据与数值。'))
-
-  return h('section', { 'data-mimo-display': 'panel', style: { display: 'flex', flexDirection: 'column', gap: 8, padding: '12px 0 4px' } }, body)
-}
 
 function CustomBalancesSection(props) {
   /**
@@ -8207,7 +5447,7 @@ function CustomBalancesSection(props) {
    * 审核指出两个必须修的缺陷：
    *   - 只有一条自定义时，`index+delta` 必然越界 → 按钮看起来可点、实际零操作
    *     （SINGLE_CUSTOM_BOTH_ARROWS_NO_OP）；
-   *   - 自定义与内置必须能**互相跨越**（用户要求 OpenRouter 移到 Codex/WorkBuddy 之前）。
+   *   - 自定义与内置必须能**互相跨越**（用户要求自定义渠道可排到内置渠道之前）。
    *
    * 因此这里不再「只在自定义数组内换位」，而是：
    *   1. 取当前**全局**顺序（`props.globalOrder()`，内置 + 自定义混排）；
@@ -8743,54 +5983,21 @@ function PlanUsageSettingsPage(props) {
   }, [policyEpoch, policySignature])
 
   /**
-   * [2026-11-11 Codex 双来源] 来源的**只读元数据**（哪一行已启用 / 接口是否兼容）。
+   * [2026-11-23 用户定稿] **不再请求 `GET /api/plan-usage/codex-sources`**。
    *
-   * `GET /api/plan-usage/codex-sources` 是纯 metadata：Host 侧不求额度、不读凭据、
-   * 不打任何上游，所以打开设置页或局部刷新都是 **0 上游**成本。
-   * 客户端只拿它决定「哪一行可以点」，**绝不**据此自动改用户的选择（没有 auto）。
+   * Codex 只保留本插件自己的 ChatGPT 账号登录（多账户保存/切换），设置页没有来源单选、
+   * 没有来源摘要/说明、也没有「一键适配」块，因此这份「哪一行可用」的 metadata 没有任何
+   * 消费者。这里刻意不保留 state/effect：既省一次请求，也避免留下一个永远无人读取的
+   * `codexSources` 变量被误接回 UI（旧渲染块已整体删除）。
+   *
+   * Host 侧 `/codex-sources` 路由仍存在（另一路实现，不在本次改动范围），客户端只是不调。
    */
-  var codexSourcesHook = React.useState({ state: 'idle', sources: {}, loaded: false })
-  var codexSources = codexSourcesHook[0]
-  var setCodexSources = codexSourcesHook[1]
-  var codexSourcesSeqRef = React.useRef(0)
-  function refreshCodexSources() {
-    var seq = codexSourcesSeqRef.current + 1
-    codexSourcesSeqRef.current = seq
-    return fetch(CODEX_SOURCES_ROUTE, { headers: { accept: 'application/json' } })
-      .then(function (r) {
-        var status = r !== null && r !== undefined && typeof r.status === 'number' ? r.status : null
-        if (status !== null && status !== 200) throw new Error('http-status')
-        return r.json()
-      })
-      .then(function (body) {
-        if (seq !== codexSourcesSeqRef.current) return
-        var parsed = parseCodexSourcesPayload(body)
-        setCodexSources({ state: parsed.state, sources: parsed.sources, loaded: true })
-      })
-      .catch(function () {
-        if (seq !== codexSourcesSeqRef.current) return
-        // 取不到 = 「状态暂不可用」，**不是**「未启用」：不猜、不冒充。
-        setCodexSources({ state: 'error', sources: {}, loaded: true })
-      })
-  }
-  React.useEffect(function () {
-    refreshCodexSources()
-    return function () { codexSourcesSeqRef.current += 1 }
-  }, [policyEpoch, policySignature])
 
   /**
    * [0.9.1] 自定义卡片的折叠状态：`{ [id]: true }`。
    *
    * 放在组件级 ref 而不是普通 state，是为了「重新渲染/刷新状态后折叠状态不丢」——
    * 折叠只影响展示，不需要触发额外重渲染；用 state 会造成不必要的整页重排。
-   */
-  /**
-   * [2026-10-25 客户端 Key 端点] **不再拉取账号列表**。
-   *
-   * 新端点 `GET /v1/credits` 没有稳定账号 ID、也没有 packages，用户已同意
-   * 不再支持"按账号勾选"；这里因此不再请求 `/api/plan-usage/workbuddy-accounts`，
-   * 也不持有账号 state（避免旧 404/401 反复探测，或暗示筛选仍然生效）。
-   * 已保存的 `workbuddyAccounts` 字段保留原值、不清除、不迁移。
    */
   var collapsedHook = React.useState({})
   var customCollapsed = collapsedHook[0]
@@ -9659,7 +6866,7 @@ function PlanUsageSettingsPage(props) {
    *   - 保留 `data-plan-credentials` 便于定位与测试，并加
    *     `data-plan-credentials-flat="1"` 说明「这是展平后的凭据区，不是折叠区」；
    *   - **只有自定义余额卡**保留原有的折叠结构（`CustomBalancesSection` 未动）。
-   * 无凭据渠道（Codex / WorkBuddy 这类复用登录插件的）不渲染空凭据区。
+   * 无凭据渠道（如 Codex 这类自有登录的）不渲染空凭据区。
    */
   var credentialChildren = []
   if (fields.apiKey !== undefined) {
@@ -9683,10 +6890,10 @@ function PlanUsageSettingsPage(props) {
       'data-plan-credentials-flat': '1',
     }, credentialChildren))
   }
-  // [0.11.4] MiMo 扫码登录已下线：设置页只提示余额来自「设置 → 模型」的 API Key。
+  // MiMo 卡片的其余内容只有余额阈值；余额来自「设置 → 模型」里的 API Key。
   if (enabled && meta.id === 'mimo') {
     children.push(h("p", { key: "mimo-api-key-hint", style: settingsHintStyle, "data-mimo-api-key-hint": "1" },
-      "余额来自「设置 → 模型」里的 MiMo API Key（XIAOMI_API_KEY 等），无需扫码登录。"))
+      "余额来自「设置 → 模型」里的 MiMo API Key（XIAOMI_API_KEY 等）。"))
   }
   // 余额类渠道的**侧栏显示**告警阈值（留空/0 表示不警告；host 侧默认 10 元）。
   // [2026-10-24] 措辞明确这是"侧栏状态灯"的告警，与模型「额度策略」是两套不同阈值。
@@ -9712,122 +6919,30 @@ function PlanUsageSettingsPage(props) {
       h("span", { style: settingsHintStyle }, "只影响侧栏胶囊状态灯的颜色；填 0 表示不告警。"),
     ))
   }
-  // Xiaomi MiMo 的登录/状态面板直接渲染在卡片下（见上），此处不再重复渲染教程。
   /**
-   * [2026-11-11 Codex 双来源] 来源选择（**只在 Codex 卡片内**，且渠道开启时显示）。
+   * [2026-11-23 用户定稿] **Codex 卡片里只有账号卡片**。
    *
-   * 契约（用户 2026-11-11 明确）：
-   *   - 两行来源**始终列出**（不因为某一行未启用就把 Connect / Subscription 藏掉）；
-   *   - `enabled:false` → 「未启用」（不区分未安装 / 未开启）；
-   *     `enabled:true` 且 `compatible:false` → 「接口暂不可用（需适配）」；
-   *     metadata 取不到 / 未知 → 「状态暂不可用」（**不**假称未启用）；
-   *   - 只有 `ready` 的行可点；停用/未知的行 radio **不可交互**，已保存来源仍保持勾选，
-   *     **不**静默换到另一个来源；
-   *   - 点击只改**草稿** `codexSource`，必须走统一「保存更改」才落盘——绝不点一下就在
-   *     后台写配置；
-   *   - 卡片文案随 saved/draft 来源变化（该去哪个插件登录），不再固定讲 Connect 登录。
+   * 已删除（不要搬回来）：来源单选行、来源摘要（「当前来源…」/「将切换到…」）、
+   * 来源说明、`CodexSubscriptionPatchBlock`（一键适配），以及它们的
+   * `data-codex-source*` 属性。Codex 只保留本插件自己的 ChatGPT 账号登录：
+   *   - `CodexAccountBlock` **直接**渲染，不再由任何「来源草稿」控制 `active`；
+   *   - 没有 `active` 入参 ⇒ 组件挂在卡片里就一直工作（挂载即读 state、可添加/切换/退出）；
+   *   - 只读（`writable === false`）/ 保存中 ⇒ 透传 `writable:false`，卡片内全部入口禁用；
+   *   - 渠道开关关闭（`enabled === false`）时不渲染（与其它渠道一致：关掉就没有卡内操作）。
+   *
+   * 条件渲染的是**子组件**而不是 hook：本函数自身的 hooks 调用顺序不受影响。
    */
-  if (enabled && meta.source !== undefined) {
-    var sourceField = meta.source
-    var sourceSaved = normalizeCodexSource(value[sourceField])
-    var sourceDraft = normalizeCodexSource(current[sourceField])
-    var sourceRows = []
-    for (var sri = 0; sri < CODEX_SOURCE_IDS.length; sri++) {
-      var sourceId = CODEX_SOURCE_IDS[sri]
-      var sourceEntry = codexSources !== null && codexSources !== undefined
-        && codexSources.sources !== null && codexSources.sources !== undefined
-        ? codexSources.sources[sourceId]
-        : undefined
-      var sourceRowState = codexSources !== null && codexSources !== undefined && codexSources.state === 'ok'
-        ? codexSourceRowState(sourceEntry)
-        : 'unknown'
-      var sourceSelectable = sourceRowState === 'ready'
-      sourceRows.push(h('label', {
-        key: 'src-' + sourceId,
-        'data-codex-source-row': sourceId,
-        'data-codex-source-state': sourceRowState,
-        style: Object.assign({}, settingsRowStyle, {
-          alignItems: 'center', gap: 6, fontSize: 12,
-          cursor: sourceSelectable && writable && !saving ? 'pointer' : 'default',
-          opacity: sourceSelectable ? 1 : 0.65,
-        }),
-      },
-        h('input', {
-          type: 'radio',
-          name: 'codex-source',
-          'data-codex-source': sourceId,
-          checked: sourceDraft === sourceId,
-          // 不可交互 ≠ 被改选：停用/未知的行只是点不动，已保存来源的勾选原样保留。
-          disabled: !writable || saving || !sourceSelectable,
-          onChange: (function (id) { return function () { change(sourceField, id) } })(sourceId),
-        }),
-        h('span', {}, CODEX_SOURCE_LABELS[sourceId]),
-        h('span', {
-          style: { fontSize: 11, color: 'var(--dsw-alias-label-tertiary)' },
-          'data-codex-source-state-text': sourceRowState,
-        }, CODEX_SOURCE_STATE_TEXT[sourceRowState]),
-      ))
-    }
-    children.push(h('div', {
-      key: 'codex-source',
-      'data-codex-source-block': '1',
-      style: { display: 'flex', flexDirection: 'column', gap: 4, paddingTop: 2 },
-    },
-      h('p', { style: settingsHintStyle, 'data-codex-source-hint': '1' },
-        '额度来源（只读取所选来源；两个来源不合并、失败也不自动回退）'),
-      sourceRows,
-      h('p', { style: settingsHintStyle, 'data-codex-source-summary': '1' },
-        sourceDraft === sourceSaved
-          ? '当前来源：' + codexSourceLabel(sourceSaved) + '（真正生效的是已保存的选择）'
-          : '将切换到 ' + codexSourceLabel(sourceDraft) + '；点击「保存更改」后生效。'),
-      h('p', { style: settingsHintStyle, 'data-codex-source-note': '1' }, codexSourceNoteText(sourceDraft)),
-      // [0.10.2] 仅在「Subscription 行状态 = incompatible（需适配）」时渲染一键适配块。
-      h(CodexSubscriptionPatchBlock, {
-        key: 'cs-patch',
-        active: (function () {
-          var subs = codexSources !== null && codexSources !== undefined && codexSources.state === 'ok'
-            && codexSources.sources !== null && codexSources.sources !== undefined
-            ? codexSources.sources.subscription
-            : undefined
-          return codexSourceRowState(subs) === 'incompatible'
-        })(),
-        writable: writable && !saving,
-      }),
-    ))
+  if (enabled && meta.id === CODEX_PLAN_ID) {
+    children.push(h(CodexAccountBlock, {
+      key: 'codex-account',
+      writable: writable && !saving,
+    }))
   }
-  // 复用登录插件的渠道说明：Codex 按**当前来源**渲染在来源区里（见上），这里只处理其它
-  // 无凭据渠道，避免同一张卡片出现两段互相矛盾的登录说明（例如仍固定说 Connect 登录）。
-  if (enabled && meta.noCredential && meta.source === undefined) {
+  // 复用登录插件的渠道说明：Codex 的操作与说明都在账号卡片里（见上），不再重复这句话。
+  // [2026-11-23] WorkBuddy 已不是内置渠道，剩下的无凭据内置渠道只有 Codex（见上，显式排除）。
+  if (enabled && meta.noCredential && meta.source === undefined && meta.id !== CODEX_PLAN_ID) {
     children.push(h("p", { key: "note", style: settingsHintStyle },
       meta.credentialNote || "请先在对应的登录插件中完成登录。"))
-  }
-  /**
-   * [2026-10-25 客户端 Key 端点] 账号筛选：**已不再支持**。
-   *
-   * 新接口 `GET /v1/credits` 没有稳定账号 ID（也没有 packages），用户已同意
-   * 取消"按账号勾选"。这里只给固定说明：不请求账号列表、不写任何字段；
-   * 若旧配置里保存过勾选，明确告知"已保留但不再生效"，不冒充已应用。
-   */
-  if (enabled && meta.id === 'workbuddy') {
-    var legacySelectionNote = ''
-    try {
-      var rawSelText = settingText(current, 'workbuddyAccounts')
-      var legacySel = rawSelText.length > 0 ? JSON.parse(rawSelText) : []
-      if (Array.isArray(legacySel) && legacySel.length > 0) {
-        legacySelectionNote = '（旧版保存过 ' + legacySel.length + ' 个账号选择，已原样保留但不再生效）'
-      }
-    } catch (err) { legacySelectionNote = '' }
-    children.push(h('div', {
-      key: 'wb-accounts',
-      style: { display: 'flex', flexDirection: 'column', gap: 4, paddingTop: 2 },
-    },
-      h("p", { key: 'mode', style: settingsHintStyle, 'data-wb-mode': 'client-credits' },
-        '数据源：客户端接口 GET /v1/credits，且只统计国内（cn）积分。'),
-      h("p", { key: 'no-account-filter', style: settingsHintStyle, 'data-wb-account-filter': 'unsupported' },
-        '该接口不提供稳定的账号 ID，暂不支持按账号筛选；这里显示的是全部国内账号的合计。' + legacySelectionNote),
-      h("p", { key: 'detail-note', style: settingsHintStyle, 'data-wb-detail': 'summary-only' },
-        '详情只展示“剩余”与“最近到期”；有效到期日按本地日期显示，没有日期时只显示名称，不会伪造积分包明细。'),
-    ))
   }
   /**
    * [2026-10-23] 卡片底部：每个**活跃**内置渠道都有「关注额度策略」+ 自己的两档阈值。
@@ -10069,106 +7184,83 @@ module.exports = {
   apply: apply,
   invalidateCustomChannel: function (id) { bumpConfigEpoch([id]) },
   /**
-   * [2026-11-11 Codex 双来源] 离线回归挂载点：来源相关的**纯投影 helper**。
+   * [2026-11-23 多账户] 配置代次只读快照：仅用于离线断言「切换账户成功后会失效旧值」。
+   * 生产路径不读这个出口；写入的唯一入口仍是 `bumpConfigEpoch`。
+   */
+  configEpoch: function () { return getConfigEpoch() },
+  /**
+   * [R2 代次] 只读的 Codex 采集代次水位（测试挂载点；生产路径不读）。
    *
-   * 只导出纯函数/常量（不做 IO、不发请求、不读配置），供离线测试断言
-   * 「摘要片段字串」「身份映射」「metadata 解析」这些跨端/缓存语义；
-   * 不改变生产行为，也不是新的 Host 接口。
+   * 语义：`-1` = 还没见过任何代次；否则等于最近一次**接受**的
+   * `plan.codexGenerationOrder`。只用于离线断言「迟到旧代次被忽略 / 换代推进水位」，
+   * 不渲染、不写日志、也不当作账号 id。
+   */
+  codexGeneration: {
+    order: function () { return codexPlanGenerationOrder },
+  },
+  /**
+   * [2026-11-23 用户定稿] 离线回归挂载点：Codex 来源的**跨端口径兼容子集**。
+   *
+   * 来源选择 UI 已整体退场，因此这里**只**保留参与「配置摘要 / wire 身份 / 旧值作废」的
+   * 纯函数与常量（它们必须与 Host 逐字同构，删了就再也对不上摘要）：
+   *   - `ids` / `defaultSource` / `normalize` / `fromWire`：来源白名单与老 wire 兼容；
+   *   - `digestPart` / `identity` / `identityMap` / `digest`：16 位摘要与内置身份；
+   *   - `planId`：内置 Codex 渠道 id。
+   *
+   * **不再导出**（相关实现已删除，导出它们会直接 ReferenceError）：
+   * `labels` / `label` / `note` / `route` / `stateText` / `parsePayload` / `rowState` /
+   * `PatchBlock`。UI 也不再读这两个路由。
    */
   codexSource: {
     planId: CODEX_PLAN_ID,
     ids: CODEX_SOURCE_IDS,
-    labels: CODEX_SOURCE_LABELS,
     defaultSource: CODEX_SOURCE_DEFAULT,
-    route: CODEX_SOURCES_ROUTE,
-    stateText: CODEX_SOURCE_STATE_TEXT,
     normalize: normalizeCodexSource,
-    label: codexSourceLabel,
-    note: codexSourceNoteText,
     digestPart: codexSourceDigestPart,
     identity: codexSourceIdentity,
     identityMap: configIdentityMap,
     fromWire: codexSourceFromWire,
-    parsePayload: parseCodexSourcesPayload,
-    rowState: codexSourceRowState,
-    /**
-     * [0.10.2] 离线挂载点：把「应用本地适配」块**组件本身**暴露给回归测试（不暴露任何内部状态/
-     * 工具函数）。只在测试加载器 `__ModuleLoader__` 下可见，生产路径不读取该出口。
-     */
-    PatchBlock: CodexSubscriptionPatchBlock,
     digest: function (config) { return configDigestOfClient(config) },
+  },
+  /**
+   * [2026-11-22/23 Codex 账号] 离线回归挂载点：多账户卡片组件 + 6 条路由 +
+   * **纯解析函数**（全部零 IO、不发请求、不读凭据）。只在测试加载器
+   * `__ModuleLoader__` 下可见，生产路径不读取该出口。
+   */
+  codexAccount: {
+    Block: CodexAccountBlock,
+    routes: {
+      state: CODEX_ACCOUNT_STATE_ROUTE,
+      login: CODEX_ACCOUNT_LOGIN_ROUTE,
+      status: CODEX_ACCOUNT_LOGIN_STATUS_ROUTE,
+      cancel: CODEX_ACCOUNT_LOGIN_CANCEL_ROUTE,
+      select: CODEX_ACCOUNT_SELECT_ROUTE,
+      logout: CODEX_ACCOUNT_LOGOUT_ROUTE,
+    },
+    /** `base + '?id=<credential>'`（id 不过白名单时**不带** query，绝不拼接）。 */
+    routeWithId: codexAccountRouteWithId,
+    pollMs: CODEX_ACCOUNT_POLL_MS,
+    authPrefix: CODEX_ACCOUNT_AUTH_PREFIX,
+    text: CODEX_ACCOUNT_TEXT,
+    parseState: parseCodexAccountState,
+    parseList: parseCodexAccountList,
+    parseLoginStart: parseCodexAccountLoginStart,
+    parseLoginStatus: parseCodexAccountLoginStatus,
+    safeId: codexAccountSafeId,
+    safeUserCode: codexAccountSafeUserCode,
+    safeAuthUrl: codexAccountSafeAuthUrl,
+    planLabel: codexAccountPlanLabel,
+    /**
+     * [2026-11-23 多账户] 客户端账户身份快照（`'unknown'` / `'none'` / `acct\u0002<摘要>`）。
+     * 仅用于离线断言「切换账户后逐条身份会变、且不含明文 id / token」；生产路径不读。
+     */
+    uiIdentity: function () { return codexAccountUiIdentity },
   },
   /**
    * [2026-11-12 批次 G] 离线回归挂载点：启动占位行的**纯函数**（零 IO、不改入参）。
    * 只用于离线断言「哪些渠道会铺占位、顺序如何、是否重复」，不改变生产行为。
    */
   pendingPlaceholders: withPendingPlaceholders,
-  // [G1 / 2026-10-30] 离线回归挂载点：mock 运行时的 elementsOf 无法展开带 hooks 的
-  // 子组件，故把实验性登录面板与**纯投影 helper** 一并导出；不改变生产行为，
-  // 也不是新的对 Host 接口（后者只有 /api/plan-usage-mimo-auth[-qr]）。
-  mimoAuth: {
-    Panel: MimoAuthMount,
-    /**
-     * [0.10.0 离线挂载点] 旧扫码面板本体。`Panel` 现在是**挂载包装器**（先做一次只读能力探测，
-     * 再决定渲染「记住登录」managed 面板还是这个旧面板），所以面板级断言需要直接挂本体。
-     * 纯测试出口，不改变生产行为。
-     */
-    LegacyPanel: MimoAuthPanel,
-    pick: mimoAuthPick,
-    rememberedOf: mimoRememberedOf,
-    request: mimoAuthRequest,
-    requestQr: mimoAuthRequestQr,
-    actions: MIMO_AUTH_ACTIONS,
-    verdicts: MIMO_AUTH_VERDICTS,
-    codes: MIMO_AUTH_CODES,
-    // [failure 可见性] Host failure 的 code 白名单与 stage 四值枚举（供离线回归断言）
-    failureCodes: MIMO_AUTH_HOST_FAILURE_CODES,
-    failureStages: MIMO_AUTH_HOST_STAGES,
-    text: MIMO_AUTH_TEXT,
-    pollMs: MIMO_AUTH_POLL_MS,
-    route: MIMO_AUTH_ROUTE,
-    qrRoute: MIMO_AUTH_QR_ROUTE,
-  },
-  // [display 2026-11-05] 离线回归挂载点：本机显示会话（合成 DI 边界）。
-  // 不改变生产行为：生产 DI 恒 null ⇒ display 动作 fail-closed。
-  mimoDisplay: {
-    Panel: MimoDisplayPanel,
-    SessionRows: MimoDisplaySessionRows,
-    pick: mimoDisplayPick,
-    request: mimoDisplayRequest,
-    action: mimoDisplayAction,
-    stopNow: mimoDisplayStopNow,
-    abandonPending: mimoDisplayAbandonPending,
-    overlay: mimoDisplayOverlay,
-    planOf: mimoDisplayPlanOf,
-    balanceOf: mimoDisplayBalanceOf,
-    stateText: mimoDisplayStateText,
-    shortText: mimoDisplayShortText,
-    view: mimoDisplayView,
-    useStore: useMimoDisplay,
-    store: mimoDisplayStore,
-    subscribe: mimoDisplaySubscribe,
-    start: mimoDisplayStart,
-    release: mimoDisplayRelease,
-    bootstrap: mimoDisplayBootstrap,
-    pump: mimoDisplayPump,
-    setPoll: mimoDisplaySetPoll,
-    reset: mimoDisplayReset,
-    actions: MIMO_DISPLAY_ACTIONS,
-    codes: MIMO_DISPLAY_CODES,
-    states: MIMO_DISPLAY_STATES,
-    pollMs: MIMO_DISPLAY_POLL_MS,
-    route: MIMO_DISPLAY_ROUTE,
-    // [console 2026-11-06] 正式扫码登录（同一 store / pump / barrier）
-    consoleActions: MIMO_CONSOLE_ACTIONS,
-    consoleCodes: MIMO_CONSOLE_CODES,
-    consoleOf: mimoConsoleOf,
-    consoleApply: mimoConsoleApply,
-    consoleStateText: mimoConsoleStateText,
-    consoleSupported: mimoConsoleSupported,
-    consoleNamespace: mimoConsoleNamespace,
-    consoleQrFetch: mimoConsoleQrFetch,
-  },
 }
 return module.exports
 } })

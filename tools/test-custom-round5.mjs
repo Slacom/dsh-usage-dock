@@ -221,7 +221,7 @@ async function openAndExpand(mounted, label) {
   check('D5a 内置首项的上移按钮被禁用（R5-04 重复 disabled 已修）',
     upFirst !== undefined && upFirst.props.disabled === true,
     upFirst && { disabled: upFirst.props.disabled })
-  const downLast = byAria(tree, 'WorkBuddy AI 下移')
+  const downLast = byAria(tree, 'Xiaomi MiMo 下移')
   check('D5b 内置末项的下移按钮被禁用',
     downLast === undefined || downLast.props.disabled === true,
     downLast && downLast.props.disabled)
@@ -254,66 +254,5 @@ async function openAndExpand(mounted, label) {
   mounted.client.restore()
 }
 
-// ===========================================================================
-// D7 — [真机回归] WorkBuddy 账号选择不能把设置页带成白屏
-// ===========================================================================
-{
-  /**
-   * 真机故障：账号区块里用了 `locked`（那是 CustomBalancesSection 的局部变量），
-   * 在设置页作用域里未定义 → 渲染时 ReferenceError → **整页设置白屏**。
-   * 这里渲染一次「WorkBuddy 启用」的设置页，断言页面与账号区块都在。
-   */
-  const runtime = createRuntime()
-  const client = loadClient(runtime, {
-    form: { getSnapshot() { return { value: {}, writable: true } }, subscribe() { return () => {} } },
-  })
-  globalThis.fetch = async (url) => {
-    if (String(url).includes('workbuddy-accounts')) {
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({
-          ok: true,
-          data: {
-            accounts: [{
-              id: 'U-1', label: 'Slacom', realm: 'cn',
-              remain: 5765, size: 6600, disabled: false, cooling: false,
-            }],
-          },
-        }),
-      }
-    }
-    if (String(url).includes('custom-status')) {
-      return { ok: true, status: 200, json: async () => ({ ok: true, data: { keys: {}, refs: [], providers: [] } }) }
-    }
-    return { ok: true, status: 200, json: async () => ({ ok: true, data: { plans: [], cfg: {} } }) }
-  }
-  const form = {
-    value: { enabled: true, workbuddyEnabled: true, planOrder: '[]', customBalances: [] },
-    getSnapshot() { return { value: this.value, writable: true } },
-    subscribe() { return () => {} },
-    set(field, value) { this.value = Object.assign({}, this.value, { [field]: value }); return Promise.resolve(true) },
-    mutate() { return Promise.resolve(true) },
-  }
-  runtime.mount(client.SettingsPage, { form })
-  await new Promise((r) => setTimeout(r, 60))
-  const tree = await runtime.settle({ form })
-  const text = textOf(tree)
-  check('D7a 设置页整体渲染成功（不白屏）', typeof text === 'string' && text.length > 0)
-  /**
-   * [2026-10-25 有意契约变更] 客户端接口没有稳定账号 ID，用户已同意取消按账号勾选：
-   * 卡片里改成"仅国内 cn / 暂不支持按账号筛选"的固定说明，并且不再渲染任何账号勾选框。
-   * 原 D7b/D7c/D7d/D7e 守的是"账号列表把设置页带白屏"，这里换成等价的稳定性断言。
-   */
-  check('D7b WorkBuddy 卡片出现"仅国内 cn + 不支持按账号筛选"说明',
-    text.indexOf('只统计国内（cn）') !== -1 && text.indexOf('暂不支持按账号筛选') !== -1)
-  check('D7c 不再把账号昵称渲染进设置页', text.indexOf('Slacom') === -1)
-  const box = elementsOf(tree).find((el) => el.type === 'input' && el.props && el.props['data-workbuddy-account'] !== undefined)
-  check('D7d 不再渲染账号复选框', box === undefined)
-  check('D7e 说明区带稳定标记（client-credits / 不支持筛选）',
-    elementsOf(tree).some((el) => el.props && el.props['data-wb-mode'] === 'client-credits')
-    && elementsOf(tree).some((el) => el.props && el.props['data-wb-account-filter'] === 'unsupported'))
-  client.restore()
-}
 console.log('\n' + (passCount + failCount) + ' 项：' + passCount + ' 通过, ' + failCount + ' 失败')
 process.exit(failCount === 0 ? 0 : 1)
