@@ -5,6 +5,10 @@
 
 DeepSeek Harness（DSH）的侧栏套餐用量插件：在左侧栏底部显示余额和剩余额度，点击展开详情。
 
+当前版本 **1.0.0**（2026-11-25）。内置渠道为 OpenCode Go、DeepSeek、OpenAI Codex、小米 MiMo；
+WorkBuddy 已退场，MiMo 只保留 API Key 余额。发布说明见
+[release-notes-v1.0.0.md](docs/release-notes-v1.0.0.md)。
+
 ![侧栏余额与额度预览](https://raw.githubusercontent.com/Slacom/dsh-usage-dock/main/preview.png)
 
 ## 支持渠道
@@ -13,34 +17,38 @@ DeepSeek Harness（DSH）的侧栏套餐用量插件：在左侧栏底部显示�
 | --- | --- | --- |
 | OpenCode Go | OpenCode usage API（Bearer） | 5 小时 / 周 / 月窗口（按账户实际返回） |
 | DeepSeek | DSH 账号余额优先，开放平台 API Key 回退 | 余额（含赠金）；账号模式附峰谷时间条 |
-| OpenAI Codex | 本插件内登录 ChatGPT 账号（设备码；可保存多个账户并切换，0.12.0 开发中） | 5 小时 / 周（账户实际返回的窗口） |
+| OpenAI Codex | 本插件内登录 ChatGPT 账号（设备码；最多保存 8 个账户，单选切换） | 5 小时 / 周（账户实际返回的窗口） |
 | Xiaomi MiMo | 开放平台 API Key（`mimoApiKey`，或「设置 → 模型」里的 MiMo Key） | 总余额、现金及赠送余额 |
 | **自定义余额渠道** | 你选择的模型来源 + 该来源下的余额接口路径 | 该接口返回的余额（币种来自条目或可信采样） |
 
 - 每 **30 秒**刷新；展开面板、窗口聚焦、页面重新可见时立即刷新。
 - 短暂网络失败保留旧值（灰化显示），持续失败后才报告错误；未登录、缺凭据、鉴权失败等错误立即显示。
   是否算"持续失败"以 Host 给出的统一状态为准。
-- OpenAI Codex 自 0.12.0 起改为**只用本插件自己的 ChatGPT 账号登录**（设备码）：在
+- OpenAI Codex 使用**本插件自己的 ChatGPT 账号登录**（设备码）：在
   「设置 → 内置插件 → Usage Dock → OpenAI Codex」点「添加账户」完成授权即可读取额度，
   **不需要**再安装 `dsh-codex-connect`，也不需要维护 `dsh-codex-subscription` 的本地补丁
   （旧的 Connect / Subscription 来源已退场，设置页与原生页都不再提供来源选择）。
-  可以保存**多个账户**（最多 8 个）并切换：胶囊与详情只显示当前选中账户的数字，
+  可以保存**多个账户**（最多 8 个）并单选切换：胶囊与详情只显示当前选中账户的数字，
   切换/移除都只动本插件自己的凭据记录，不写配置、不读写其它插件的登录状态，
   令牌也不会回显到页面。该方式读取的是 Codex 客户端使用的额度接口，属**非官方支持**用法，
-  上游改版时可能失效。**0.12.0 仍在开发中、未发布**，属实验性功能；登录与切换入口只在
-  **桌面网页版设置页**，手机端原生设置页只能看结果、不能完成登录或切换账户。
-- 小米 MiMo 自 **0.12.0** 起**只用 API Key** 查余额：在「设置 → 内置插件 → Usage Dock →
-  Xiaomi MiMo」填 `mimoApiKey`，或在「设置 → 模型」里配置 `XIAOMI_API_KEY`
+  上游改版时可能失效。登录、重登、切换与移除入口只在**桌面网页版设置页**；
+  手机端原生设置页只能查看并选择账户，不能完成登录或退出。
+- 小米 MiMo **只用 API Key** 查余额：在「设置 → 内置插件 → Usage Dock → Xiaomi MiMo」填
+  `mimoApiKey`，或在「设置 → 模型」里配置 `XIAOMI_API_KEY`
   （provider 名含 mimo/xiaomi 时也可自动取用）。没有 Key 时固定显示「未配置 API Key」；
-  **不再有**扫码登录、记住登录、控制台 Cookie 或「登录态过期」这一类入口与状态。
+  **没有**扫码登录、记住登录、控制台 Cookie 或「登录态过期」这一类入口与状态。
+  自动复用「设置 → 模型」的 Key 时，只信任 `https://api.xiaomimimo.com` 来源。
+- 1.0.0 加固：Codex 额度响应带脱敏采集代次，外部切换账户后旧值与迟到响应立即作废；
+  已移除旧的 Codex 补丁 HTTP 写入口；网页切换账户失败会显示提示；移除最后一个账户改为
+  原子空态写入，避免与并发新增账户互相覆盖。
 - 胶囊独占侧栏底部一行，位于其他底部插件上方；侧栏折叠时只显示圆点，不可点击。
 - 设置页可开关渠道、配置凭据、设置余额告警阈值与显示顺序（内置与自定义渠道在同一列表里混排）。
 - 余额向下取整到分。DeepSeek / MiMo 的「侧栏显示告警额度」默认 10 元，填 0 不告警。
   这个告警只影响侧栏胶囊状态灯，和下面的「额度策略」是两套东西。
 
-### 已退场渠道：WorkBuddy（0.12.0）
+### 已退场渠道：WorkBuddy（1.0.0）
 
-WorkBuddy 自 **0.12.0** 起**不再作为本插件的原生 / 内置渠道**（用户不再使用反代渠道）：
+WorkBuddy **不再作为本插件的原生 / 内置渠道**（用户不再使用反代渠道）：
 
 - 没有 WorkBuddy 专用开关、积分口径、账号筛选，原生额度面板里也没有 WorkBuddy 分组；
   旧配置里的 WorkBuddy 字段保留但不生效，`workbuddy` / `workbuddy-ai` 两个 id 都属退场渠道
@@ -102,7 +110,7 @@ dsh plugin --profile web add dsh-usage-dock
 桌面端按实际 profile 使用 `--profile desktop`；也可在「设置 → 插件」添加包名。
 安装后重启 DSH / 安卓引擎，再刷新网页或重新打开 WebView。
 
-DSH Go 真机试装未发布版本：见 [Wi‑Fi ADB 传包与测试指南](docs/dsh-go-wireless-adb-testing.md)。
+DSH Go 原生面板、权限与安装说明：见 [DSH Go 原生面板](docs/dsh-go-native-panel.md)。
 
 ## 安卓 / DSHA 兼容性
 
