@@ -5,7 +5,15 @@
 
 DeepSeek Harness（DSH）的侧栏套餐用量插件：在左侧栏底部显示余额和剩余额度，点击展开详情。
 
-![侧栏余额与额度预览](https://raw.githubusercontent.com/Slacom/dsh-usage-dock/main/preview.png)
+## 界面预览
+
+### 桌面端
+
+![桌面端侧栏余额与额度](https://raw.githubusercontent.com/Slacom/dsh-usage-dock/main/preview.png)
+
+### DSH Go
+
+<img src="https://raw.githubusercontent.com/Slacom/dsh-usage-dock/main/docs/assets/dsh-go.jpg" alt="DSH Go 原生额度面板" width="360">
 
 ## 支持渠道
 
